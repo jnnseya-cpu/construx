@@ -177,6 +177,30 @@ export type DocumentBlock =
         outlineOnly?: boolean;
       }>;
       legend: Array<{ label: string; colour: string }>;
+    }
+  /**
+   * A bar chart of a programme: one row per activity, a bar from its start to its
+   * finish on a timeline of working weeks.
+   *
+   * Dates, not page positions, so the JSON and HTML forms carry a programme
+   * somebody can check and each renderer scales it to its own page. The critical
+   * path is marked because it is the one thing a reader of a bar chart needs and
+   * cannot see; a milestone is a moment, drawn as one.
+   */
+  | {
+      kind: 'GANTT';
+      caption: string;
+      /** First and last day of the timeline, YYYY-MM-DD. */
+      from: string;
+      to: string;
+      rows: Array<{
+        label: string;
+        start: string;
+        finish: string;
+        critical?: boolean;
+        milestone?: boolean;
+        riskAllowance?: boolean;
+      }>;
     };
 
 export type ExportDocument = {
@@ -197,6 +221,15 @@ export type ExportDocument = {
   format: ExportFormat;
   generatedAt: string;
   generatedBy: string;
+  /**
+   * The name of the person who generated it, resolved from the tenancy's user
+   * directory, for the cover — a client-facing instrument that named its
+   * generator by a raw id told the recipient nothing and read as unfinished.
+   * Falls back to the id where a name cannot be resolved, because a traceable
+   * generator is still worth more than a blank. Not part of `contentHash`: it
+   * is provenance on the page, not content, exactly as `generatedBy` already is.
+   */
+  generatedByName?: string;
   projectId: string;
   blocks: DocumentBlock[];
   /** Hash over the branded content — this is what proves the document later. */
@@ -270,7 +303,14 @@ export type ExportEntitlement = { permitted: boolean; reason?: string };
 /** The issuing company's profile, as the platform provides it to the exporter. */
 export type IssuerProfiles = {
   profileVersionOf: (tenantId: string) => number;
-  allocateReference: (auth: AuthContext, documentType: string) => string | undefined;
+  /**
+   * The company's next document number, the serial inside it, and whether the
+   * rule is one the company chose rather than the default made from its prefix.
+   */
+  allocateReference: (
+    auth: AuthContext,
+    documentType: string,
+  ) => { number: string; seq: number; authored: boolean } | undefined;
 };
 
 export class ExportService {
@@ -380,6 +420,52 @@ export class ExportService {
     return restored;
   }
 
+  /**
+   * The reference registered against a project, for its documents.
+   *
+   * A prefix set on the project's own client identity was set for that project
+   * and stands. Otherwise it is the project's registered name, led by the
+   * buyer's tender reference where one is recorded against the job and the
+   * name does not already carry it. Only links on the record count — the
+   * invitation filed on the project, or on the opportunity this job is — never
+   * a match by similar wording: a document reference is not a guess.
+   *
+   * Nothing for a stream that is not a project of this tenancy (governance,
+   * tenant-level reports), which keep the company numbering.
+   */
+  #projectReference(tenantId: string, projectId: string): string | undefined {
+    const project = this.#ledger.get({ refType: 'Project', refId: projectId });
+    if (!project || String(project.state.tenantId ?? '') !== tenantId) return undefined;
+
+    const own = this.#brandingByProject.get(`${tenantId}:${projectId}`)?.documentReferencePrefix?.trim();
+    if (own) return own;
+
+    const name = String(project.state.name ?? '').trim();
+    const governance = `${tenantId}-governance`;
+    const opportunityIds = new Set(
+      this.#ledger
+        .list(governance, 'Opportunity')
+        .map((record) => record.state)
+        .filter((state) => String(state.projectId ?? '') === projectId || String(state.convertedProjectId ?? '') === projectId)
+        .map((state) => String(state.id)),
+    );
+    const origin = String(project.state.originOpportunityId ?? '');
+    if (origin) opportunityIds.add(origin);
+    const invitation =
+      this.#ledger.list(projectId, 'TenderInvitation').map((record) => record.state).at(-1) ??
+      this.#ledger
+        .list(governance, 'TenderInvitation')
+        .map((record) => record.state)
+        .filter((state) => opportunityIds.has(String(state.opportunityId ?? '')))
+        .at(-1);
+    const tenderReference = String(invitation?.reference ?? '').trim();
+
+    if (tenderReference && !name.toLowerCase().includes(tenderReference.toLowerCase())) {
+      return name ? `${tenderReference} - ${name}` : tenderReference;
+    }
+    return name || undefined;
+  }
+
   /** Whether this project has its own client identity, distinct from the tenancy's. */
   projectBranding(tenantId: string, projectId: string): ClientBranding | undefined {
     return this.#brandingByProject.get(`${tenantId}:${projectId}`);
@@ -432,8 +518,9 @@ export class ExportService {
    * had bothered to configure its own.
    */
   branding(tenantId: string, projectId?: string): ClientBranding {
-    const branding = (projectId ? this.#brandingByProject.get(`${tenantId}:${projectId}`) : undefined)
-      ?? this.#brandingByTenant.get(tenantId);
+    const project = projectId ? this.#brandingByProject.get(`${tenantId}:${projectId}`) : undefined;
+    const tenant = this.#brandingByTenant.get(tenantId);
+    const branding = project ?? tenant;
     if (!branding) {
       // Refusing here is deliberate: an unbranded export sent to a client is
       // worse than no export, and silently substituting a default hides it.
@@ -442,7 +529,34 @@ export class ExportService {
         'Client branding must be configured before documents can be exported',
       );
     }
+    // A firm that uploaded its mark once, at the account level, expects it on
+    // every project's documents. Project branding still wins on identity — the
+    // name, the colour, the reference prefix a project set are deliberate and
+    // stand — but a project that was given a name and no logo inherits the
+    // tenancy's logo rather than going out unmarked, which is the gap behind
+    // "our account has a logo, so why isn't it on the document". Only the logo,
+    // and only when the project has none of its own.
+    if (project && tenant?.logoRef && !project.logoRef) {
+      return { ...project, logoRef: tenant.logoRef };
+    }
     return branding;
+  }
+
+  /**
+   * The display name of a user in a tenancy, from the governance-scoped user
+   * directory — the same place `documents/engine.ts` reads people from, so a
+   * document's cover and a permit name the same person the same way. Returns
+   * the id unchanged where no name is on record: a traceable generator beats a
+   * blank one.
+   */
+  #personName(tenantId: string, actorId: string): string {
+    for (const record of this.#ledger.list(`${tenantId}-governance`, 'User')) {
+      if (String(record.state.id ?? record.refId) !== actorId) continue;
+      const name = typeof record.state.name === 'string' ? record.state.name.trim() : '';
+      if (name.length > 0) return name;
+      break;
+    }
+    return actorId;
   }
 
   /** Build, hash and record an export. Returns the document model. */
@@ -458,13 +572,23 @@ export class ExportService {
       redactionNotice?: string;
       correlationId: string;
       suppressHeader?: boolean;
+      preparedFor?: string;
     },
   ): ExportDocument {
     // The backstop. Every route into a document passes through here, so a new
     // export method inherits the gate without anybody remembering to add it.
     this.#assertEntitled(auth);
 
-    const branding = this.branding(auth.tenantId, projectId);
+    // "Prepared for" is who the document is addressed to. For most reports that
+    // is the tenancy's own branding client, but a document produced *for* a buyer
+    // — a tender submission to a council — says so, rather than carrying the
+    // issuing business's own name there. The caller names the recipient; the
+    // rest of the branding (issuer, logo, colour, legal footer) is unchanged.
+    const configured = this.branding(auth.tenantId, projectId);
+    const branding =
+      input.preparedFor && input.preparedFor.trim().length > 0
+        ? { ...configured, clientName: input.preparedFor.trim() }
+        : configured;
     this.#sequence += 1;
 
     const blocks = input.suppressHeader
@@ -477,7 +601,17 @@ export class ExportService {
 
     const id = ulid();
     const allocated = this.#issuerProfiles?.allocateReference(auth, 'report');
-    const reference = allocated ?? `${branding.documentReferencePrefix}-${String(this.#sequence).padStart(5, '0')}`;
+    // A project's document is identified by that project. The company prefix is
+    // one value for the whole tenancy, so a project name once typed into it —
+    // "RFX1000209 - EPC Assessments" — was printed as the reference on every
+    // other project's submission. The company serial still numbers the document,
+    // so it stays unique across the company; only the identity is the project's.
+    // A numbering rule the company chose for itself is its document control and
+    // stands as it is.
+    const projectPrefix = allocated?.authored ? undefined : this.#projectReference(auth.tenantId, projectId);
+    const reference = projectPrefix
+      ? `${projectPrefix}-${String(allocated?.seq ?? this.#sequence).padStart(5, '0')}`
+      : (allocated?.number ?? `${branding.documentReferencePrefix}-${String(this.#sequence).padStart(5, '0')}`);
     const issuer = { companyId: auth.tenantId, profileVersion: this.#issuerProfiles?.profileVersionOf(auth.tenantId) ?? 0, documentType: 'report' as const };
     const contentHash = hashEvidence(JSON.stringify({ branding, issuer, blocks }));
 
@@ -492,6 +626,7 @@ export class ExportService {
       format: input.format,
       generatedAt: new Date().toISOString(),
       generatedBy: auth.actorId,
+      generatedByName: this.#personName(auth.tenantId, auth.actorId),
       projectId,
       blocks,
       contentHash,
@@ -578,6 +713,8 @@ export class ExportService {
        * both put "Prepared for" on the page twice.
        */
       suppressHeader?: boolean;
+      /** Who the document is addressed to, where that is not the tenancy itself. */
+      preparedFor?: string;
     },
   ): ExportDocument {
     return this.#finalise(auth, projectId, {
@@ -588,6 +725,7 @@ export class ExportService {
       blocks: input.blocks,
       correlationId: input.correlationId,
       suppressHeader: input.suppressHeader,
+      preparedFor: input.preparedFor,
     });
   }
 
@@ -867,6 +1005,27 @@ export class ExportService {
               `${block.takenOn ? ` — ${escape(block.takenOn)}` : ''}</figcaption>` +
               `<p><code>${escape(block.evidenceHash)}</code></p></figure>`
             );
+          case 'GANTT': {
+            // Bars as proportional widths: the same dates as the PDF, scaled to
+            // whatever width the reader's window gives the cell.
+            const day = (iso: string) => Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / 86_400_000;
+            const span = Math.max(1, day(block.to) - day(block.from) + 1);
+            const row = (r: (typeof block.rows)[number]) => {
+              const left = ((day(r.start) - day(block.from)) / span) * 100;
+              const width = r.milestone ? 0.8 : Math.max(0.8, ((day(r.finish) - day(r.start) + 1) / span) * 100);
+              const colour = r.riskAllowance ? '#b9b9c0' : r.critical ? document.branding.primaryColour : '#5b6b7a';
+              return (
+                `<tr><td>${escape(r.label)}</td><td>${escape(r.start)}</td><td>${escape(r.finish)}</td>` +
+                `<td style="position:relative;min-width:240px"><div style="position:absolute;top:30%;height:40%;` +
+                `left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${colour}"></div></td></tr>`
+              );
+            };
+            return (
+              `<table class="gantt"><caption>${escape(block.caption)}</caption>` +
+              `<thead><tr><th>Activity</th><th>Start</th><th>Finish</th><th>${escape(block.from)} → ${escape(block.to)}</th></tr></thead>` +
+              `<tbody>${block.rows.map(row).join('')}</tbody></table>`
+            );
+          }
           case 'ATTESTATION':
             return (
               `<section class="attestation"><h3>Attestation</h3>` +

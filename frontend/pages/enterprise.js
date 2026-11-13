@@ -219,7 +219,7 @@ export async function enterprise(root) {
   const estateVisible = can('ENTERPRISE_STRUCTURE', 'R');
   const refusedLocally = { refused: { message: blockedReason('ENTERPRISE_STRUCTURE', 'R') } };
 
-  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations, register, members, sponsorships, company] = await Promise.all([
+  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations, register, members, sponsorships, company, clients, brand] = await Promise.all([
     // Caught rather than thrown. A project-level role is *correctly* refused
     // the estate-wide commercial position — and for every role below
     // enterprise level the refusal once took the whole screen down and
@@ -239,7 +239,10 @@ export async function enterprise(root) {
     // Who has been asked onto this project and whether they took it up, with
     // the seat position beside it — an invitation holds a seat, and somebody
     // about to send one needs to know whether there is one to give.
-    api.get(`/v1/projects/${state.session.projectId}/invitations`).catch(() => null),
+    // Not asked at all without a project: a company minutes old has none, and
+    // the path read `/v1/projects/null/invitations` — a 404 on the first screen
+    // a new customer saw. Null is what the screen already draws for "none".
+    state.session.projectId ? api.get(`/v1/projects/${state.session.projectId}/invitations`).catch(() => null) : Promise.resolve(null),
     // The supply-chain register, so an external supplier can be invited as a
     // named firm's person rather than a stranger with a supplier role. Null
     // where the reader may not see the register; the invitation still works.
@@ -247,7 +250,7 @@ export async function enterprise(root) {
     // Everybody appointed to this project, with whose licence covers them and
     // who pays for their AI — the members table the commercial rule is read
     // from. Null where the reader may not see it.
-    api.get(`/v1/projects/${state.session.projectId}/members`).catch(() => null),
+    state.session.projectId ? api.get(`/v1/projects/${state.session.projectId}/members`).catch(() => null) : Promise.resolve(null),
     // Who this organisation has asked to pay for a guest's AI, and what it
     // has agreed to pay itself.
     api.read('/v1/acu-sponsorships', 'BILLING_ACU').catch(() => null),
@@ -260,6 +263,16 @@ export async function enterprise(root) {
     // Caught rather than thrown: a role that may read this screen and not the
     // company block still gets the screen.
     api.get('/v1/company/issuer').catch(() => null),
+    // The clients this tenancy already has projects for, so the create-project
+    // form can offer an existing client rather than a free-typed name that
+    // splits one client into several near-identical strings.
+    api.get('/v1/clients').catch(() => ({ clients: [] })),
+    // The company's own document identity — the trading name, colour, legal
+    // detail and logo every document inherits unless a project overrides it.
+    // Set here once rather than re-entered on each tender's Site Documents
+    // screen, which is where the only door to it used to be. Null where the
+    // reader may not administer the tenancy; the brand card then stays shut.
+    api.get('/v1/branding').catch(() => null),
   ]);
 
   // What somebody without enterprise authority can still see: where the
@@ -351,6 +364,17 @@ export async function enterprise(root) {
                 : blockedReason('ENTERPRISE_STRUCTURE', 'U'),
             },
             {
+              // The company's own document identity — trading name, colour,
+              // legal detail — set once here rather than per tender on Site
+              // Documents. The logo goes up through the file control beside the
+              // actions, because a command form cannot take a file.
+              id: 'brand',
+              label: 'Company brand',
+              tone: '',
+              permitted: can('ENTERPRISE_STRUCTURE', 'U'),
+              reason: blockedReason('ENTERPRISE_STRUCTURE', 'U'),
+            },
+            {
               /*
                * Correcting a project, which nothing could do.
                *
@@ -388,6 +412,16 @@ export async function enterprise(root) {
             },
           ]))}
         </div>
+        ${can('ENTERPRISE_STRUCTURE', 'U')
+          ? html`<div class="metric-sub" style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span>Documents are issued as <b>${brand ? (brand.issuingEntity || brand.clientName || 'not set') : 'not set'}</b>${brand?.logoRef ? ' · logo set' : ' · no logo'}. "Company brand" sets the name and legal detail; the logo uploads here.</span>
+              <label class="btn quiet sm" style="cursor:pointer">
+                Upload a logo
+                <input type="file" accept="image/png,image/jpeg" id="brand-logo-file" style="display:none" />
+              </label>
+              <span class="cmd-error" id="brand-logo-error" style="display:none"></span>
+            </div>`
+          : ''}
       </div>
 
       <div class="grid g4" style="margin-bottom:14px">
@@ -855,6 +889,50 @@ export async function enterprise(root) {
    * stores.
    */
   const COMMANDS = {
+    brand: {
+      title: 'The company identity on every document',
+      intent:
+        'What every document this business issues — quotations, bid packs, pricing schedules — says about who issued it, ' +
+        'unless a project sets a client identity of its own. The trading name and logo are the brand; the legal detail ' +
+        'names the registered company the contract and the insurance are under. Set here once rather than on each tender.',
+      path: '/v1/branding',
+      method: 'PUT',
+      submitLabel: 'Apply to every document',
+      fields: [
+        {
+          name: 'issuingEntity',
+          label: 'Trading name (issued by)',
+          value: brand?.issuingEntity ?? brand?.clientName,
+          hint: 'The name on the cover and page header of every document — your brand. A trading name shows the ' +
+            'registered company in brackets, e.g. "JNseya Construction Consultant (a trading name of JNN Global Ltd)".',
+        },
+        {
+          name: 'clientName',
+          label: 'Registered company name',
+          value: brand?.clientName,
+          hint: 'The legal entity the contract and insurance are under. Used as the issuer where no trading name is set.',
+        },
+        {
+          name: 'legalFooter',
+          label: 'Legal detail',
+          value: brand?.legalFooter,
+          hint: 'Goes on the cover and the foot of every page. Registered number, registered office, and — for a tender — ' +
+            'that the insurances are held in the registered company’s name, so an evaluator sees the cover matches the certificates.',
+        },
+        {
+          name: 'primaryColour',
+          label: 'Brand colour',
+          value: brand?.primaryColour ?? '#e2571e',
+          hint: 'Hex, as #rrggbb. The cover band and the rules take it.',
+        },
+        {
+          name: 'documentReferencePrefix',
+          label: 'Reference prefix',
+          value: brand?.documentReferencePrefix,
+          hint: 'A short company code, e.g. JNSEYA, for documents that belong to no project. A project’s documents carry that project’s own reference and name instead.',
+        },
+      ],
+    },
     check: {
       title: 'Check the licence before inviting',
       intent:
@@ -916,13 +994,13 @@ export async function enterprise(root) {
             { value: 'HYBRID', label: 'Hybrid' },
           ],
         },
-        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT },
+        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT, value: state.me?.activeCompany?.region ?? undefined },
         // A list of countries, not a box for a code. The stored value is
         // still the two-letter code — that is the standard and every reader
         // downstream expects it — but nobody has to know their own country's
         // code to fill the form in, and the picker cannot produce a
         // jurisdiction that does not exist.
-        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY,
+        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY, value: state.me?.activeCompany?.jurisdiction ?? undefined,
           hint: 'Stored as its ISO 3166-1 alpha-2 code. Leave as it is for a multi-country portfolio.' },
         { name: 'city', label: 'City' },
         {
@@ -954,12 +1032,25 @@ export async function enterprise(root) {
           options: portfolios.portfolios.map((p) => ({ value: p.id, label: p.name })),
         },
         { name: 'name', label: 'Project name' },
+        // The client this project is for. A datalist, not a dropdown: pick a
+        // client you already have, or type a new one — so one client carries
+        // many projects under the exact same string, while nothing stops a
+        // first-ever client being entered. Optional, for an internal or
+        // speculative project with no external client.
+        {
+          name: 'client',
+          label: 'Client',
+          required: false,
+          placeholder: 'Telford & Wrekin Council',
+          suggestions: (clients?.clients ?? []).map((c) => ({ value: c.name, label: c.projects ? `${c.name} (${c.projects} project${c.projects === 1 ? '' : 's'})` : c.name })),
+          hint: 'Who the work is for. Pick a client you already have, or type a new one — projects group under it.',
+        },
         // Grouped so a reader looking for "Building" finds it, while the value
         // stored stays one of the nine ONS categories.
         { name: 'sectorType', label: 'Sector', type: 'select', options: SECTOR_GROUPED },
         { name: 'assetType', label: 'Asset type', hint: 'What is being built — "Reservoir spillway", "Distribution centre"' },
-        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT },
-        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY, hint: 'Where the works are. Stored as its ISO 3166-1 alpha-2 code.' },
+        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT, value: state.me?.activeCompany?.region ?? undefined },
+        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY, value: state.me?.activeCompany?.jurisdiction ?? undefined, hint: 'Where the works are. Stored as its ISO 3166-1 alpha-2 code.' },
         { name: 'city', label: 'City' },
         {
           /*
@@ -1055,6 +1146,14 @@ export async function enterprise(root) {
       submitLabel: 'Correct it',
       fields: [
         { name: 'name', label: 'Project name', required: false, value: state.project?.name ?? '' },
+        {
+          name: 'client',
+          label: 'Client',
+          required: false,
+          value: state.project?.client ?? '',
+          suggestions: (clients?.clients ?? []).map((c) => ({ value: c.name, label: c.projects ? `${c.name} (${c.projects} project${c.projects === 1 ? '' : 's'})` : c.name })),
+          hint: 'Who the work is for. Pick a client you already use so this project groups with the others; clear it to remove.',
+        },
         { name: 'assetType', label: 'Asset type', required: false, value: state.project?.assetType ?? '' },
         {
           name: 'contractValue',
@@ -1072,6 +1171,9 @@ export async function enterprise(root) {
       transform: (v) => ({
         reason: v.reason,
         ...(v.name ? { name: v.name } : {}),
+        // Include client only when it changed — a new client, or cleared. An
+        // empty string clears it server-side; absent leaves it unchanged.
+        ...(String(v.client ?? '') !== String(state.project?.client ?? '') ? { client: v.client ?? '' } : {}),
         ...(v.assetType ? { assetType: v.assetType } : {}),
         ...(v.contractValue !== '' && v.contractValue !== undefined ? { contractValueMinor: Number(v.contractValue) } : {}),
         ...(v.plannedStart ? { plannedStart: v.plannedStart } : {}),
@@ -1503,6 +1605,9 @@ export async function enterprise(root) {
         );
       }
     }
+    if (button.dataset.command === 'brand') {
+      toast('Company identity applied', `Every document is issued as ${result.issuingEntity || result.clientName}. Upload a logo beside the actions to complete it.`, 'ok');
+    }
     // A new project changes what the estate holds, so the whole console has to
     // learn about it — the picker in the bar above most of all. Everything else
     // on this screen is a local redraw.
@@ -1511,6 +1616,30 @@ export async function enterprise(root) {
       return;
     }
     await draw();
+  });
+
+  // The logo cannot ride in the command form — a form posts JSON, a logo is
+  // bytes — so it has its own file control beside the actions, posting to the
+  // tenancy-level upload the brand inherits from everywhere.
+  document.getElementById('brand-logo-file')?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const errorBox = document.getElementById('brand-logo-error');
+    if (errorBox) {
+      errorBox.style.display = 'none';
+      errorBox.textContent = '';
+    }
+    try {
+      const stored = await api.upload('/v1/branding/logo', file);
+      toast('Logo set', `${Math.round(stored.bytes / 1024)}KB · ${stored.contentType} — on every document from here`, 'ok');
+      await draw();
+    } catch (error) {
+      if (errorBox) {
+        errorBox.style.display = '';
+        errorBox.textContent = `${error.code ? `${error.code} — ` : ''}${error.message}`;
+      }
+      event.target.value = '';
+    }
   });
   }
 }

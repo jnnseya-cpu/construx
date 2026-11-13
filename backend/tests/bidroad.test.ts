@@ -282,6 +282,73 @@ describe('the bid road, over HTTP', () => {
     );
   });
 
+  it('finds the invitation for a project created outside the convert flow', async () => {
+    /*
+     * The dead-end a real bidder hit: an invitation recorded against an
+     * opportunity, and a project created separately (not converted from it), so
+     * the project carried no originOpportunityId and no stored link. The flow
+     * found no invitation and told them to "Record an ITT" — which refused,
+     * because it was already recorded. A circle. The flow is advisory and writes
+     * nothing, so it now matches the invitation by the buyer naming the project.
+     */
+    const opp = await call('POST', '/v1/pipeline/opportunities', {
+      token: qs,
+      body: {
+        title: 'Fenland housing adaptations',
+        clientName: 'Fenland District Council',
+        sectorType: 'RMI',
+        estimatedValueMinor: 90_000_00,
+        source: 'In-Tend',
+        countryCode: 'GB',
+        city: 'March',
+      },
+    });
+    assert.equal(opp.status, 201, opp.text);
+    const oppId = String(opp.body.opportunityId ?? opp.body.id);
+
+    const inv = await call('POST', `/v1/pipeline/opportunities/${oppId}/tenders`, {
+      token: qs,
+      body: {
+        reference: 'FDC/2026/ADAPT/07',
+        issuedAt: '2026-09-14T09:00:00Z',
+        returnLocal: '2026-11-20T12:00',
+        timeZone: 'Europe/London',
+        timeZoneStated: true,
+        channel: 'PORTAL',
+        clarificationLocal: '2026-11-13T17:00',
+      },
+    });
+    assert.equal(inv.status, 201, inv.text);
+
+    // A standalone project named after the buyer — NOT converted from the opp.
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const created = await call('POST', '/v1/projects', {
+      token: admin,
+      body: {
+        portfolioId,
+        name: 'Fenland District Council',
+        sectorType: 'RMI',
+        assetType: 'Dwelling',
+        location: { continentCode: 'EU', countryCode: 'GB', city: 'March' },
+        contractValueMinor: 90_000_00,
+        currency: 'GBP',
+        plannedStart: '2026-12-01',
+        plannedCompletion: '2027-03-31',
+      },
+    });
+    assert.equal(created.status, 201, created.text);
+    const standaloneId = String(created.body.projectId);
+
+    const flow = await call('GET', `/v1/projects/${standaloneId}/flow`, { token: qs });
+    assert.equal(flow.status, 200, flow.text);
+    const register = (flow.body.steps as Array<Record<string, any>>).find((step) => step.id === 'RETURN_REGISTER');
+    assert.ok(register, 'the flow names no return register');
+    // The invitation is found: no longer sent to re-record one already recorded,
+    // and the right one (Fenland, not the earlier Leicestershire invitation).
+    assert.notEqual(register.door, 'Record an ITT', `still sends the user to re-record an already-recorded invitation: ${register.detail}`);
+    assert.ok(!/no invitation is recorded/i.test(String(register.detail ?? '')), `still reports no invitation recorded: ${register.detail}`);
+  });
+
   it('names one thing to do next, on a screen, with a button', async () => {
     /*
      * The complaint this whole flow was built for: **"the flow is not working

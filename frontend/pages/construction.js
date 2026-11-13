@@ -1546,6 +1546,10 @@ export async function construction(root) {
         },
         { name: 'evidenceHash', label: 'Evidence of the approval', type: 'file' },
       ],
+      // `planId` names the plan in the path, not a body field the route accepts
+      // (`additionalProperties: false`: approvedBy, approvingRole, note,
+      // evidenceHash). Strip it so the body carries only the approval itself.
+      transform: ({ planId, ...rest }) => rest,
     },
     inspection: {
       title: 'Record an inspection',

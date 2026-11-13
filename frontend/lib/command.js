@@ -1,7 +1,7 @@
 import { api, ApiError, hashFile, isRoleDenial } from './api.js';
 import { recordVoice, voiceSupport } from './voice.js';
 import { forEvidence } from './capture.js';
-import { queueFile, uploadInParts } from './outbox.js';
+import { queueFile, discardFile, uploadInParts } from './outbox.js';
 import { esc, exact, toast } from './ui.js';
 
 /**
@@ -52,6 +52,28 @@ const PARTS_ABOVE_BYTES = 64 * 1_048_576;
 async function storeEvidence(files) {
   const carried = [];
   for (const { hash, file } of files) {
+    /*
+     * Durable before the direct send — a refresh must never lose the bytes.
+     *
+     * The record is already filed, so the hash is on the chain and the upload is
+     * permitted. This used to send the bytes directly and *only* queue them if
+     * that send threw. But the send is fired after the modal closes, with a
+     * toast telling the operator to refresh — and a refresh aborts an in-flight
+     * `api.upload`, which does not throw, so the loop simply stops and the files
+     * it had not yet reached were dropped: the record stood, the bytes vanished,
+     * and nothing retried them. "I uploaded ten and four appeared" is exactly
+     * that race. So each file is written to the outbox first; the direct send
+     * then clears it on success, and anything a refresh interrupts is still on
+     * the device for `drainOutbox()` to store on the next load.
+     */
+    let queued = false;
+    try {
+      await queueFile(file);
+      queued = true;
+    } catch {
+      // No IndexedDB — a private window, or storage refused. The direct send
+      // below is then the only path; it is no less durable than it ever was.
+    }
     try {
       const path = `/v1/evidence/${encodeURIComponent(hash)}`;
       /*
@@ -69,15 +91,21 @@ async function storeEvidence(files) {
       } else {
         await api.upload(path, file);
       }
-    } catch {
-      try {
-        await queueFile(file);
-        carried.push(file.name);
-      } catch {
-        // No IndexedDB — a private window, or storage refused. The record and
-        // its hash still stand; the file does not follow it.
-        carried.push(file.name);
+      // Stored on the platform now, so it need not wait in the outbox. A failure
+      // to clear it is harmless: the next flush re-sends bytes the platform
+      // already holds and clears the row then.
+      if (queued) {
+        try {
+          await discardFile(hash);
+        } catch {
+          /* left for the next flush to resolve */
+        }
       }
+    } catch {
+      // The direct send failed. If it is in the outbox it is safe and the next
+      // flush will carry it, silently. Only a file we could not even queue is
+      // worth telling the operator about.
+      if (!queued) carried.push(file.name);
     }
   }
   if (carried.length > 0) {
@@ -124,7 +152,7 @@ function control(field) {
         ? `<optgroup label="${esc(o.label)}">${o.options.map(option).join('')}</optgroup>`
         : `<option value="${esc(o.value)}"${String(o.value) === String(field.value ?? '') ? ' selected' : ''}>${esc(o.label)}</option>`;
 
-    return `<select id="${id}" name="${esc(field.name)}" ${required}>
+    return `<select id="${id}" name="${esc(field.name)}" autocomplete="off" ${required}>
       ${field.placeholder ? `<option value="">${esc(field.placeholder)}</option>` : ''}
       ${(field.options ?? []).map(option).join('')}
     </select>`;
@@ -146,11 +174,30 @@ function control(field) {
     // convenience here; it is the difference between amending an authority and
     // replacing it by accident.
     const chosen = new Set((Array.isArray(field.value) ? field.value : field.value == null ? [] : [field.value]).map(String));
-    return `<select id="${id}" name="${esc(field.name)}" multiple size="${Math.min(10, Math.max(4, (field.options ?? []).length))}" ${required}>
+    // Tick-boxes, not a native `<select multiple>`. A multi-select needs
+    // Ctrl-click to add a second choice and drops the first on a plain click —
+    // a trap nobody outside a keyboard-shortcut habit knows, which had a user
+    // unable to exclude four cost heads at once. A column of checkboxes is one
+    // click each, and the chosen set and the submitted shape are unchanged.
+    // Each row's <label> and its <span> carry explicit type and colour, because
+    // the form's `.field label` rule (tiny, uppercase, dim, letter-spaced — right
+    // for a field *caption*) otherwise cascades onto these option labels and
+    // renders the whole list as a near-invisible void of faint checkboxes. The
+    // row label is readable body text, in the normal case, at full contrast.
+    const rowLabel =
+      'display:flex;gap:8px;align-items:flex-start;cursor:pointer;' +
+      'font-size:13px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--text);margin-bottom:0';
+    return `<div id="${id}" class="cmd-checkset" style="display:flex;flex-direction:column;gap:7px;max-height:260px;overflow:auto;padding:4px 2px">
       ${(field.options ?? [])
-        .map((o) => `<option value="${esc(o.value)}"${chosen.has(String(o.value)) ? ' selected' : ''}>${esc(o.label)}</option>`)
+        .map(
+          (o) =>
+            `<label style="${rowLabel}">
+              <input type="checkbox" name="${esc(field.name)}" value="${esc(o.value)}"${chosen.has(String(o.value)) ? ' checked' : ''} style="margin-top:2px;flex:none;width:16px;height:16px" />
+              <span style="font-size:13px;letter-spacing:0;text-transform:none;color:var(--text)">${esc(o.label)}</span>
+            </label>`,
+        )
         .join('')}
-    </select>`;
+    </div>`;
   }
 
   if (field.type === 'checkbox') {
@@ -164,7 +211,7 @@ function control(field) {
   }
 
   if (field.type === 'textarea') {
-    return `<textarea id="${id}" name="${esc(field.name)}" rows="${field.rows ?? 3}" ${required}
+    return `<textarea id="${id}" name="${esc(field.name)}" rows="${field.rows ?? 3}" autocomplete="off" ${required}
       placeholder="${esc(field.placeholder ?? '')}">${esc(field.value ?? '')}</textarea>`;
   }
 
@@ -227,8 +274,15 @@ function control(field) {
   // calendar's greyed-out days in the right place — and never the enforcement:
   // the API refuses a future notice date whatever the browser allowed.
   const max = field.max !== undefined ? ` max="${esc(field.max)}"` : '';
+  // Browser autofill is switched off on command inputs, not as a nicety. A
+  // free-typed field the browser had seen before — a work-package name — came
+  // back as a "Saved data" dropdown that sat *over* the platform's own datalist,
+  // so the person picked a value they had typed once with a stray space or a
+  // different dash instead of the package already on the bill, and the bill
+  // split into two packages for one job. The platform's suggestions are the only
+  // list that should appear here.
   return `<input id="${id}" name="${esc(field.name)}" type="${type}" value="${esc(field.value ?? '')}"
-    placeholder="${esc(field.placeholder ?? '')}"${step}${min}${max}${list} ${required}>${datalist}`;
+    placeholder="${esc(field.placeholder ?? '')}"${step}${min}${max}${list} autocomplete="off" ${required}>${datalist}`;
 }
 
 /**
@@ -334,7 +388,11 @@ async function collect(host, fields, files = [], say) {
     if (!el) continue;
 
     if (field.type === 'multiselect') {
-      const chosen = [...el.selectedOptions].map((option) => option.value);
+      // Rendered as a column of checkboxes sharing the field name, so the chosen
+      // set is every ticked box rather than a `<select>`'s selectedOptions.
+      const chosen = [...host.querySelectorAll(`input[type="checkbox"][name="${CSS.escape(field.name)}"]`)]
+        .filter((box) => box.checked)
+        .map((box) => box.value);
       // An empty required multiselect is a refusal, not an empty array: the
       // endpoint would reject it anyway, and refusing here names the field.
       if (chosen.length === 0) {
@@ -484,6 +542,13 @@ export function command({
   submitLabel = 'Submit',
   transform,
   aiCost = false,
+  // `ai: true` is the short form some modules (the Bid-On studio among them)
+  // declare on a command that reaches a provider. It means the same thing as
+  // `aiCost` — quote the cost before anything is spent — and was being ignored,
+  // so a whole studio of AI actions (drafting an answer, scoring it, reading
+  // evidence) opened with no price on screen and no affordability gate, the one
+  // rule the panel exists to enforce. Both switch the cost block on.
+  ai = false,
   method = 'POST',
   /**
    * A rule the form can check for itself, before anything is sent.
@@ -571,7 +636,7 @@ export function command({
             </div>`,
           )
           .join('')}
-        ${aiCost ? '<div class="cost-slot"></div>' : ''}
+        ${aiCost || ai ? '<div class="cost-slot"></div>' : ''}
       </div>
       <div class="foot">
         <button type="button" class="btn quiet" data-close>Cancel</button>
@@ -801,7 +866,7 @@ export function command({
     document.body.append(host);
     host.querySelector('input, select, textarea')?.focus();
 
-    if (aiCost) {
+    if (aiCost || ai) {
       const slot = host.querySelector('.cost-slot');
       // The path may depend on fields the person has not filled in yet, so the
       // quote is taken against the path as declared. Every quotable route is
@@ -834,8 +899,8 @@ export function command({
  * it are all server-side facts, and duplicating any of them here would create a
  * second pricing model that drifts from the one that bills.
  */
-export function quoteAction(path) {
-  return api.post('/v1/ai/quote', { method: 'POST', path });
+export function quoteAction(path, extra = {}) {
+  return api.post('/v1/ai/quote', { method: 'POST', path, ...extra });
 }
 
 /** How confident the figure is, said in words rather than left to a label. */
@@ -848,7 +913,21 @@ function quoteBasisText(quote) {
     const runs = quote.observations === 1 ? 'one previous run' : `${quote.observations} previous runs`;
     return `Estimated from ${runs} of this action on your account.${range}`;
   }
+  if (quote.sizedFromTokens) {
+    return `This action has not run on your account yet. The estimate is sized from the text it sends — about ${Math.round(quote.sizedFromTokens / 1000)}k tokens of text — at the provider’s published rate; the answer it writes can add to it. It becomes a measured figure after the first run.`;
+  }
   return 'This action has not run on your account yet, so this is the provider’s floor cost rather than a prediction — the real charge is usually higher. It becomes a measured figure after the first run.';
+}
+
+/**
+ * An exempt account, said in words.
+ *
+ * Its charge really is nil — nothing leaves its wallet — but "£0.00" alone read
+ * as "this AI is free", and the provider is paid either way. So the figure the
+ * provider will be paid is shown beside it.
+ */
+function exemptText(quote) {
+  return `This account is exempt: nothing is taken from its wallet. The provider is still paid for the run — about ${exact(quote.providerCostMinor)} — by whoever operates this platform.`;
 }
 
 /**
@@ -907,6 +986,7 @@ export function costBlock(quote) {
         }
       </div>
     </div>
+    ${quote.exempt ? `<div class="notice" style="margin-bottom:8px">${esc(exemptText(quote))}</div>` : ''}
     <div class="metric-sub">${esc(quoteBasisText(quote))}</div>
     ${disclosureBlock(quote.disclosure)}
     ${blocked ? `<div class="notice warn">${esc(quoteBlockedText(quote))}</div>` : ''}
@@ -965,6 +1045,18 @@ function disclosureBlock(disclosure) {
         <span class="lbl">What it carries</span>
         <span class="val">${esc(sensitivityText(disclosure.sensitivity))}</span>
       </div>
+      ${
+        // What the vendor may receive, beside what this request carries. A
+        // request whose records turn out more sensitive than the vendor's
+        // clearance is refused before anything is sent or charged; showing the
+        // clearance here is how a person sees that limit before pressing.
+        disclosure.clearance && !stays
+          ? `<div class="row">
+              <span class="lbl">Cleared to receive</span>
+              <span class="val">${esc(sensitivityText(disclosure.clearance))} and below</span>
+            </div>`
+          : ''
+      }
     </div>
     <div class="notice ${tone}" style="margin-top:8px">${esc(disclosure.statement)}</div>
   </div>`;
@@ -995,7 +1087,7 @@ function sensitivityText(level) {
  * a refusal, not a licence to spend — if the platform cannot say what something
  * costs, nobody is committed to it by default.
  */
-export function confirmCost({ title, intent, path, runLabel = 'Run' }) {
+export function confirmCost({ title, intent, path, runLabel = 'Run', quoteWith = {} }) {
   return new Promise((resolve) => {
     const host = document.createElement('div');
     host.className = 'modal-host';
@@ -1034,7 +1126,7 @@ export function confirmCost({ title, intent, path, runLabel = 'Run' }) {
     document.addEventListener('keydown', onKey);
     document.body.append(host);
 
-    quoteAction(path)
+    quoteAction(path, quoteWith)
       .then((quote) => {
         slot.innerHTML = costBlock(quote);
         if (quote.affordable) {

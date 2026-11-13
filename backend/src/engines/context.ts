@@ -16,6 +16,7 @@ import type { AuthContext } from '../identity/auth.ts';
 import { assertAccess, evaluateAccess, type AccessAttributes } from '../identity/abac.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
 import type { ModuleId } from '../identity/modules.ts';
+import type { AddonGrantRecord } from '../billing/addongrant.ts';
 import type { GoldenThreadLedger, CommitInput } from '../goldenthread/ledger.ts';
 import type { ActorRef, EntityRef, EventSource, GoldenThreadEvent } from '../goldenthread/types.ts';
 import { hashEvidence } from '../core/canonical.ts';
@@ -83,6 +84,37 @@ export type EngineContext = {
    * reads this one.
    */
   heldModules: readonly ModuleId[];
+  /**
+   * The Platform-Admin provision for a commercial add-on this tenancy holds, if any
+   * — the operator's grant, the verified provider status and the paid seat quantity,
+   * resolved once beside `grantedModules`. Undefined for almost every tenancy, which
+   * is the point: an add-on is provisioned per company. `billing/addonstore.ts`
+   * derives the tenant's entitlement and enforces seats from this; it is never set
+   * from a client. See `billing/addongrant.ts`.
+   */
+  addonGrant?: AddonGrantRecord;
+  /**
+   * Whether this tenancy holds its **paid add-ons free of charge** right now — a
+   * genuine operator exemption, resolved once beside `addonGrant` and with its
+   * term already applied, so an exemption that has run out reads `false` here on
+   * the day after it ends.
+   *
+   * "Genuine" is load-bearing. A company of an ordinary **paying** group also
+   * carries a free grant on its own subscription — coverage, meaning "the group
+   * pays centrally, nothing is billed to me", not exemption — and the add-on is a
+   * priced product the group still owes for. So this is true only when the entity
+   * that actually settles the bill is itself exempt: the company's own free grant
+   * when it stands alone, or its group's **primary** company's free grant when it
+   * is in a group (true for a genuinely exempt group, false for a paying one). See
+   * `Platform.#addonFreeExempt`.
+   *
+   * A free-exempt tenancy's allocated add-on is usable without the billing
+   * provider ever confirming a charge, for as long as the exemption lasts; the
+   * moment the term ends it falls back to the ordinary grant-AND-provider machine
+   * and becomes chargeable like everyone else. Absent means not exempt, which is
+   * every ordinary tenancy. `billing/addonstore.ts` is the only reader.
+   */
+  freeExempt?: boolean;
   /**
    * The agent this context is acting on behalf of, where one is.
    *

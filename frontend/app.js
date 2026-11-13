@@ -5,6 +5,7 @@ import { wireDrill } from './lib/drill.js';
 import { maybeShowActivation } from './lib/activation.js';
 import { armInstallPrompt } from './lib/install.js';
 import { mountOfflineBar } from './lib/offline.js';
+import { guideStrip, loadJourney } from './lib/guide.js';
 import * as outbox from './lib/outbox.js';
 import { PAGES } from './pages/index.js';
 
@@ -126,6 +127,11 @@ export const NAV = [
       // in and the one a site manager is judged on; the quality half of the
       // screen authorises itself separately, panel by panel.
       { id: 'construction', label: 'Construction', area: 'SAFETY_RAMS', alsoArea: ['QUALITY_COMMISSIONING', 'FIELD_EXECUTION', 'PROCUREMENT_AWARD'], icon: 'shield' },
+      // Grid Connection AI — the HV grid-connection delivery workboard (42 steps,
+      // eight gates). Project-scoped golden-thread records; gated on
+      // QUALITY_COMMISSIONING, the commissioning/assurance area its gate decisions
+      // and step validations authorise against, which every such writer can read.
+      { id: 'grid', label: 'Grid Connection', area: 'QUALITY_COMMISSIONING', icon: 'link' },
       // Gated on the model alone until the common data environment landed on
       // this screen. The CDE, the review cycle, the RFI register, submittals
       // and the drawing register are all DESIGN_INFORMATION — so the architect
@@ -150,6 +156,16 @@ export const NAV = [
     group: 'Commercial',
     items: [
       { id: 'pipeline', label: 'Pipeline & Bids', area: 'BUSINESS_DEVELOPMENT', icon: 'target', tenantScoped: true, hostOnly: true },
+      // Feasibility appraisal: a site and a brief into a schedule, land budget,
+      // order-of-cost and programme. Tenant-level and pre-project, so it is not
+      // gated on a project; it reads reference data and the deterministic compute
+      // route, offering no write action of its own.
+      { id: 'feasibility', label: 'Feasibility', area: 'BUSINESS_DEVELOPMENT', icon: 'meter', tenantScoped: true, hostOnly: true },
+      // Autonomous Consultancy — the stateful engagement workboard. Project-scoped
+      // (the engagement and its tasks are golden-thread records on the project),
+      // so unlike Feasibility it is not tenant-level; it offers business-development
+      // writes and is gated on that area, which every such writer can also read.
+      { id: 'consultancy', label: 'Consultancy', area: 'BUSINESS_DEVELOPMENT', icon: 'clipboard' },
       // Bid-On: bid work delivered for external customers. `module` is what
       // makes it absent rather than locked for everybody else — see
       // `reachable()` — and the value is checked against what the API said this
@@ -186,7 +202,7 @@ export const NAV = [
       // BIM manager takes off quantities from the model and a supplier answers
       // an enquiry; neither holds procurement award, and neither could reach
       // the screen that takes their work.
-      { id: 'procurement', label: 'Tender & Procurement', area: 'PROCUREMENT_AWARD', alsoArea: ['BOQ_TAKEOFF', 'ESTIMATE_TENDER', 'SUPPLIER_SUBMISSION'], icon: 'gavel' },
+      { id: 'procurement', label: 'Tender & Procurement', area: 'PROCUREMENT_AWARD', alsoArea: ['BOQ_TAKEOFF', 'ESTIMATE_TENDER', 'SUPPLIER_SUBMISSION', 'RISK_REGISTER'], icon: 'gavel' },
       // A design change is raised by the design team and valued by the
       // commercial one. Gating on contracts alone meant the half of the screen
       // that starts the process was unreachable by the people who start it.
@@ -406,6 +422,8 @@ let grantableRoles = [];
  * holding a rule the server does not.
  */
 let heldModules = [];
+/** The AI expert behind each role — published by the API, keyed by role. */
+let roleExperts = {};
 
 /**
  * The grantable roles, for a screen that offers them.
@@ -435,6 +453,16 @@ export function permissionMatrix() {
 
 export function phaseGates() {
   return writePhaseGates;
+}
+
+/**
+ * The AI expert behind a role — the experienced construction professional the
+ * platform's agents reason as on that role's behalf, or null where the role has
+ * no single one. A getter for the same reason as the others: it arrives with the
+ * matrix, and the mapping stays on the server, not restated here.
+ */
+export function roleExpertFor(role) {
+  return roleExperts[role] ?? null;
 }
 
 /**
@@ -480,6 +508,7 @@ function forgetPermissions() {
   writePhaseGates = {};
   grantableRoles = [];
   heldModules = [];
+  roleExperts = {};
 }
 
 /**
@@ -503,6 +532,7 @@ async function loadMatrix() {
   writePhaseGates = result.writePhaseGates ?? {};
   grantableRoles = result.tenantGrantableRoles ?? [];
   heldModules = result.modules ?? [];
+  roleExperts = result.roleExpertise ?? {};
   // The record-type classification the API authorises reads against, so a
   // screen can withhold a type this role cannot read without asking first.
   // Unclassified means ask: the server decides, and this only ever narrows what
@@ -544,7 +574,7 @@ const WRITE_CODES = new Set(['C', 'U', 'A', 'I', 'G']);
  * so the interface cannot offer a command the platform will refuse, and cannot
  * hide one it would accept. Duplicating either rule here is how the two drift.
  */
-export function blockedReason(area, code = 'R', { tenantScoped = false } = {}) {
+export function blockedReason(area, code = 'R', { tenantScoped = false, phaseExempt = false } = {}) {
   const roles = state.session?.user?.roles ?? [];
   if (matrix && !roles.some((role) => (matrix[role]?.[area] ?? []).includes(code))) {
     return `${ROLE_DENIAL_PREFIX}${roles.join('/')} holds "${code}" on ${area}`;
@@ -556,7 +586,14 @@ export function blockedReason(area, code = 'R', { tenantScoped = false } = {}) {
   // to have selected is the browser holding a rule the server does not, which
   // is the exact drift this function exists to prevent: the API accepts these
   // commands whatever phase an unrelated project is in.
-  const phase = tenantScoped ? undefined : state.project?.phase;
+  //
+  // `phaseExempt` is the same statement for a command that *is* project-scoped
+  // but whose area the server does not phase-gate here — the Grid Connection AI
+  // playbook runs G0→G7 across the whole lifecycle, so its QUALITY_COMMISSIONING
+  // writes carry no `lifecyclePhase` on the server and are accepted in any phase.
+  // Applying the generic QUALITY_COMMISSIONING gate on the browser would hide a
+  // form the API would accept — the drift this function exists to prevent.
+  const phase = (tenantScoped || phaseExempt) ? undefined : state.project?.phase;
   const allowed = writePhaseGates[area];
   if (WRITE_CODES.has(code) && phase && allowed && !allowed.includes(phase)) {
     return `${humanise(area)} cannot be written during the ${humanise(phase)} phase`;
@@ -690,6 +727,18 @@ document.addEventListener('click', (event) => {
   goTo(target.dataset.goto, target.dataset.gotoProject || undefined);
 });
 
+// `data-ask-seed` carries a question from the guided walkthrough's "Ask for
+// help" into the Copilot, so a stuck person arrives with the step they were on
+// already asked rather than facing a blank box. Set before navigating; the
+// Copilot reads and clears it on load.
+document.addEventListener('click', (event) => {
+  const el = event.target.closest('[data-ask-seed]');
+  if (!el) return;
+  event.preventDefault();
+  state.askSeed = el.dataset.askSeed;
+  navigate('copilot');
+});
+
 // Every KPI opens to the events behind it. Wired once for the whole
 // application: each screen re-renders its own root on every draw, so a listener
 // bound per tile would be re-attached on each one.
@@ -788,18 +837,13 @@ async function establishSession(verified) {
   // sign-in through this path printed "undefined › undefined" above the work.
   // They are two ordinary tenant-scoped reads; a tenancy that has neither yet is
   // a new tenancy, and the crumb below falls back rather than inventing one.
-  const [enterprise, portfolio] = await Promise.all([
-    api.get('/v1/enterprises').then((r) => r.enterprises?.[0]?.name ?? null).catch(() => null),
-    api.get('/v1/portfolios').then((r) => r.portfolios?.[0]?.name ?? null).catch(() => null),
-  ]);
-
   session.set({
     ...session.get(),
     projectId: first?.id ?? first?.projectId ?? null,
-    enterprise,
-    portfolio,
+    projectClosed: false,
   });
   state.session = session.get();
+  await refreshEstateNames();
   state.project = null;
   state.gate = null;
   state.wallet = null;
@@ -1233,21 +1277,40 @@ function walletPercent() {
  * With one project it renders as plain text. A picker offering a single choice
  * is a control that does nothing, and it invites the press that proves it.
  */
+// A project's label carries BOTH its client and its project name, so two projects
+// for the same client — or two named alike — can be told apart. Filing a document
+// against the wrong project starts with picking the wrong one here, and "Telford
+// and Wrekin Council · Tender" twice over is exactly that trap.
+function projectLabel(project) {
+  const client = String(project.client ?? '').trim();
+  const name = String(project.name ?? '').trim();
+  if (client && name && client.toLowerCase() !== name.toLowerCase()) return `${client} — ${name}`;
+  return name || client || 'Untitled project';
+}
+
 function projectPicker() {
   const current = state.project?.name ?? (state.session?.projectId ? 'Loading…' : 'no project yet');
   const projects = state.projects ?? [];
   if (projects.length < 2) return html`<b>${current}</b>`;
+
+  // Count the core labels so any that still read identically can be tie-broken.
+  const cores = projects.map(projectLabel);
+  const counts = new Map();
+  for (const c of cores) counts.set(c, (counts.get(c) ?? 0) + 1);
 
   return html`<select
     class="project-pick"
     id="project-pick"
     aria-label="Project — changing this changes what you are looking at"
   >
-    ${projects.map((project) => {
+    ${projects.map((project, i) => {
       const id = project.id ?? project.projectId;
       const phase = project.phase ? ` · ${humanise(project.phase)}` : '';
+      // When two projects would read the same, append a short id so they are
+      // never confused for one another in the list.
+      const tie = counts.get(cores[i]) > 1 ? ` · …${String(id).slice(-5)}` : '';
       return html`<option value="${id}" ${raw(id === state.session?.projectId ? 'selected' : '')}>
-        ${project.name}${phase}
+        ${cores[i]}${tie}${phase}
       </option>`;
     })}
   </select>`;
@@ -1303,6 +1366,32 @@ function topbar() {
   </header>`;
 }
 
+/**
+ * The two names above the project in the breadcrumb, read from the record.
+ *
+ * They were read once, at sign-in, and never again — so a company that signed
+ * in with nothing and then created its portfolio and project on Enterprise &
+ * Portfolio saw "no portfolio yet" above the project it had just put in that
+ * portfolio, until it signed out. The portfolio named is the current
+ * project's own, so a company with two portfolios sees the right one.
+ */
+async function refreshEstateNames() {
+  const [enterprises, portfolios] = await Promise.all([
+    api.get('/v1/enterprises').catch(() => null),
+    api.get('/v1/portfolios').catch(() => null),
+  ]);
+  if (!enterprises && !portfolios) return;
+  const list = portfolios?.portfolios ?? [];
+  const own = list.find((portfolio) => portfolio.id === state.project?.portfolioId) ?? list[0];
+  const names = {
+    enterprise: enterprises?.enterprises?.[0]?.name ?? state.session?.enterprise ?? null,
+    portfolio: own?.name ?? null,
+  };
+  if (names.enterprise === state.session?.enterprise && names.portfolio === state.session?.portfolio) return;
+  session.set({ ...session.get(), ...names });
+  state.session = session.get();
+}
+
 async function loadContext() {
   // An operator has no project context to load — asking for one would be denied,
   // correctly, by the same rule that hides delivery navigation from them.
@@ -1330,11 +1419,14 @@ async function loadContext() {
     // out and back in. A live tenancy hit exactly that: project created, Site
     // Services still saying there was no project. The list is the truth, and
     // it is asked here rather than remembered from sign-in.
+    //
+    // Not after the person closed one on purpose ("Show all tenders"): then the
+    // list is kept for the picker and no project is chosen for them.
     const listed = await api.get('/v1/projects').catch(() => null);
     const projects = listed?.projects ?? listed?.items ?? (Array.isArray(listed) ? listed : []);
     const first = projects[0];
     const firstId = first?.id ?? first?.projectId ?? null;
-    if (firstId) {
+    if (firstId && !state.session?.projectClosed) {
       session.set({ ...session.get(), projectId: firstId });
       state.session = session.get();
       return loadContext();
@@ -1342,7 +1434,7 @@ async function loadContext() {
 
     state.project = null;
     state.gate = null;
-    state.projects = [];
+    state.projects = projects;
     // The wallet needs BILLING_ACU, which most delivery roles do not hold. The
     // matrix is already loaded by this point, so the refusal is known in
     // advance and the request is not made — the same rule the command bar
@@ -1377,6 +1469,7 @@ async function loadContext() {
   state.project = detail.project;
   state.gate = detail.gate;
   state.wallet = wallet;
+  await refreshEstateNames();
 }
 
 /**
@@ -1391,6 +1484,7 @@ async function loadContext() {
  * the picker, because an empty picker reads as "the estate has gone".
  */
 async function refreshProjectList() {
+  if (!state.session?.portfolio) await refreshEstateNames();
   const listed = await api.get('/v1/projects').catch(() => null);
   if (!listed) return;
   state.projects = listed.projects ?? listed.items ?? (Array.isArray(listed) ? listed : state.projects);
@@ -1428,7 +1522,7 @@ async function refreshProjectList() {
  */
 function selectProject(projectId) {
   if (!projectId || projectId === state.session?.projectId) return false;
-  session.set({ ...session.get(), projectId });
+  session.set({ ...session.get(), projectId, projectClosed: false });
   state.session = session.get();
   state.project = null;
   state.gate = null;
@@ -1438,6 +1532,37 @@ function selectProject(projectId) {
 
 export async function openProject(projectId) {
   if (!selectProject(projectId)) return;
+  await draw();
+}
+
+/**
+ * Step back out of a project, so a screen that narrows to the selected one
+ * shows every project again.
+ *
+ * The counterpart to `openProject`. A screen that focuses on
+ * `state.session.projectId` — the pipeline shows one tender at a time — needs a
+ * way to clear the focus without a project to switch *to*. `selectProject`
+ * cannot do it: it guards against a falsy id precisely so a stray call never
+ * blanks the selection. This clears it deliberately and redraws, and the same
+ * project-derived caches are dropped so nothing downstream reads a stale one.
+ *
+ * Returns without redrawing when nothing was selected, so it is safe to wire to
+ * a control that may be pressed when there is nothing to clear.
+ */
+export async function closeProject() {
+  if (!state.session?.projectId) return;
+  /*
+   * Closed on purpose, and remembered as such. The redraw below loads context
+   * with no project, and that path picks the first project for a session that
+   * never chose one — so "Show all tenders" re-focused the very tender it was
+   * pressed to leave, and a second tender on the board could not be acted on.
+   * Choosing a project again (`openProject`) clears the mark.
+   */
+  session.set({ ...session.get(), projectId: undefined, projectClosed: true });
+  state.session = session.get();
+  state.project = null;
+  state.gate = null;
+  state.wallet = null;
   await draw();
 }
 
@@ -1527,6 +1652,7 @@ async function draw() {
       ${sidebar(page)}
       <main class="main">
         ${topbar()}
+        <div id="guide"></div>
         <div class="view" id="view"><div class="grid g4">
           <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
         </div></div>
@@ -1551,11 +1677,25 @@ async function draw() {
       root,
       html`<div class="shell">
         ${sidebar(page)}
-        <main class="main">${topbar()}<div class="view" id="view"></div></main>
+        <main class="main">${topbar()}<div id="guide"></div><div class="view" id="view"></div></main>
       </div>`,
     );
     bindSignOut();
     void api.hydrateImages(document.querySelector('.topbar'));
+
+    // The guided walkthrough, above the view on every screen. Mounted here —
+    // before the no-project and not-authorised guards below can return early —
+    // because a brand-new account with no job open is exactly where it is most
+    // needed, and that path is one of the early returns. Operators have no
+    // journey (they run the estate, not a bid), so it is not drawn for them.
+    // Fire-and-forget: the strip renders into its own slot when the read lands,
+    // and a later navigation that rebuilds the shell simply draws its own.
+    if (!isOperator()) {
+      void loadJourney(state.session?.projectId).then((journey) => {
+        const slot = document.getElementById('guide');
+        if (slot && journey) render(slot, guideStrip(journey, { here: page }));
+      });
+    }
     // A paying account with no payment method authorised is asked, once per
     // session, how it will pay going forward. Never an operator, and never a
     // company covered by its group — the position says so and the popup stays

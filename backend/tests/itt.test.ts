@@ -5,8 +5,10 @@ import { issueTokens, verifyToken } from '../src/identity/auth.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import * as itt from '../src/domain/itt.ts';
 import * as evidence from '../src/domain/evidenceclaim.ts';
+import * as tenderintel from '../src/domain/tenderintel.ts';
 import * as costintel from '../src/domain/costintel.ts';
 import * as structure from '../src/domain/structure.ts';
+import * as radar from '../src/domain/radar.ts';
 import * as tender from '../src/engines/tender.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -115,7 +117,48 @@ describe('The compliance matrix', () => {
 
     assert.equal(result.weightings.stated, 90);
     assert.equal(result.weightings.complete, false);
+    assert.equal(result.weightings.status, 'SHORT');
     assert.ok(result.clarifications.some((c) => c.includes('total 90%')));
+  });
+
+  it('does not raise a weightings question when sub-criteria flatten to over 100%', () => {
+    // The bug this guards: quality sub-criteria are percentages of a section,
+    // not of the whole, so a nested scheme (a 30% quality block split into parts
+    // that themselves sum to 100%, plus 70% price) flattens to well over 100%.
+    // That is normal nesting, not a buyer error — asking "your weightings total
+    // 180%" on a well-formed tender makes the bidder look unable to read it. So
+    // a total over 100% is NESTED and carries no clarification.
+    const result = analyse({
+      requirements: [
+        requirement({ reference: 'P', category: 'COMMERCIAL', weightingPercent: 70 }),
+        requirement({ reference: 'Q', category: 'QUALITY', weightingPercent: 30 }),
+        requirement({ reference: 'Q1', category: 'QUALITY', weightingPercent: 30 }),
+        requirement({ reference: 'Q2', category: 'HEALTH_AND_SAFETY', weightingPercent: 15 }),
+        requirement({ reference: 'Q3', category: 'PROGRAMME', weightingPercent: 20 }),
+      ],
+    });
+
+    assert.ok(result.weightings.stated > 100, 'the flattened total is over 100%');
+    assert.equal(result.weightings.status, 'NESTED');
+    assert.equal(result.weightings.complete, false);
+    assert.ok(
+      !result.clarifications.some((c) => c.startsWith('The stated evaluation weightings total')),
+      'a nested scheme over 100% must not raise a weightings clarification',
+    );
+  });
+
+  it('is clean when the stated weightings total exactly 100%', () => {
+    const result = analyse({
+      requirements: [
+        requirement({ reference: 'P', category: 'COMMERCIAL', weightingPercent: 70 }),
+        requirement({ reference: 'Q', category: 'QUALITY', weightingPercent: 30 }),
+      ],
+    });
+
+    assert.equal(result.weightings.stated, 100);
+    assert.equal(result.weightings.status, 'COMPLETE');
+    assert.equal(result.weightings.complete, true);
+    assert.ok(!result.clarifications.some((c) => c.startsWith('The stated evaluation weightings total')));
   });
 });
 
@@ -172,6 +215,64 @@ describe('A named certificate is matched to the one the invitation asks for', ()
     // than burying the real gaps under everything it has not automated.
     const line = cert({ requirement: 'ISO 55001 asset management certification', evidenceRequired: 'ISO 55001 certificate' });
     assert.equal(line.status, 'UNKNOWN');
+  });
+
+  it('does not wave a Gold requirement through on a Silver held, and never off the general list', () => {
+    // The commercial-killer: a highways framework demands Constructionline Gold,
+    // and a tier-blind match marked it satisfied by a held Silver. Gold is a
+    // mandatory bar; a false pass here loses the bid at the preferred-tenderer
+    // check with everything else already spent.
+    const goldReq = { requirement: 'Constructionline Gold accreditation', evidenceRequired: 'Constructionline Gold Accreditation Number' };
+
+    // Seeded profile holds Gold → satisfied, by that tier's name.
+    const onGold = cert(goldReq);
+    assert.equal(onGold.status, 'SATISFIED');
+    assert.ok(onGold.evidenceHeld?.includes('Constructionline Gold'), `evidence was: ${onGold.evidenceHeld}`);
+
+    const current = radar.companyProfile(qs());
+    try {
+      // Hold only Silver (plus ISO 9001, so the general list is non-empty and a
+      // blanket probe would otherwise have something to wrongly return).
+      radar.setCompanyProfile(qs(), { ...current, accreditations: ['Constructionline Silver', 'ISO 9001'] });
+      const onSilver = cert(goldReq);
+      assert.equal(onSilver.status, 'GAP', 'Silver does not satisfy a Gold requirement');
+      assert.equal(onSilver.evidenceHeld, undefined, 'and it is not answered off the general accreditation list');
+    } finally {
+      radar.setCompanyProfile(qs(), current);
+    }
+  });
+});
+
+// Enhanced DBS is a mandatory requirement on work in occupied homes — satisfied
+// by holding the checks, so it belongs in the evidence queue, never written as a
+// scored method statement. The field is optional on the profile, so a business
+// that has not recorded it reads as a gap rather than crashing or false-passing.
+describe('Enhanced DBS is evidenced from the profile, not drafted as prose', () => {
+  const dbsLine = () =>
+    analyse({
+      requirements: [
+        requirement({
+          reference: 'D1',
+          category: 'HEALTH_AND_SAFETY',
+          requirement: 'Evidence of enhanced DBS checks for personnel entering occupied homes',
+          evidenceRequired: 'DBS certificates',
+        }),
+      ],
+    }).matrix[0]!;
+
+  it('is a gap when the business has not recorded holding them', () => {
+    const line = dbsLine();
+    assert.equal(line.status, 'GAP');
+    assert.equal(line.evidenceHeld, undefined);
+  });
+
+  it('is satisfied once recorded, and carries the detail through', () => {
+    const current = radar.companyProfile(qs());
+    radar.setCompanyProfile(qs(), { ...current, dbs: { held: true, detail: 'enhanced DBS for all site operatives' } });
+    const line = dbsLine();
+    assert.equal(line.status, 'SATISFIED');
+    assert.ok(line.evidenceHeld?.includes('Enhanced DBS'), `evidence was: ${line.evidenceHeld}`);
+    assert.ok(line.evidenceHeld?.includes('all site operatives'));
   });
 });
 
@@ -254,6 +355,243 @@ describe('Held evidence is read against the matrix and proposed, never invented'
     assert.ok(coverage.missing >= 1);
     assert.ok(coverage.linkSuggested >= 2);
     assert.match(coverage.summary, /covered/);
+  });
+
+  it('lists the distinct documents to attach, each once, with what each answers', () => {
+    const ids = coverage.toAttach.map((a) => a.claimId);
+    assert.equal(new Set(ids).size, ids.length, 'a document appears once, not per requirement');
+    const method = coverage.toAttach.find((a) => /Temporary works method statement/.test(a.claim))!;
+    assert.ok(method, 'the verified method statement is attachable');
+    assert.equal(method.standing, 'APPROVED');
+    assert.ok(method.linkedRefs.includes('R3'));
+    const iso = coverage.toAttach.find((a) => /ISO 14001/.test(a.claim))!;
+    assert.ok(iso, 'the held ISO 14001 certificate is attachable even while pending');
+    assert.ok(iso.suggestedRefs.includes('R2'), 'it answers R2 by proposal, not a link');
+    assert.ok(!iso.linkedRefs.includes('R2'));
+  });
+
+  it('lists what to obtain before submitting, and only what nothing current answers', () => {
+    const r5 = coverage.toObtain.find((o) => o.reference === 'R5')!;
+    assert.ok(r5, 'R5 has nothing on file and must be obtained');
+    assert.equal(r5.reason, 'MISSING');
+    // Profile-proven, covered, and has-held-evidence lines are not here.
+    assert.ok(!coverage.toObtain.some((o) => ['R1', 'R2', 'R3', 'R4', 'R6'].includes(o.reference)));
+  });
+});
+
+describe('The submission evidence plan — what to attach, what to obtain', () => {
+  let coverage: ReturnType<typeof itt.evidenceCoverage>;
+
+  before(() => {
+    const written = analyse({
+      reference: 'ITT-PLAN-01',
+      requirements: [
+        requirement({ reference: 'P1', category: 'TECHNICAL', mandatory: false, requirement: 'Access method statement', evidenceRequired: 'A method statement' }),
+        requirement({ reference: 'P2', category: 'TECHNICAL', mandatory: false, requirement: 'Lifting method statement', evidenceRequired: 'A method statement' }),
+        requirement({ reference: 'P3', category: 'COMMERCIAL', mandatory: true, requirement: 'Form of tender, signed', evidenceRequired: 'Signed form of tender' }),
+        requirement({ reference: 'P4', category: 'COMMERCIAL', mandatory: false, requirement: 'Anti-collusion declaration', evidenceRequired: 'Signed anti-collusion certificate' }),
+        // A scored question — answered in the submission, not filed as library evidence.
+        requirement({ reference: 'P5', category: 'QUALITY', mandatory: false, weightingPercent: 10, requirement: 'Quality Question 1 — relevant experience', evidenceRequired: 'A written answer with worked examples' }),
+        // A process instruction — followed, not obtained.
+        requirement({ reference: 'P6', category: 'SUBMISSION', mandatory: true, requirement: 'Submit via the In-Tend portal', evidenceRequired: 'All tender returns sent via In-Tend' }),
+      ],
+    });
+    const q = qs();
+    const owner = platform.context(seed.users.owner!.auth, seed.projectId, { source: 'WEB' });
+    // One document answering two requirements, linked to both and verified.
+    const method = evidence.assertClaim(q, {
+      kind: 'METHOD',
+      claim: 'Combined access and lifting method statement',
+      sourceHash: 'h-plan-method',
+      covers: ['P1', 'P2'],
+    });
+    evidence.verifyClaim(owner, method.id, { method: 'Read against the temporary works design' });
+    coverage = itt.evidenceCoverage(q, written.analysisId);
+  });
+
+  it('lists a document answering two requirements once, carrying both references', () => {
+    const doc = coverage.toAttach.find((a) => /Combined access and lifting/.test(a.claim))!;
+    assert.ok(doc, 'the dual-purpose document is attachable');
+    assert.deepEqual([...doc.covers].sort(), ['P1', 'P2']);
+    assert.deepEqual([...doc.linkedRefs].sort(), ['P1', 'P2']);
+  });
+
+  it('puts the mandatory requirement to obtain ahead of the discretionary one', () => {
+    const mine = coverage.toObtain.filter((o) => o.reference === 'P3' || o.reference === 'P4');
+    assert.deepEqual(mine.map((o) => o.reference), ['P3', 'P4']);
+    assert.equal(mine.find((o) => o.reference === 'P3')!.mandatory, true);
+    assert.equal(mine.find((o) => o.reference === 'P3')!.reason, 'MISSING');
+  });
+
+  it('keeps scored questions and process instructions out of the evidence-to-obtain list', () => {
+    // P5 is a weighted question (answered in the submission) and P6 is a
+    // process instruction (followed, not obtained) — neither is library evidence.
+    assert.ok(!coverage.toObtain.some((o) => o.reference === 'P5'), 'a scored question is not evidence to obtain');
+    assert.ok(!coverage.toObtain.some((o) => o.reference === 'P6'), 'a process instruction is not evidence to obtain');
+  });
+});
+
+describe('The analysis raises its own clarifications to the client in one act', () => {
+  let analysisId: string;
+
+  before(() => {
+    const written = analyse({
+      reference: 'ITT-ONECLICK-01',
+      requirements: [
+        requirement({ reference: 'M1', category: 'QUALIFICATION', mandatory: true, requirement: 'Hold ISO 27001 information security certification', evidenceRequired: 'ISO 27001 certificate' }),
+        requirement({ reference: 'M2', category: 'QUALITY', mandatory: false, weightingPercent: 10, requirement: 'Quality Question 1 — relevant experience', evidenceRequired: 'A written answer' }),
+      ],
+    });
+    analysisId = written.analysisId;
+  });
+
+  it('leaves the bidder’s own gaps and scored questions off the buyer list, and drafts only genuine buyer questions', () => {
+    const analysis = itt.complianceMatrix(qs(), analysisId);
+    const drafts = itt.tenderClarificationDrafts(analysis);
+    // An unmet mandatory requirement is the bidder's gap to close (obtain ISO
+    // 27001), not a question for the buyer — asking the buyer to "confirm the
+    // requirement" that we hold it reads as a firm that cannot read or meet the
+    // tender.
+    assert.ok(!drafts.some((d) => d.links.scopeItem === 'M1'), 'an unmet mandatory requirement is not asked of the buyer');
+    assert.ok(!drafts.some((d) => /ISO 27001/.test(d.question)), 'the gap is nowhere in the drafts');
+    // A scored question is answered in the submission, not asked.
+    assert.ok(!drafts.some((d) => d.links.scopeItem === 'M2'), 'a scored question is not asked of the buyer');
+    // The one genuine buyer question here — the weightings do not reach 100% —
+    // is still drafted.
+    assert.ok(drafts.some((d) => /under 100%/.test(d.question)), 'a genuine buyer question is drafted');
+  });
+
+  it('raises the genuine questions to the register in one call, and a second press raises nothing new', () => {
+    const first = tenderintel.raiseClarificationsFromAnalysis(qs(), { analysisId });
+    assert.ok(first.raised.length >= 1, 'the genuine buyer question is raised');
+    assert.match(first.raised[0]!.reference, /^TQ-/);
+    const second = tenderintel.raiseClarificationsFromAnalysis(qs(), { analysisId });
+    assert.equal(second.raised.length, 0, 'already on the register, so nothing is raised twice');
+    assert.ok(second.skipped >= 1, 'the duplicate is reported as skipped, not raised');
+  });
+});
+
+describe('Compliance undertakings — the agent drafts, a person confirms', () => {
+  let analysisId: string;
+  const owner = () => platform.context(seed.users.owner!.auth, seed.projectId, { source: 'WEB' });
+
+  before(() => {
+    const written = analyse({
+      reference: 'ITT-UNDERTAKING-01',
+      requirements: [
+        requirement({ reference: 'U1', category: 'HEALTH_AND_SAFETY', mandatory: true, requirement: 'Comply with all relevant legislation including CDM Regulations 2015', evidenceRequired: 'Comply with CDM Regulations 2015' }),
+        requirement({ reference: 'U2', category: 'QUALIFICATION', mandatory: true, requirement: 'Hold ISO 27001 information security certification', evidenceRequired: 'ISO 27001 certificate' }),
+        requirement({ reference: 'U3', category: 'QUALITY', mandatory: false, weightingPercent: 10, requirement: 'Quality Question 1', evidenceRequired: 'A written answer' }),
+      ],
+    });
+    analysisId = written.analysisId;
+  });
+
+  it('classifies an obligation as an undertaking, but not an evidence gate or a scored question', () => {
+    assert.equal(itt.undertakingFor({ requirement: 'Comply with CDM Regulations 2015', evidenceRequired: 'Comply with CDM 2015' }).isUndertaking, true);
+    assert.equal(itt.undertakingFor({ requirement: 'Employers Liability £20m', evidenceRequired: 'EL insurance certificate' }).isUndertaking, false);
+    assert.equal(itt.undertakingFor({ requirement: 'Quality Question 1', evidenceRequired: 'A written answer', weightingPercent: 10 }).isUndertaking, false);
+    assert.match(itt.undertakingFor({ requirement: 'Comply with CDM 2015', evidenceRequired: 'Comply with CDM 2015' }).statement, /We confirm/);
+  });
+
+  it('surfaces the undertaking with a drafted statement, and keeps it out of the documents-to-obtain list', () => {
+    const cov = itt.evidenceCoverage(qs(), analysisId);
+    const u = cov.undertakings.find((entry) => entry.reference === 'U1')!;
+    assert.ok(u, 'the CDM line is an undertaking');
+    assert.equal(u.confirmed, false);
+    assert.match(u.statement, /We confirm/);
+    assert.equal(cov.requirements.find((r) => r.reference === 'U1')!.disposition, 'UNDERTAKING');
+    // An undertaking is never a document to fetch: not in toObtain, not in toAttach.
+    assert.ok(!cov.toObtain.some((o) => o.reference === 'U1'), 'an undertaking is not a document to obtain');
+    assert.ok(!cov.toAttach.some((a) => a.covers.includes('U1')), 'an undertaking is not a document to attach');
+    // The certificate gate and the scored question are evidence/answers, not undertakings.
+    assert.ok(!cov.undertakings.some((entry) => entry.reference === 'U2' || entry.reference === 'U3'));
+    assert.notEqual(cov.requirements.find((r) => r.reference === 'U2')!.disposition, 'UNDERTAKING');
+  });
+
+  it('records a confirmation, marks the line covered, and does not confirm twice', () => {
+    const first = itt.confirmUndertakings(owner(), analysisId, {});
+    assert.equal(first.confirmed.length, 1, 'only U1 is an undertaking');
+    assert.equal(first.confirmed[0]!.reference, 'U1');
+    const cov = itt.evidenceCoverage(qs(), analysisId);
+    const u = cov.undertakings.find((entry) => entry.reference === 'U1')!;
+    assert.equal(u.confirmed, true);
+    assert.equal(cov.requirements.find((r) => r.reference === 'U1')!.disposition, 'COVERED');
+    const second = itt.confirmUndertakings(owner(), analysisId, {});
+    assert.equal(second.confirmed.length, 0, 'already confirmed, not written twice');
+    assert.equal(second.already, 1);
+  });
+
+  it('refuses to confirm a line that is not an undertaking', () => {
+    throwsCode(() => itt.confirmUndertakings(owner(), analysisId, { references: ['U2'] }), 'NO_UNDERTAKINGS');
+  });
+
+  it('confirms an undertaking on a matrix that lives on another project in the same tenant', () => {
+    // The field failure behind this: "Confirm all as true" returned "Entity
+    // belongs to a different tenant or project". The invitation, the matrix and
+    // the working project can be three separate records, so the matrix is looked
+    // up tenant-wide — and the confirmation event has to be written where the
+    // matrix actually lives, not under whatever project the user is viewing, or
+    // the ledger's tenant-isolation guard refuses the write.
+    //
+    // A second project in the same tenant, and a matrix recorded directly
+    // against it (the analysis event, as analyseITT would write it), so the
+    // scenario is reproduced without re-running the phase-gated take-off.
+    const admin = seed.users.admin!.auth;
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const projectB = structure.createProject(platform.context(admin, `${seed.tenantId}-governance`, { source: 'WEB' }), {
+      portfolioId,
+      name: 'A separate project that carries the matrix',
+      sectorType: 'RMI',
+      assetType: 'Residential adaptation',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Spalding' },
+      contractValueMinor: 500_000,
+      currency: 'GBP',
+      plannedStart: '2026-12-01',
+      plannedCompletion: '2027-02-01',
+    }).projectId;
+
+    const analysisId = 'analysis-crossproj-01';
+    platform.ledger.commit({
+      tenantId: seed.tenantId,
+      projectId: projectB,
+      actor: { refType: 'User', refId: seed.users.qs!.id },
+      source: 'WEB',
+      correlationId: 'itt-crossproj-test',
+      eventType: 'ITT_ANALYSED',
+      entity: { refType: 'ITTAnalysis', refId: analysisId },
+      nextState: {
+        id: analysisId,
+        reference: 'ITT-CROSSPROJ-01',
+        clientName: 'South Holland District Council',
+        returnBy: '2026-11-20',
+        estimatedValueMinor: 500_000,
+        durationWeeks: 12,
+        matrix: [
+          { reference: 'U1', category: 'HEALTH_AND_SAFETY', requirement: 'Comply with all relevant legislation including CDM Regulations 2015', evidenceRequired: 'Comply with CDM Regulations 2015', mandatory: true, status: 'UNKNOWN' },
+        ],
+        mandatoryGaps: [],
+        weightings: { stated: 0, complete: false },
+        terms: [],
+        bars: [],
+        quantifiedExposureMinor: 0,
+        committedCapacityMinor: 0,
+        clarifications: [],
+        readyToPrice: false,
+        analysedAt: new Date().toISOString(),
+        analysedBy: seed.users.qs!.id,
+      },
+    });
+
+    // Confirm from project A (the seed project) — a different project, same tenant.
+    const fromProjectA = platform.context(seed.users.owner!.auth, seed.projectId, { source: 'WEB' });
+    const result = itt.confirmUndertakings(fromProjectA, analysisId, {});
+    assert.equal(result.confirmed.length, 1);
+    assert.equal(result.confirmed[0]!.reference, 'U1');
+
+    // Recorded against the matrix, read back from the project it lives on.
+    const cov = itt.evidenceCoverage(platform.context(seed.users.qs!.auth, projectB, { source: 'WEB' }), analysisId);
+    assert.equal(cov.undertakings.find((u) => u.reference === 'U1')!.confirmed, true);
   });
 });
 
@@ -687,5 +1025,243 @@ describe('A compliance matrix stays readable after the session that produced it'
       () => itt.complianceMatrix(platform.context(seed.users.regulator!.auth, seed.projectId, { source: 'WEB' }), full().analysisId),
       'ACCESS_DENIED',
     );
+  });
+});
+
+// Placed last: it changes the tenant's company profile, and keeping it at the
+// end means nothing after it reads the profile. It restores the profile anyway.
+describe('A matrix reflects evidence recorded after the analysis', () => {
+  it('clears an insurance gap once the insurance is recorded, without re-reading the ITT', () => {
+    // The field failure: four insurances recorded, every insurance line still
+    // "Gap — nothing on file", because the matrix showed the status frozen at the
+    // day it was analysed. Status is a fact about what the company holds now, so
+    // it is re-derived on read.
+    const before = radar.companyProfile(qs());
+
+    // Analysed while the company holds no insurance: the line is a gap.
+    radar.setCompanyProfile(qs(), { ...before, insurances: [] });
+    const written = analyse({
+      reference: 'ITT-LIVE-STATUS-01',
+      requirements: [
+        requirement({
+          reference: 'INS-EL',
+          category: 'INSURANCE',
+          requirement: 'Employers Liability £10 million',
+          evidenceRequired: 'Certificate of employers liability insurance',
+        }),
+      ],
+    });
+    const gap = itt.complianceMatrix(qs(), written.analysisId).matrix.find((l) => l.reference === 'INS-EL')!;
+    assert.equal(gap.status, 'GAP', 'with no insurance recorded, the line is a gap');
+
+    // Record the insurance. The SAME analysis, read again, now shows it satisfied
+    // — no re-analysis, no second ITT read.
+    radar.setCompanyProfile(qs(), {
+      ...before,
+      insurances: [{ type: 'Employers Liability', limitMinor: 1_000_000_000, expiresOn: '2027-03-31' }],
+    });
+    const cleared = itt.complianceMatrix(qs(), written.analysisId).matrix.find((l) => l.reference === 'INS-EL')!;
+    assert.equal(cleared.status, 'SATISFIED', 'recording the insurance clears the gap on the next read');
+    assert.ok(cleared.evidenceHeld, 'and the line now names what covers it');
+
+    radar.setCompanyProfile(qs(), before);
+  });
+});
+
+describe('A matrix can be built before the job is priced', () => {
+  it('analyses with no value or duration, carries the terms unsized, and sizes them once a value is set', () => {
+    // No contract value and no programme: the matrix still builds, and a term
+    // that needs a figure is carried with its structural severity but no cash
+    // figure — sized later, not computed against a misleading zero.
+    const unpriced = analyse({
+      reference: 'ITT-UNPRICED-01',
+      estimatedValueMinor: undefined,
+      durationWeeks: undefined,
+      requirements: [requirement({ reference: 'R1' })],
+      terms: { contractForm: 'JCT D&B 2016', retentionPercent: 5, liquidatedDamages: { perWeekMinor: 500_00 } },
+    });
+    const retention = unpriced.terms.find((t) => t.term === 'Retention')!;
+    assert.equal(retention.exposureMinor, undefined, 'retention carries no cash figure without a value');
+    assert.match(retention.assessment, /sized once a contract value is set/);
+    const lad = unpriced.terms.find((t) => t.term === 'Liquidated damages')!;
+    assert.equal(lad.severity, 'SEVERE', 'an uncapped LD is severe by its structure, value or not');
+    assert.equal(unpriced.quantifiedExposureMinor, 0, 'nothing is summed from unsized terms');
+
+    // The same invitation, confirmed with a value, sizes the exposures.
+    const priced = analyse({
+      reference: 'ITT-PRICED-01',
+      estimatedValueMinor: 1_000_000_00,
+      durationWeeks: 20,
+      requirements: [requirement({ reference: 'R1' })],
+      terms: { contractForm: 'JCT D&B 2016', retentionPercent: 5, liquidatedDamages: { perWeekMinor: 500_00 } },
+    });
+    const sized = priced.terms.find((t) => t.term === 'Retention')!;
+    assert.equal(sized.exposureMinor, 5_000_000, '5% of £1,000,000 is £50,000');
+  });
+});
+
+describe('Commercial-term risk sizes itself from the take-off, with no value entered', () => {
+  const admin = () => seed.users.admin!.auth;
+  const freshTenderProject = (name: string): string =>
+    structure.createProject(platform.context(admin(), `${seed.tenantId}-governance`, { source: 'WEB' }), {
+      portfolioId: platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId,
+      name,
+      sectorType: 'RMI',
+      assetType: 'Residential adaptation',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Spalding' },
+      contractValueMinor: 500_000,
+      currency: 'GBP',
+      plannedStart: '2026-12-01',
+      plannedCompletion: '2027-02-01',
+    }).projectId;
+
+  // An analysis confirmed with NO value, carrying a retention term, committed
+  // directly so the scenario is reproduced without the phase-gated take-off.
+  const seedAnalysis = (projectId: string, analysisId: string) => {
+    const ctx = platform.context(seed.users.qs!.auth, projectId, { source: 'WEB' });
+    ctx.ledger.commit({
+      tenantId: ctx.tenantId,
+      projectId,
+      actor: { refType: 'User', refId: ctx.auth.actorId },
+      source: 'WEB',
+      correlationId: 'size-from-estimate-test',
+      eventType: 'ITT_ANALYSED',
+      entity: { refType: 'ITTAnalysis', refId: analysisId },
+      nextState: {
+        id: analysisId,
+        reference: 'ITT-SIZE-01',
+        clientName: 'South Holland District Council',
+        returnBy: '2026-11-20',
+        // No estimatedValueMinor, no durationWeeks — confirmed before pricing.
+        commercialTerms: { contractForm: 'JCT D&B 2016', retentionPercent: 5 },
+        matrix: [
+          { reference: 'R1', category: 'QUALIFICATION', requirement: 'Confirm you meet the specification', mandatory: true, owner: 'OWNER', evidenceRequired: 'Confirmation', status: 'UNKNOWN' },
+        ],
+        mandatoryGaps: [],
+        weightings: { stated: 0, complete: false },
+        terms: [{ term: 'Retention', stated: '5%', assessment: 'Sized once a contract value is set.', severity: 'ROUTINE', exposureKind: 'CASH' }],
+        bars: [],
+        quantifiedExposureMinor: 0,
+        committedCapacityMinor: 0,
+        clarifications: [],
+        readyToPrice: true,
+        analysedAt: new Date().toISOString(),
+        analysedBy: ctx.auth.actorId,
+      },
+    });
+    return ctx;
+  };
+
+  it('carries the term unsized when there is no estimate yet', () => {
+    const projectId = freshTenderProject('A&A — read, not yet priced');
+    const ctx = seedAnalysis(projectId, 'analysis-size-none');
+    const read = itt.complianceMatrix(ctx, 'analysis-size-none');
+    assert.equal(read.sizedFrom, 'NONE');
+    assert.equal(read.estimatedValueMinor, undefined);
+    assert.equal(read.terms.find((t) => t.term === 'Retention')!.exposureMinor, undefined);
+  });
+
+  it('sizes the term from the latest complete take-off estimate, labelled ESTIMATE', () => {
+    const projectId = freshTenderProject('A&A — read, then priced');
+    const ctx = seedAnalysis(projectId, 'analysis-size-estimate');
+    // A complete take-off estimate on the project: £1,000,000 over 20 weeks.
+    ctx.ledger.commit({
+      tenantId: ctx.tenantId,
+      projectId,
+      actor: { refType: 'User', refId: ctx.auth.actorId },
+      source: 'WEB',
+      correlationId: 'size-from-estimate-test',
+      eventType: 'ESTIMATE_CREATED',
+      entity: { refType: 'Estimate', refId: 'est-size-01' },
+      nextState: { id: 'est-size-01', status: 'DRAFT', totalMinor: 1_000_000_00, durationWeeks: 20, omissions: [] },
+    });
+
+    const read = itt.complianceMatrix(ctx, 'analysis-size-estimate');
+    assert.equal(read.sizedFrom, 'ESTIMATE', 'the terms are sized from the take-off, not left blank');
+    assert.equal(read.estimatedValueMinor, 1_000_000_00, 'the value is the estimate total');
+    assert.equal(read.durationWeeks, 20, 'the duration is the estimate programme');
+    const retention = read.terms.find((t) => t.term === 'Retention')!;
+    assert.equal(retention.exposureMinor, 5_000_000, '5% of £1,000,000 is £50,000, sized with no value entered');
+  });
+});
+
+describe('Merging readings into one matrix per tender', () => {
+  it('unions requirements by reference, newest wins, order kept', () => {
+    const prior = [requirement({ reference: 'A1', requirement: 'first' }), requirement({ reference: 'A2', requirement: 'second' })];
+    const next = [requirement({ reference: 'A2', requirement: 'second, re-read' }), requirement({ reference: 'A3', requirement: 'third' })];
+    const merged = itt.mergeRequirements(prior, next);
+    assert.deepEqual(merged.map((r) => r.reference), ['A1', 'A2', 'A3']);
+    assert.equal(merged.find((r) => r.reference === 'A2')!.requirement, 'second, re-read');
+  });
+
+  it('keeps a weighting, limit or date a later reading is silent on — and takes one it states', () => {
+    // Conwy: the weighting was in Volume 1, the 1,000-word limit in Volume 2.
+    const prior = [requirement({ reference: 'Q1', weightingPercent: 30, dueBy: '2026-11-16' })];
+    const next = [requirement({ reference: 'Q1', responseLimit: { words: 1000, statedAs: 'No more than 1000 words' } })];
+    const merged = itt.mergeRequirements(prior, next)[0]!;
+    assert.equal(merged.weightingPercent, 30, 'the later reading wiped the weighting');
+    assert.equal(merged.responseLimit?.words, 1000);
+    assert.equal(merged.dueBy, '2026-11-16');
+    const restated = itt.mergeRequirements(prior, [requirement({ reference: 'Q1', weightingPercent: 25 })])[0]!;
+    assert.equal(restated.weightingPercent, 25, 'a weighting the newer reading states must win');
+  });
+
+  it('recovers a readings requirements from its stored matrix', () => {
+    const matrix = analyse({
+      requirements: [requirement({ reference: 'R1', category: 'QUALITY', weightingPercent: 20, responseLimit: { words: 500, statedAs: '500 words' } })],
+    }).matrix;
+    const back = itt.requirementsFromMatrix(matrix);
+    assert.equal(back[0]!.reference, 'R1');
+    assert.equal(back[0]!.category, 'QUALITY');
+    assert.equal(back[0]!.weightingPercent, 20);
+    assert.deepEqual(back[0]!.responseLimit, { words: 500, statedAs: '500 words' });
+  });
+
+  it('keeps the tenders terms when a later reading states none, replaces them when it states some', () => {
+    const prior = { contractForm: 'NEC4 ECC Option A', retentionPercent: 5 };
+    assert.deepEqual(itt.mergeCommercialTerms(prior, { contractForm: 'Not stated in the invitation' }), prior);
+    const stated = { contractForm: 'JCT D&B 2016', retentionPercent: 3 };
+    assert.deepEqual(itt.mergeCommercialTerms(prior, stated), stated);
+    assert.deepEqual(itt.mergeCommercialTerms(undefined, stated), stated);
+  });
+
+  it('produces one matrix carrying both readings requirements', () => {
+    const ittReqs = [
+      requirement({ reference: 'MAND-01', category: 'INSURANCE' }),
+      requirement({ reference: 'MAND-02', category: 'HEALTH_AND_SAFETY', requirement: 'Health and safety policy' }),
+    ];
+    const appendixReqs = [requirement({ reference: 'SV-01', category: 'SOCIAL_VALUE', requirement: 'Local employment commitment', mandatory: false })];
+    const combined = analyse({ requirements: itt.mergeRequirements(ittReqs, appendixReqs) });
+    assert.equal(combined.matrix.length, 3);
+    assert.deepEqual(combined.matrix.map((l) => l.reference).sort(), ['MAND-01', 'MAND-02', 'SV-01']);
+  });
+});
+
+// ── One-director business ─────────────────────────────────────────────────────
+describe('a one-director business owns every line itself', () => {
+  it('defaults matrix owners to OWNER instead of a role per category when the flag is set', () => {
+    const current = radar.companyProfile(qs());
+    try {
+      // Off: the role-per-category suggestion stands — a commercial line is the QS's.
+      radar.setCompanyProfile(qs(), { ...current, singleOwnerBids: false });
+      const byCategory = analyse({
+        requirements: [requirement({ reference: 'C-01', category: 'COMMERCIAL', requirement: '30-day payment terms' })],
+      });
+      assert.equal(byCategory.matrix[0]!.owner, 'QS');
+
+      // On: the same line belongs to the owner, because there is one person.
+      radar.setCompanyProfile(qs(), { ...current, singleOwnerBids: true });
+      const written = analyse({
+        requirements: [requirement({ reference: 'C-02', category: 'COMMERCIAL', requirement: '30-day payment terms' })],
+      });
+      assert.equal(written.matrix[0]!.owner, 'OWNER');
+
+      // And it is retroactive on read: the by-category matrix written while the
+      // flag was off now shows OWNER too, without rewriting the ledger.
+      const reread = itt.complianceMatrix(qs(), byCategory.analysisId);
+      assert.equal(reread.matrix[0]!.owner, 'OWNER');
+    } finally {
+      radar.setCompanyProfile(qs(), current);
+    }
   });
 });

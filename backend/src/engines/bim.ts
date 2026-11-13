@@ -1,5 +1,6 @@
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
+import { expertBriefing } from '../ai/expertise.ts';
 import { ulid } from '../core/ids.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
@@ -526,7 +527,11 @@ export async function detectClashes(
       { refType: 'Model', refId: input.modelBId },
     ],
     request: {
-      task: 'Sequence clash resolution against construction order and identify the responsible discipline',
+      task:
+        `${expertBriefing('DESIGN_MANAGER', { stage: 3 })} ` +
+        'Sequence clash resolution against construction order and identify the responsible discipline for each. Resolve ' +
+        'clashes on the path of the earliest trade to install first, distinguish a genuine hard clash from a tolerance ' +
+        'or modelling artefact, and assign each to the discipline whose information must change — not merely the one it appears in.',
       payload: { clashes: scored.slice(0, 50), totalClashes: scored.length },
     },
     toWrites: () =>
@@ -870,7 +875,11 @@ export async function generateAsBuilt(
     capability: 'REASONING',
     inputRefs: [{ refType: 'Model', refId: input.baseModelId }],
     request: {
-      task: 'Reconcile design intent against captured site reality and list the as-built departures',
+      task:
+        `${expertBriefing('BIM_MANAGER', { stage: 5 })} ` +
+        'Reconcile the design intent against the captured site reality and list the as-built departures. Separate a ' +
+        'real departure from a tolerance or a capture artefact, and flag the ones that matter for operation, safety or ' +
+        'the asset record rather than every millimetre.',
       payload: { deviationCount: allDeviations.length, captures: twinStates.length },
     },
     toWrites: (output) => [
@@ -1265,7 +1274,11 @@ export async function ingestSpecification(
     capability: 'REASONING',
     inputRefs: [evidence],
     request: {
-      task: 'Characterise what this specification section demands of the contractor and where the risk in it sits',
+      task:
+        `${expertBriefing('DESIGN_MANAGER')} ` +
+        'Characterise what this specification section demands of the contractor and where the risk in it sits. Pick out ' +
+        'the performance obligations, the testing and sample requirements, the approvals and the long-lead or ' +
+        'specialist-design items, and name the clause each demand comes from.',
       payload: {
         sectionRef: input.sectionRef,
         title: input.title,

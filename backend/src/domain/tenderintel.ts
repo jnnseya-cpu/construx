@@ -3,6 +3,7 @@ import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
+import { complianceMatrix, tenderClarificationDrafts } from './itt.ts';
 
 /**
  * Clarifications, addenda and tender return intelligence — T-WF-06.
@@ -260,6 +261,53 @@ export function raiseTenderClarifications(
 
   const raised = items.map((item) => raiseTenderClarification(ctx, item));
   return { raised };
+}
+
+/**
+ * One act: raise the questions the analysis already wrote, straight onto the
+ * register, to the client.
+ *
+ * This is the door the "Questions for the buyer" list needed. The analysis
+ * produces the questions when it reads the invitation; until now a person had
+ * to retype each one into the batch box in a delimited format they had no way
+ * to know, and an empty or mis-keyed box failed with "must contain at least one
+ * item". The agent did the thinking and the human did transcription — the exact
+ * split the platform exists to remove.
+ *
+ * It invents nothing: `tenderClarificationDrafts` carries the analysis's own
+ * questions, each already linked to the requirement or the invitation. It is
+ * idempotent — a question already on the register (pressed twice, or raised by
+ * hand earlier) is skipped rather than duplicated, so the button is safe to
+ * press again. Raising is not issuing: these land OPEN, to be sent and then
+ * answered, exactly as a hand-raised one is.
+ */
+export function raiseClarificationsFromAnalysis(
+  ctx: EngineContext,
+  input: { analysisId: string },
+): { raised: Array<{ clarificationId: string; reference: string }>; skipped: number; total: number } {
+  authorise(ctx, 'PROCUREMENT_AWARD', 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const analysis = complianceMatrix(ctx, input.analysisId);
+  const drafts = tenderClarificationDrafts(analysis);
+  if (drafts.length === 0) {
+    throw new DomainError(
+      'NO_CLARIFICATIONS',
+      'The analysis raised no questions to put to the client — every mandatory requirement is answered and no term needs one.',
+    );
+  }
+
+  // Skip any whose question is already on the register, so pressing twice does
+  // not raise a second TQ for the same question.
+  const existing = new Set(
+    ctx.ledger.list(ctx.projectId, 'Clarification').map((record) => String(record.state.question ?? '')),
+  );
+  const fresh = drafts.filter((draft) => !existing.has(draft.question));
+  const skipped = drafts.length - fresh.length;
+
+  if (fresh.length === 0) return { raised: [], skipped, total: drafts.length };
+
+  const { raised } = raiseTenderClarifications(ctx, { items: fresh });
+  return { raised, skipped, total: drafts.length };
 }
 
 /**
@@ -1130,6 +1178,8 @@ export type TenderIntelPosition = {
     reference: string;
     side: ClarificationSide;
     subject: string;
+    /** The question itself, in full — what goes to the buyer, not the short subject. */
+    question: string;
     status: string;
     confidentiality: Confidentiality;
     links: InformationLink;
@@ -1228,6 +1278,7 @@ export function tenderIntelPosition(ctx: EngineContext): TenderIntelPosition {
       reference: String(record.state.reference),
       side: (record.state.side as ClarificationSide) ?? (record.state.rfqId ? 'BIDDER' : 'INTERNAL'),
       subject: String(record.state.subject ?? record.state.question ?? ''),
+      question: String(record.state.question ?? record.state.subject ?? ''),
       status: String(record.state.status),
       confidentiality: (record.state.confidentiality as Confidentiality) ?? 'OPEN',
       links: (record.state.links as InformationLink) ?? {},

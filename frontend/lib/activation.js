@@ -92,7 +92,28 @@ export function showActivation(position) {
     };
 
     const stepTwo = () => {
-      let method = 'DIRECT_DEBIT';
+      /*
+       * Which rail is offered first, and which carries "Recommended", follows
+       * what this deployment can actually collect on — `position.rails`, which
+       * the API publishes. Direct Debit was labelled "Recommended" and selected
+       * by default while it was not connected at all: the box after it then
+       * said so, which is the screen contradicting itself one click later.
+       */
+      const rails = position.rails ?? { card: false, directDebit: false, bankTransfer: true };
+      const recommended = rails.directDebit ? 'DIRECT_DEBIT' : rails.card ? 'RECURRING_CARD' : null;
+      let method = recommended ?? 'DIRECT_DEBIT';
+      const railBadge = (rail) => {
+        const live = rail === 'DIRECT_DEBIT' ? rails.directDebit : rails.card;
+        if (rail === recommended) return html` <span class="badge ok">Recommended</span>`;
+        if (!live) return html` <span class="badge warn">Not connected yet</span>`;
+        return '';
+      };
+      const railNote = (rail) => {
+        const live = rail === 'DIRECT_DEBIT' ? rails.directDebit : rails.card;
+        return live
+          ? ''
+          : html`<br /><span class="metric-sub">Not live on this deployment: your authorisation is recorded, and the first month is paid by bank transfer.</span>`;
+      };
       const draw = () => {
         render(
           host,
@@ -109,15 +130,15 @@ export function showActivation(position) {
                 <label class="row" style="cursor:pointer;align-items:flex-start;gap:12px">
                   <input type="radio" name="activation-method" value="DIRECT_DEBIT" ${raw(method === 'DIRECT_DEBIT' ? 'checked' : '')} style="margin-top:4px" />
                   <span class="lbl" style="flex:1">
-                    <b>Direct Debit (BACS)</b> <span class="badge ok">Recommended</span><br />
-                    <span class="metric-sub">CONSTRUX collects from your bank account each month.</span>
+                    <b>Direct Debit (BACS)</b>${railBadge('DIRECT_DEBIT')}<br />
+                    <span class="metric-sub">CONSTRUX collects from your bank account each month.</span>${railNote('DIRECT_DEBIT')}
                   </span>
                 </label>
                 <label class="row" style="cursor:pointer;align-items:flex-start;gap:12px">
                   <input type="radio" name="activation-method" value="RECURRING_CARD" ${raw(method === 'RECURRING_CARD' ? 'checked' : '')} style="margin-top:4px" />
                   <span class="lbl" style="flex:1">
-                    <b>Recurring card</b><br />
-                    <span class="metric-sub">Your card is charged automatically each month.</span>
+                    <b>Recurring card</b>${railBadge('RECURRING_CARD')}<br />
+                    <span class="metric-sub">Your card is charged automatically each month.</span>${railNote('RECURRING_CARD')}
                   </span>
                 </label>
               </div>

@@ -1,3 +1,4 @@
+import { expertBriefing } from '../ai/expertise.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
@@ -412,7 +413,11 @@ export async function generateWBS(
     capability: 'REASONING',
     inputRefs: [{ refType: 'Project', refId: ctx.projectId }],
     request: {
-      task: 'Weight a standard work breakdown structure to this project and apportion duration',
+      task:
+        `${expertBriefing('PLANNER')} ` +
+        'Weight a standard work breakdown structure to this project and apportion duration, from the project ' +
+        'information supplied. Reflect the real build sequence and the weight each element genuinely carries; do not ' +
+        'spread duration evenly where the work does not.',
       payload: {
         projectType: input.projectType,
         sectorType: input.sectorType,
@@ -515,7 +520,11 @@ export async function forecastDelay(
     capability: 'REASONING',
     inputRefs: drivers.slice(0, 20).map((d) => ({ refType: 'Task', refId: d.taskId })),
     request: {
-      task: 'Explain the delay drivers and rank the corrective measures for this project context',
+      task:
+        `${expertBriefing('PLANNER', { stage: 5 })} ` +
+        'Explain the delay drivers and rank the corrective measures for this project context. Assess each driver by ' +
+        'its effect on the critical and near-critical paths, not by a count of days, and favour measures that recover ' +
+        'the path over ones that merely look busy.',
       payload: { snapshot, contractualDurationDays: input.contractualDurationDays },
     },
     toWrites: (output) => [

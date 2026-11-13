@@ -1,10 +1,15 @@
+import { expertBriefing } from '../ai/expertise.ts';
+import { lexicalVector, similarity } from '../evidence/ingest.ts';
+import { packText } from '../evidence/pipeline.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, currentPhase, runAI, write, type EngineContext } from '../engines/context.ts';
+import type { DocumentBlock } from '../export/exporter.ts';
 import {
   complianceMatrix,
   liveWaivers,
   type MatrixLine,
+  type RequirementCategory,
   type RequirementWaiver,
   type ResponseLimit,
   type StoredITTAnalysis,
@@ -79,6 +84,11 @@ export type BidSection = {
   deliverable: string;
   /** The role that owns it, carried from the compliance matrix. */
   owner: string;
+  /**
+   * Other matrix references this section also answers: the same question read
+   * from another document of the tender (see `foldDuplicates`).
+   */
+  alsoAnswers?: string[];
   mandatory: boolean;
   status: BidSectionStatus;
   /**
@@ -110,6 +120,16 @@ export type BidDeadline = {
   on?: string;
 };
 
+/**
+ * What the pack's sections were planned from.
+ *
+ * `SCORED_QUESTIONS`: the buyer marks a questionnaire, so the pack answers those
+ * questions and nothing else. `WRITTEN_REQUIREMENTS`: no question carries a mark,
+ * so every requirement needing a written answer is one. Absent on a pack planned
+ * before the distinction existed, which planned the second way.
+ */
+export type PlanBasis = 'SCORED_QUESTIONS' | 'WRITTEN_REQUIREMENTS';
+
 export type BidResponsePack = {
   id: string;
   reference: string;
@@ -117,6 +137,10 @@ export type BidResponsePack = {
   analysisId: string;
   clientName: string;
   returnBy: string;
+  basis?: PlanBasis;
+  /** Set when the sections were planned again from a matrix; the earlier plan stays on the ledger. */
+  replannedAt?: string;
+  replannedBy?: string;
   sections: BidSection[];
   deadlines: BidDeadline[];
   status: 'DRAFTING' | 'ISSUED';
@@ -149,13 +173,326 @@ export type BidResponsePack = {
  * exists is how a submission acquires a paragraph contradicting its own
  * appendix. Those lines stay in the checklist and out of the drafting queue.
  */
-function needsProse(line: MatrixLine): boolean {
-  return line.evidenceHeld === undefined || line.evidenceHeld === '';
+/**
+ * The categories whose answer an evaluator reads as written prose — the quality
+ * side of a submission. A requirement outside these, and not separately scored,
+ * is satisfied some other way and is not an essay: the price lives in the priced
+ * schedule (Appendix B), the submission logistics are process, qualification and
+ * insurance are satisfied by the company's recorded facts and its evidence, and
+ * the commercial terms sit in the quotation.
+ */
+const NARRATIVE_CATEGORIES: ReadonlySet<RequirementCategory> = new Set([
+  'QUALITY',
+  'TECHNICAL',
+  'SOCIAL_VALUE',
+  'ENVIRONMENTAL',
+  'PROGRAMME',
+  'HEALTH_AND_SAFETY',
+]);
+
+/**
+ * Whether this requirement needs a written answer drafted for it.
+ *
+ * It used to be "anything with no evidence attached", and that is what turned a
+ * priced schedule and a page of submission logistics into a stack of blank essay
+ * questions: a pricing-schedule line, an In-Tend-portal line and a return-deadline
+ * line all have no evidence held against them, and none of them is answered by
+ * prose — the price is in Appendix B, the portal is the portal, the date is a
+ * date. A bidder faced with twenty-six "write an answer" sections for a schedule
+ * they had already priced is a bidder who stops trusting the tool, and rightly.
+ *
+ * A requirement needs prose when it is a written answer an evaluator reads and
+ * marks: a scored question whatever its category, or an unscored requirement in
+ * one of the narrative categories above — and only when the platform does not
+ * already hold a document that answers it. Everything else is satisfied by the
+ * price, the evidence, the company's facts, the quotation or the portal, and is
+ * not dragged into the essay pack.
+ */
+export function needsProse(line: MatrixLine): boolean {
+  if (line.evidenceHeld !== undefined && line.evidenceHeld !== '') return false;
+  if (line.weightingPercent !== undefined && line.weightingPercent > 0) return true;
+  return NARRATIVE_CATEGORIES.has(line.category);
 }
 
 function titleFor(line: MatrixLine): string {
   const words = line.requirement.trim().replace(/\s+/g, ' ');
   return words.length <= 70 ? words : `${words.slice(0, 67)}…`;
+}
+
+/**
+ * Wording that is a note to whoever finishes the bid, not an answer to the buyer.
+ *
+ * "The bid team will insert the inspection frequency", "(to be inserted)", "the
+ * quantum placeholder". Each one is a gap an evaluator reads and scores as a
+ * gap — and the drafter used to be told to write them. Deliberately narrow: it
+ * catches a note addressed to a team or a blank waiting to be filled, and not
+ * the buyer's own words quoted back ("signs and diversion to be provided", "all
+ * levels to be agreed with the supervisor"), which an answer is right to quote.
+ */
+const UNFINISHED: readonly RegExp[] = [
+  /\b(?:bid|tender) team\s+(?:will|shall|must|should|can|to|is to|are to)\s+(?:insert|populate|complete|confirm|add|provide|fill|enter|state|supply|name|define)\b/gi,
+  /\bto be (?:inserted|populated|filled(?: in)?)\b/gi,
+  /\bplaceholders?\b/gi,
+  /\[(?:insert|tbc|tbd|tba|name|date|value|x{2,})[^\]]*\]/gi,
+  /\b(?:TBC|TBD|TBA)\b/g,
+  // Any other square-bracketed blank. A submission answer has no reason to use
+  // square brackets except as a gap to fill, and the narrow list above let
+  // "[ref, date]", "[fortnightly]", "[site]", "[result]" and "[confirm exact
+  // Companies House name…" through on the Telford pack. A citation ("[3]",
+  // "[1–4]") and "[sic]" are not blanks.
+  /\[(?!\s*(?:\d+(?:\s*[,–-]\s*\d+)*|sic)\s*\])[^\]\n]{1,120}(?:\]|$)/gim,
+];
+
+/** Each unfinished note in a piece of prose, quoted with enough around it to find it. */
+export function unfinishedPhrases(text: string): string[] {
+  const found = new Set<string>();
+  for (const pattern of UNFINISHED) {
+    for (const match of text.matchAll(pattern)) {
+      const start = Math.max(0, (match.index ?? 0) - 40);
+      const end = Math.min(text.length, (match.index ?? 0) + match[0].length + 40);
+      found.add(`${start > 0 ? '…' : ''}${text.slice(start, end).trim()}${end < text.length ? '…' : ''}`);
+    }
+  }
+  return [...found];
+}
+
+/**
+ * Job titles that say the firm has staff it does not.
+ *
+ * Only asked of a firm that has said it is one person (`singleOwnerBids`), because
+ * only then does the platform know the claim is false: "our Bid Manager and
+ * Planning Lead have prepared and signed the programme", from a sole director,
+ * is a statement an evaluator can test at interview. Roles the owner can hold
+ * himself — project manager, site manager, temporary works coordinator — are not
+ * listed. A sentence that names one of the firm's own people is the owner being
+ * given the title, and is left alone.
+ */
+const SEPARATE_STAFF =
+  /\b(bid (?:manager|director|team)|tender team|planning (?:lead|manager|team)|planner|quality manager|commercial manager|quantity surveyor|estimator|(?:senior )?technical reviewer|design manager|contracts manager|health (?:and|&) safety (?:manager|advis[eo]r|lead)|h&s (?:manager|advis[eo]r|lead)|environmental (?:manager|advis[eo]r))\b/gi;
+
+/** The separate-staff titles a sentence claims without naming one of the firm's own people. */
+export function unsupportedRoles(text: string, people: readonly string[]): string[] {
+  const names = people.map((person) => person.trim().toLowerCase()).filter((person) => person.length > 2);
+  const found = new Set<string>();
+  for (const sentence of text.split(/(?<=[.;!?])\s+|\n+/)) {
+    const lower = sentence.toLowerCase();
+    if (names.some((name) => lower.includes(name) || lower.includes(name.split(/\s+/).at(-1)!))) continue;
+    for (const match of sentence.matchAll(SEPARATE_STAFF)) found.add(match[1]!.toLowerCase());
+  }
+  return [...found];
+}
+
+/**
+ * A note printed on a drawing, read in as if it were a question.
+ *
+ * "All dimensions are in metres unless otherwise stated", "Note 4 — any
+ * anomalies on this drawing…". A section answering one is an essay on a
+ * drawing convention, and an evaluator reads a run of them as padding.
+ */
+const DRAWING_NOTE =
+  /^\W*(?:note\s*\d+\b|\d+\.\s*all (?:dimensions|chainages|levels)|all (?:dimensions|chainages|levels) (?:are|shown|shall)|this drawing is to be read|any anomalies on this drawing|all dimensions shall be confirmed)/i;
+
+export function isDrawingNote(requirement: string): boolean {
+  return DRAWING_NOTE.test(requirement.replace(/\\[nrt]/g, ' ').trim());
+}
+
+/**
+ * A line that states how the bid is marked rather than asking anything.
+ *
+ * "Selection will be on the basis of 30% quality and 70% price", "the lowest
+ * bid will score the maximum points". A reading can carry the split's
+ * percentage as the line's weighting, which made the marking scheme itself a
+ * "scored question" with an essay planned against it. Narrow on purpose: both a
+ * quality and a price percentage in one sentence, or the lowest price scoring
+ * the maximum.
+ */
+const EVALUATION_METHOD =
+  /(?=[\s\S]*\d+\s*%\s*(?:for\s+)?quality\b)(?=[\s\S]*\d+\s*%\s*(?:for\s+)?(?:price|cost)\b)|\blowest (?:bid|price|tender|cost)\b[\s\S]{0,40}\b(?:score|receive|awarded)/i;
+
+export function isEvaluationMethod(requirement: string): boolean {
+  return EVALUATION_METHOD.test(requirement.replace(/\\[nrt]/g, ' '));
+}
+
+/** A question the buyer marks from the written answer. */
+function isScoredQuestion(line: MatrixLine): boolean {
+  return (line.weightingPercent ?? 0) > 0 && needsProse(line);
+}
+
+/**
+ * Which matrix lines the pack answers, and on what basis.
+ *
+ * The Conwy fault, stated so it is not repeated: the buyer scored seven
+ * questions, 1,000 words each, and the pack planned ninety-six sections — one
+ * per scope clause, hazard line, evaluation rule and drawing note — because the
+ * rule was "every requirement in a narrative category". Sixty-nine pages of
+ * answers the evaluator never marks, paid for a section at a time, with the
+ * seven that are marked lost among them.
+ *
+ * So where the matrix holds any scored question, the pack is those questions —
+ * plus any line the buyer gave a word or page limit, which is a written answer
+ * however it is weighted. Everything else stays on the compliance matrix as an
+ * obligation to meet, and is handed to the drafter as `context` so the answers
+ * are about this job rather than generic. Only where no question carries a mark
+ * does every requirement needing prose become a section, as before.
+ *
+ * Neither basis drafts a note printed on a drawing, or a statement of how the
+ * bid is marked: neither is a question.
+ */
+/**
+ * How alike two requirements' wording must be to be one requirement.
+ *
+ * Measured on the real Conwy pack, not chosen: the same question read from two
+ * documents scored 1.00, the same hazard or note read twice 0.85–1.00, and the
+ * closest two *different* items ("all dimensions…" against "all chainages…")
+ * 0.75. Different scored questions of one questionnaire peaked at 0.64.
+ */
+const SAME_REQUIREMENT = 0.85;
+
+/**
+ * One line per requirement, however many documents stated it.
+ *
+ * A tender states a question in one document and its marks in another — Conwy's
+ * Q1–Q7 and their 1,000-word limit are in Volume 2, the 30/10/15/15/10/10/10
+ * weightings in Volume 1's Table 1 — and each document is read separately and
+ * merged by reference. The two readings give the same question two references,
+ * one carrying the weighting and the other the limit, and the pack planned it
+ * twice. Folded here by wording (`lexicalVector`, the platform's own
+ * near-duplicate measure): the first line in matrix order keeps its reference,
+ * takes the fuller wording, the highest weighting, the stated limit, the
+ * earliest date and the mandatory flag of any, and names the rest in
+ * `alsoAnswers`.
+ */
+export function foldDuplicates(lines: readonly MatrixLine[]): Array<MatrixLine & { alsoAnswers?: string[] }> {
+  const wording = (line: MatrixLine): string => line.requirement.replace(/\\[nrt]/g, ' ').replace(/\s+/g, ' ').trim();
+  const kept: Array<{ line: MatrixLine & { alsoAnswers?: string[] }; vector: number[] }> = [];
+  for (const line of lines) {
+    const vector = lexicalVector(wording(line));
+    const same = kept.find((entry) => similarity(entry.vector, vector) >= SAME_REQUIREMENT);
+    if (!same) {
+      kept.push({ line: { ...line }, vector });
+      continue;
+    }
+    const into = same.line;
+    const weights = [into.weightingPercent, line.weightingPercent].filter((w): w is number => w !== undefined);
+    const dates = [into.dueBy, line.dueBy].filter((d): d is string => d !== undefined).sort();
+    same.line = {
+      ...into,
+      requirement: wording(line).length > wording(into).length ? line.requirement : into.requirement,
+      mandatory: into.mandatory || line.mandatory,
+      ...(weights.length > 0 ? { weightingPercent: Math.max(...weights) } : {}),
+      ...(into.responseLimit ?? line.responseLimit ? { responseLimit: into.responseLimit ?? line.responseLimit } : {}),
+      ...(dates.length > 0 ? { dueBy: dates[0] } : {}),
+      ...(into.evidenceHeld || line.evidenceHeld ? { evidenceHeld: into.evidenceHeld || line.evidenceHeld } : {}),
+      alsoAnswers: [...(into.alsoAnswers ?? []), line.reference],
+    };
+  }
+  return kept.map((entry) => entry.line);
+}
+
+export function planScope(
+  matrix: readonly MatrixLine[],
+  waived: ReadonlySet<string> = new Set(),
+): { lines: Array<MatrixLine & { alsoAnswers?: string[] }>; basis: PlanBasis; context: MatrixLine[] } {
+  const candidates = foldDuplicates(
+    matrix.filter(
+      (line) => !waived.has(line.reference) && !isDrawingNote(line.requirement) && !isEvaluationMethod(line.requirement),
+    ),
+  );
+  const scored = candidates.filter(isScoredQuestion);
+  if (scored.length === 0) {
+    return { lines: candidates.filter(needsProse), basis: 'WRITTEN_REQUIREMENTS', context: [] };
+  }
+  const lines = candidates.filter(
+    (line) => needsProse(line) && (isScoredQuestion(line) || line.responseLimit?.words !== undefined || line.responseLimit?.pages !== undefined),
+  );
+  const answered = new Set(lines.map((line) => line.reference));
+  const context = candidates.filter(
+    (line) => !answered.has(line.reference) && NARRATIVE_CATEGORIES.has(line.category),
+  );
+  return { lines, basis: 'SCORED_QUESTIONS', context };
+}
+
+/**
+ * The tender's other requirements, as the drafter reads them on a scored pack.
+ * Bounded so a large scope cannot make every pass expensive: the first sixty,
+ * each cut to 280 characters, is the job's constraints without the full text.
+ */
+function contextFor(lines: readonly MatrixLine[]): string[] {
+  return lines.slice(0, 60).map((line) => {
+    const text = line.requirement.replace(/\\[nrt]/g, ' ').replace(/\s+/g, ' ').trim();
+    return `${line.reference}: ${text.length > 280 ? `${text.slice(0, 277)}…` : text}`;
+  });
+}
+
+function sectionFor(line: MatrixLine & { alsoAnswers?: string[] }): BidSection {
+  return {
+    key: line.reference,
+    title: titleFor(line),
+    deliverable: line.requirement,
+    owner: String(line.owner),
+    mandatory: line.mandatory,
+    status: 'PLANNED',
+    ...(line.responseLimit ? { limit: line.responseLimit } : {}),
+    ...(line.alsoAnswers?.length ? { alsoAnswers: line.alsoAnswers } : {}),
+  };
+}
+
+/** The dated schedule: every date the matrix states, and the return date always. */
+function deadlinesFor(analysis: StoredITTAnalysis): BidDeadline[] {
+  return [
+    ...analysis.matrix
+      .filter((line) => line.dueBy !== undefined)
+      .map((line) => ({ what: `${line.reference} — ${titleFor(line)}`, on: line.dueBy })),
+    { what: 'Return of the completed submission', on: analysis.returnBy },
+  ];
+}
+
+/** What the review needs to know beyond the pack: who the firm is, and the contract. */
+export type SubmissionReviewContext = { singleOwner?: boolean; people?: string[]; contractForm?: string };
+
+function reviewContextFor(ctx: EngineContext, pack: BidResponsePack): SubmissionReviewContext {
+  const firm = firmFacts(ctx);
+  const terms = ctx.ledger.get({ refType: 'ITTAnalysis', refId: pack.analysisId })?.state.commercialTerms as
+    | { contractForm?: string }
+    | undefined;
+  return {
+    singleOwner: firm.singleOwnerBids === true,
+    people: firm.people as string[],
+    ...(terms?.contractForm ? { contractForm: terms.contractForm } : {}),
+  };
+}
+
+/**
+ * The pack as the document the buyer reads.
+ *
+ * Every heading carries the requirement in full. The stored `title` is cut at 67
+ * characters for screens, and printing it put "…/ Che…" in front of an evaluator
+ * as the question being answered. A requirement short enough to be a heading is
+ * one; a longer one is headed by its reference and stated in full beneath it, so
+ * nothing the buyer asked is shortened. Read from `deliverable`, which every pack
+ * already holds, so packs planned before this print correctly too.
+ */
+export function submissionBlocks(pack: Pick<BidResponsePack, 'sections'>): DocumentBlock[] {
+  const blocks: DocumentBlock[] = [];
+  for (const section of pack.sections) {
+    // A requirement read out of a document can carry its line breaks as literal
+    // "\n" text, which printed as `"Q7\n\n•\n\nThe Contractor's…` in front of an
+    // evaluator. They are line breaks, so they are spaced like line breaks.
+    const question = (section.deliverable || section.title)
+      .replace(/\\[nrt]/g, ' ')
+      .trim()
+      .replace(/\s+/g, ' ');
+    if (question.length <= 120) {
+      blocks.push({ kind: 'HEADING', level: 2, text: `${section.key} — ${question}` });
+    } else {
+      blocks.push({ kind: 'HEADING', level: 2, text: section.key });
+      blocks.push({ kind: 'KEY_VALUES', rows: [{ label: 'Requirement', value: question }] });
+    }
+    const paras = section.body ?? [];
+    if (paras.length > 0) for (const paragraph of paras) blocks.push({ kind: 'PARAGRAPH', text: String(paragraph) });
+    else blocks.push({ kind: 'PARAGRAPH', text: '[Not written yet]' });
+  }
+  return blocks;
 }
 
 /**
@@ -195,17 +532,8 @@ export function planBidResponse(
   // sees what was left out on purpose rather than a checklist that quietly got
   // shorter.
   const waived = new Set(liveWaivers(ctx, input.analysisId).map((waiver) => waiver.reference));
-  const sections: BidSection[] = analysis.matrix
-    .filter((line) => needsProse(line) && !waived.has(line.reference))
-    .map((line) => ({
-      key: line.reference,
-      title: titleFor(line),
-      deliverable: line.requirement,
-      owner: String(line.owner),
-      mandatory: line.mandatory,
-      status: 'PLANNED' as const,
-      ...(line.responseLimit ? { limit: line.responseLimit } : {}),
-    }));
+  const scope = planScope(analysis.matrix, waived);
+  const sections: BidSection[] = scope.lines.map(sectionFor);
 
   if (sections.length === 0) {
     throw new DomainError(
@@ -223,12 +551,7 @@ export function planBidResponse(
   // The dated schedule. Each line's own date where the ITT stated one, and the
   // return date always, because a submission with no return date on its face is
   // the one that goes in the day after.
-  const deadlines: BidDeadline[] = [
-    ...analysis.matrix
-      .filter((line) => line.dueBy !== undefined)
-      .map((line) => ({ what: `${line.reference} — ${titleFor(line)}`, on: line.dueBy })),
-    { what: 'Return of the completed submission', on: analysis.returnBy },
-  ];
+  const deadlines = deadlinesFor(analysis);
 
   const sequence = ctx.ledger.list(ctx.projectId, 'BidResponsePack').length + 1;
   const pack: BidResponsePack = {
@@ -238,6 +561,7 @@ export function planBidResponse(
     analysisId: analysis.analysisId,
     clientName: analysis.clientName,
     returnBy: analysis.returnBy,
+    basis: scope.basis,
     sections,
     deadlines,
     status: 'DRAFTING',
@@ -254,6 +578,113 @@ export function planBidResponse(
   });
 
   return { pack, toWrite: sections.length };
+}
+
+/**
+ * Plan a drafting pack's sections again, from its matrix or the tender's newer one.
+ *
+ * The way out for a pack planned under the old rule — ninety-six sections where
+ * the buyer marks seven — and for a pack whose tender has since had its
+ * questionnaire read. Same rule as planning (`planScope`), so a re-plan and a
+ * fresh plan cannot disagree.
+ *
+ * Nothing written is thrown away twice over: a section whose requirement is
+ * still planned, word for word, keeps its prose, its authorship and its status;
+ * a section dropped from the plan stays on the ledger in the pack's earlier
+ * state, so the record of what was written remains. Refused on an issued pack,
+ * and refused where another pack already answers the target matrix — two packs
+ * answering one tender is two submissions.
+ */
+export function replanBidResponse(
+  ctx: EngineContext,
+  input: { packId: string; analysisId?: string },
+): { pack: BidResponsePack; kept: number; added: number; dropped: string[]; toWrite: number } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const pack = requirePack(ctx, input.packId);
+  if (pack.status === 'ISSUED') {
+    throw new DomainError(
+      'BID_RESPONSE_ISSUED',
+      `${pack.reference} has been issued. What was sent must stay what was sent — plan a new pack for a new submission.`,
+      409,
+    );
+  }
+  const analysisId = input.analysisId ?? pack.analysisId;
+  const analysis = complianceMatrix(ctx, analysisId);
+  if (analysisId !== pack.analysisId) {
+    const other = ctx.ledger
+      .list(ctx.projectId, 'BidResponsePack')
+      .map((row) => row.state as unknown as BidResponsePack)
+      .find((entry) => entry.id !== pack.id && entry.analysisId === analysisId);
+    if (other) {
+      throw new DomainError(
+        'BID_RESPONSE_EXISTS',
+        `${other.reference} already answers ${analysis.reference}. Re-plan that pack instead — two packs answering one ` +
+          'tender is two submissions.',
+        409,
+      );
+    }
+  }
+
+  const waived = new Set(liveWaivers(ctx, analysisId).map((waiver) => waiver.reference));
+  const scope = planScope(analysis.matrix, waived);
+  if (scope.lines.length === 0) {
+    throw new DomainError(
+      'NOTHING_TO_WRITE',
+      `Nothing on ${analysis.reference} needs a written answer — every requirement is evidenced from records, waived, ` +
+        `a drawing note or the marking scheme. ${pack.reference} is left as it was.`,
+      422,
+    );
+  }
+
+  const previous = new Map(pack.sections.map((section) => [section.key, section]));
+  let kept = 0;
+  const sections = scope.lines.map((line) => {
+    const fresh = sectionFor(line);
+    const before = previous.get(line.reference);
+    if (before && before.deliverable === line.requirement && (before.body ?? []).length > 0) {
+      kept += 1;
+      // The prose stays; the line's current owner, flag and limit replace the old.
+      const carried: BidSection = { ...before, title: fresh.title, owner: fresh.owner, mandatory: fresh.mandatory };
+      delete carried.limit;
+      if (fresh.limit) carried.limit = fresh.limit;
+      delete carried.alsoAnswers;
+      if (fresh.alsoAnswers) carried.alsoAnswers = fresh.alsoAnswers;
+      return carried;
+    }
+    return fresh;
+  });
+  const planned = new Set(sections.map((section) => section.key));
+  const dropped = pack.sections.filter((section) => !planned.has(section.key)).map((section) => section.key);
+
+  const next: BidResponsePack = {
+    ...pack,
+    analysisId,
+    clientName: analysis.clientName,
+    returnBy: analysis.returnBy,
+    basis: scope.basis,
+    sections,
+    deadlines: deadlinesFor(analysis),
+    replannedAt: new Date().toISOString(),
+    replannedBy: ctx.auth.actorId,
+  };
+
+  write(ctx, {
+    eventType: 'BID_RESPONSE_REPLANNED',
+    entity: { refType: 'BidResponsePack', refId: pack.id },
+    nextState: next as unknown as Record<string, unknown>,
+    reason:
+      `Re-planned from ${analysis.reference} on ${scope.basis === 'SCORED_QUESTIONS' ? 'its scored questions' : 'its written requirements'}: ` +
+      `${sections.length} section(s), ${kept} kept with their prose, ${dropped.length} dropped`,
+  });
+
+  return {
+    pack: next,
+    kept,
+    added: sections.length - kept,
+    dropped,
+    toWrite: sections.filter((section) => section.status === 'PLANNED').length,
+  };
 }
 
 function requirePack(ctx: EngineContext, packId: string): BidResponsePack {
@@ -298,25 +729,167 @@ export async function writeNextSection(
   const next = pack.sections.find((section) => section.status === 'PLANNED');
   if (!next) return { pack, written: null, remaining: 0, acuConsumed: 0 };
 
+  const drafted = await draftSection(ctx, pack, next);
+  return {
+    ...drafted,
+    remaining: drafted.pack.sections.filter((section) => section.status === 'PLANNED').length,
+  };
+}
+
+/**
+ * Write one section again, from the requirement, with the drafter as it now is.
+ *
+ * The way forward from the unfinished-text check. A section the drafter left
+ * holding a note to the bid team is answered again rather than edited around —
+ * the note is where the answer should have been, and a person filling sixty of
+ * them by hand on the last afternoon is how one is missed.
+ *
+ * Only a section the drafter wrote. One a person has rewritten is theirs, and a
+ * model overwriting it would take the words out of somebody's mouth; they edit
+ * it instead. Refused on an issued pack for the same reason every write is.
+ */
+export async function redraftSection(
+  ctx: EngineContext,
+  input: { packId: string; key: string },
+): Promise<{ pack: BidResponsePack; written: BidSection; acuConsumed: number }> {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const pack = requirePack(ctx, input.packId);
+  if (pack.status === 'ISSUED') {
+    throw new DomainError(
+      'BID_RESPONSE_ISSUED',
+      `${pack.reference} has been issued. Editing a submission after it has gone to the buyer is not a draft change, ` +
+        'and the record of what was sent must stay what was sent.',
+      409,
+    );
+  }
+  const section = pack.sections.find((entry) => entry.key === input.key);
+  if (!section) {
+    throw new DomainError('BID_SECTION_NOT_FOUND', `${pack.reference} has no section ${input.key}`, 404);
+  }
+  if (section.authorship === 'HUMAN') {
+    throw new DomainError(
+      'BID_SECTION_HUMAN_WRITTEN',
+      `${input.key} was rewritten by a person, so it is theirs to change — edit it rather than have the drafter ` +
+        'replace their words.',
+      409,
+    );
+  }
+  // Its own task type, as the shortener has: a quote identifies a route by the
+  // task it declares, and one task on two routes is one the quote cannot price.
+  const drafted = await draftSection(ctx, pack, section, 'bid_response_redraft');
+  return { pack: drafted.pack, written: drafted.written!, acuConsumed: drafted.acuConsumed };
+}
+
+/**
+ * How much of the tender pack an answer is drafted with: about 40,000 tokens.
+ * Whole documents are kept in order while they fit, and the ones left out are
+ * named to the drafter rather than cut mid-sentence. The Conwy pack, five
+ * documents, is about 108,000 characters and fits whole.
+ */
+export const DRAFTING_PACK_MAX = 160_000;
+
+/**
+ * The tender's own documents, as each answer is drafted with them.
+ *
+ * An answer drafted from the matrix alone knew the question and nothing about
+ * the job behind it — the retaining wall, the soil nails, the access off
+ * Tan-Y-Fron, the ground report — and an evaluator marks a generic answer down.
+ * Every answer now sees the documents the buyer issued, and the quote is sized
+ * from them, because that is what each call sends.
+ */
+export function draftingDocuments(ctx: EngineContext): { text: string; omitted: string[] } {
+  const pack = packText(ctx, { maxCharacters: DRAFTING_PACK_MAX });
+  return { text: pack.text, omitted: pack.omitted };
+}
+
+/** The sections of a pack still to be written — what drafting every answer would run. */
+export function plannedSections(ctx: EngineContext, packId: string): number {
+  return requirePack(ctx, packId).sections.filter((section) => section.status === 'PLANNED').length;
+}
+
+/** The firm's own facts, so the drafter names its real people and claims no team it does not have. */
+function firmFacts(ctx: EngineContext): Record<string, unknown> {
+  const profile = ctx.ledger.get({ refType: 'CompanyProfile', refId: `${ctx.tenantId}-profile` })?.state;
+  const people = [
+    ...new Set(
+      ctx.ledger
+        .list(`${ctx.tenantId}-governance`, 'User')
+        .map((record) => String(record.state.name ?? '').trim())
+        .filter((name) => name.length > 0),
+    ),
+  ].slice(0, 12);
+  return {
+    ...(profile?.legalName ? { name: String(profile.legalName) } : {}),
+    people,
+    singleOwnerBids: profile?.singleOwnerBids === true,
+    accreditations: Array.isArray(profile?.accreditations) ? profile.accreditations : [],
+    selfDeliveredTrades: Array.isArray(profile?.selfDeliveredTrades) ? profile.selfDeliveredTrades : [],
+  };
+}
+
+/** Draft `next` into the pack and record it — shared by the first pass and a redraft. */
+async function draftSection(
+  ctx: EngineContext,
+  pack: BidResponsePack,
+  next: BidSection,
+  taskType: 'bid_response_section' | 'bid_response_redraft' = 'bid_response_section',
+): Promise<{ pack: BidResponsePack; written: BidSection | null; acuConsumed: number }> {
   const analysis = complianceMatrix(ctx, pack.analysisId);
   const line = analysis.matrix.find((entry) => entry.reference === next.key);
+  // On a scored pack the rest of the tender — scope, hazards, constraints — is
+  // not answered section by section, so the drafter is given it to make each
+  // scored answer about this job. Marked down as generic is the alternative.
+  const tenderContext =
+    pack.basis === 'SCORED_QUESTIONS'
+      ? contextFor(
+          planScope(analysis.matrix, new Set(liveWaivers(ctx, pack.analysisId).map((waiver) => waiver.reference))).context,
+        )
+      : [];
+
+  const documents = draftingDocuments(ctx);
 
   const result = await runAI(ctx, {
     engine: 'TENDER',
-    taskType: 'bid_response_section',
+    taskType,
     capability: 'REASONING',
     inputRefs: [{ refType: 'ITTAnalysis', refId: pack.analysisId }],
     request: {
       task:
-        'Write one section of a construction tender submission, answering one stated requirement. Return JSON with ' +
-        '`body`: an array of paragraph strings.',
+        `${expertBriefing('BID_MANAGER')} ` +
+        'Now write one section of a construction tender submission, answering one stated requirement — in the voice of ' +
+        'that bid manager: answer every element the requirement names, in the buyer’s own words, with the method and ' +
+        'the measurable commitments it asks for, and nothing it does not. Return JSON with `body`: an array of ' +
+        'paragraph strings.',
       payload: {
         client: pack.clientName,
         requirement: next.deliverable,
         evidenceRequired: line?.evidenceRequired ?? '',
         category: line?.category ?? '',
         mandatory: next.mandatory,
-        respondingRole: next.owner,
+        // Who the firm is and who is in it. Without this the drafter wrote "our
+        // Bid Manager and Planning Lead have prepared and signed the programme"
+        // for a one-person firm — a claim about staff an evaluator can test at
+        // interview, made from nothing but the routing label below.
+        firm: firmFacts(ctx),
+        ...(tenderContext.length > 0
+          ? {
+              tenderContext,
+              tenderContextUse:
+                'The buyer’s other requirements for these works. They are not questions to answer one by one; use ' +
+                'the ones this question touches so the answer is specific to this site and job.',
+            }
+          : {}),
+        ...(documents.text
+          ? {
+              tenderDocuments: documents.text,
+              tenderDocumentsUse:
+                'The documents the buyer issued for this tender, each under a "=== Document:" heading. Use what ' +
+                'they say about this site, these works, this programme and this buyer, in their own terms, so the ' +
+                'answer is about this job. State nothing as fact about the job that they do not say.',
+              ...(documents.omitted.length > 0 ? { tenderDocumentsOmitted: documents.omitted } : {}),
+            }
+          : {}),
         // Given to the writer rather than only checked afterwards. A pass that
         // produces 1,400 words against a 1,000-word limit is a pass somebody
         // pays for and then has to cut by hand, and the cut is where the
@@ -334,9 +907,18 @@ export async function writeNextSection(
         constraint:
           'Answer the requirement and nothing else. State no figure, no completion percentage, no customer name and no ' +
           'past project you have not been given — an invented reference in a submission is a false statement to a buyer ' +
-          'and grounds for disqualification. Where a number would help, describe the method instead and name what the ' +
-          'bid team must insert. Write in the first person plural, in British English, as a contractor answering a ' +
-          'client. Do not restate the question.' +
+          'and grounds for disqualification. Name only the people in `firm.people`, and claim no team, department or ' +
+          'job title the firm does not have; where `firm.singleOwnerBids` is true the firm is one person, so every ' +
+          'responsibility rests with that named person, with specialist subcontractors (by trade, not by name) for ' +
+          'work the firm buys in. This text goes to the buyer exactly as written: never leave a gap, a bracket, or a ' +
+          'note to a bid team, tender team or anyone else to insert, populate, confirm or complete something later — ' +
+          'an evaluator reads that as an unfinished answer and scores it so. Where a value depends on facts not yet ' +
+          'known (a start date, a design output, an award date), commit to how and when it will be fixed and who ' +
+          'fixes it — for example "confirmed in the construction phase plan before start on site" — rather than ' +
+          'leaving a blank. Where the buyer asks for an operational commitment (an inspection frequency, a response ' +
+          'time), commit to one that is normal UK practice for the work; the person reviewing this draft can change ' +
+          'it. Write in the first person plural, in British English, as a contractor answering a client. Do not ' +
+          'restate the question.' +
           (next.limit?.words
             ? ` The buyer states a limit of ${next.limit.words} words (${next.limit.statedAs}); anything past it is ` +
               'not read, so answer within it rather than writing long and leaving somebody to cut it.'
@@ -358,7 +940,7 @@ export async function writeNextSection(
       message:
         'This deployment is running the local stand-in, which reasons about nothing. It cannot write a tender ' +
         'submission, and sending what it returns to a buyer would be a false statement under the company name. ' +
-        'Configure a reasoning provider and set AI_MODE=live.',
+        'Configure a reasoning provider and set AI_MODE=production.',
     },
   });
 
@@ -395,12 +977,73 @@ export async function writeNextSection(
     nextState: next_ as unknown as Record<string, unknown>,
   });
 
-  return {
-    pack: next_,
-    written,
-    remaining: next_.sections.filter((section) => section.status === 'PLANNED').length,
-    acuConsumed: result.acuConsumed,
+  return { pack: next_, written, acuConsumed: result.acuConsumed };
+}
+
+/**
+ * Replace a section's prose with what a person wrote or edited.
+ *
+ * The drafter writes a first version and the shortener cuts one to length, but
+ * until this existed there was no way to *read back and refine* a drafted
+ * answer — to put the real project names into an experience answer, or the named
+ * site manager into a team answer, both of which the drafter deliberately leaves
+ * for a person because it will not invent them. A submission nobody can edit is
+ * a submission nobody can make their own.
+ *
+ * The result is marked `HUMAN`, and the AI attribution is dropped, because once
+ * a person has rewritten it the prose is theirs and the record should not claim a
+ * model wrote what a person did.
+ */
+export function reviseSection(
+  ctx: EngineContext,
+  input: { packId: string; key: string; body: string[] },
+): { pack: BidResponsePack; written: BidSection } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const pack = requirePack(ctx, input.packId);
+  if (pack.status === 'ISSUED') {
+    throw new DomainError(
+      'BID_RESPONSE_ISSUED',
+      `${pack.reference} has been issued. Editing a submission after it has gone to the buyer is not a draft change, ` +
+        'and the record of what was sent must stay what was sent.',
+      409,
+    );
+  }
+
+  const section = pack.sections.find((entry) => entry.key === input.key);
+  if (!section) {
+    throw new DomainError('BID_SECTION_NOT_FOUND', `${pack.reference} has no section ${input.key}`, 404);
+  }
+
+  const body = (Array.isArray(input.body) ? input.body : []).map((line) => String(line).trim()).filter(Boolean);
+  if (body.length === 0) {
+    throw new DomainError('BID_SECTION_EMPTY', 'A section needs at least one line of text. Clearing it is not editing it.', 422);
+  }
+
+  // Drop the AI attribution: a person has rewritten it, so the record must not
+  // say a model did.
+  const { provider: _provider, modelClass: _modelClass, ...base } = section;
+  const written: BidSection = {
+    ...base,
+    status: 'DRAFTED',
+    body,
+    words: body.join(' ').split(/\s+/).filter(Boolean).length,
+    authorship: 'HUMAN',
+    writtenAt: new Date().toISOString(),
   };
+
+  const next_: BidResponsePack = {
+    ...pack,
+    sections: pack.sections.map((entry) => (entry.key === input.key ? written : entry)),
+  };
+
+  write(ctx, {
+    eventType: 'BID_RESPONSE_SECTION_WRITTEN',
+    entity: { refType: 'BidResponsePack', refId: pack.id },
+    nextState: next_ as unknown as Record<string, unknown>,
+  });
+
+  return { pack: next_, written };
 }
 
 /**
@@ -494,7 +1137,7 @@ export async function shortenSection(
       message:
         'This deployment is running the local stand-in, which reasons about nothing. It cannot cut a tender ' +
         'submission to length without deciding what the answer can lose. Configure a reasoning provider and set ' +
-        'AI_MODE=live.',
+        'AI_MODE=production.',
     },
   });
 
@@ -578,6 +1221,27 @@ export type BidCompleteness = {
    */
   staleSections: Array<{ key: string; deliverable: string; addendum: string; detail: string }>;
   /**
+   * Written sections still carrying a note to the bid team instead of an answer.
+   *
+   * A hard gate. "The bid team will insert the response time" is read by the
+   * evaluator as exactly what it is, and on a scored question it is the mark.
+   * Each comes with the phrases found, so the person can see where they are.
+   */
+  unfinished: Array<{ key: string; deliverable: string; mandatory: boolean; phrases: string[] }>;
+  /**
+   * Sections claiming staff a one-person firm does not have.
+   *
+   * A hard gate, and only asked when the firm has said it is one person — the
+   * one case where the platform knows the claim is false. Empty otherwise.
+   */
+  unsupportedStaff: Array<{ key: string; deliverable: string; roles: string[] }>;
+  /**
+   * What a reviewer would raise and the pack can still go out with: a section
+   * answering a drawing note rather than a question, or "our Project Manager"
+   * on an NEC contract where the Project Manager is the client's.
+   */
+  advisories: Array<{ key: string; kind: 'DRAWING_NOTE' | 'NEC_PROJECT_MANAGER'; detail: string }>;
+  /**
    * Sections longer than the buyer said they may be.
    *
    * A hard gate, for the same reason a missing mandatory response is one. The
@@ -624,6 +1288,7 @@ export function bidCompleteness(
   waivers: RequirementWaiver[] = [],
   claims: EvidenceClaim[] = [],
   impacts: AddendumImpact[] = [],
+  review: SubmissionReviewContext = {},
 ): BidCompleteness {
   // Waivers are read live rather than baked into the pack at plan time, so a
   // waiver granted halfway through drafting takes a deliverable out of the
@@ -668,12 +1333,15 @@ export function bidCompleteness(
   const materialBy = new Map(impacts.filter((impact) => impact.material).map((impact) => [impact.reference, impact]));
   const staleSections = pack.sections
     .filter((section) => section.status === 'DRAFTED' && (section.body ?? []).length > 0)
-    .filter((section) => materialBy.has(section.key))
-    .map((section) => ({
+    // A section answering the same question from two documents is stale when
+    // an addendum changes either of them.
+    .map((section) => ({ section, impact: [section.key, ...(section.alsoAnswers ?? [])].map((ref) => materialBy.get(ref)).find(Boolean) }))
+    .filter((entry) => entry.impact !== undefined)
+    .map(({ section, impact }) => ({
       key: section.key,
       deliverable: section.deliverable,
-      addendum: materialBy.get(section.key)!.addendum,
-      detail: materialBy.get(section.key)!.detail,
+      addendum: impact!.addendum,
+      detail: impact!.detail,
     }));
 
   /*
@@ -710,6 +1378,51 @@ export function bidCompleteness(
       statedAs: section.limit!.statedAs,
     }));
 
+  // Every drafted section, waived or not, for the reason `overLimit` gives: the
+  // prose is still in the pack and still read.
+  const unfinished = drafted
+    .map((section) => ({
+      key: section.key,
+      deliverable: section.deliverable,
+      mandatory: section.mandatory,
+      phrases: unfinishedPhrases((section.body ?? []).join('\n')),
+    }))
+    .filter((entry) => entry.phrases.length > 0);
+
+  const unsupportedStaff = review.singleOwner
+    ? drafted
+        .map((section) => ({
+          key: section.key,
+          deliverable: section.deliverable,
+          roles: unsupportedRoles((section.body ?? []).join('\n'), review.people ?? []),
+        }))
+        .filter((entry) => entry.roles.length > 0)
+    : [];
+
+  const nec = /\bNEC(?:\d|\b)/i.test(review.contractForm ?? '');
+  const advisories: BidCompleteness['advisories'] = [
+    ...pack.sections
+      .filter((section) => !waivedBy.has(section.key) && isDrawingNote(section.deliverable))
+      .map((section) => ({
+        key: section.key,
+        kind: 'DRAWING_NOTE' as const,
+        detail:
+          'This is a note on a drawing, not a question. Waive it on the compliance matrix so it leaves the pack — an ' +
+          'essay answering a drawing convention reads as padding.',
+      })),
+    ...(nec
+      ? drafted
+          .filter((section) => /\bour project manager\b/i.test((section.body ?? []).join(' ')))
+          .map((section) => ({
+            key: section.key,
+            kind: 'NEC_PROJECT_MANAGER' as const,
+            detail:
+              'Under an NEC contract the Project Manager is the client’s role. Calling our own person that confuses ' +
+              'the evaluator — call them our contract manager, by name.',
+          }))
+      : []),
+  ];
+
   const pageLimited = drafted
     .filter((section) => section.limit?.pages !== undefined)
     .map((section) => ({
@@ -725,7 +1438,9 @@ export function bidCompleteness(
     undated.length === 0 &&
     lapsedEvidence.length === 0 &&
     staleSections.length === 0 &&
-    overLimit.length === 0;
+    overLimit.length === 0 &&
+    unfinished.length === 0 &&
+    unsupportedStaff.length === 0;
 
   return {
     ready,
@@ -734,6 +1449,9 @@ export function bidCompleteness(
     waived,
     lapsedEvidence,
     staleSections,
+    unfinished,
+    unsupportedStaff,
+    advisories,
     overLimit,
     pageLimited,
     written,
@@ -754,6 +1472,8 @@ export function bidCompleteness(
           (lapsedEvidence.length > 0 ? `, ${lapsedEvidence.length} claim(s) evidenced by something that lapses first` : '') +
           (staleSections.length > 0 ? `, ${staleSections.length} answering a requirement an addendum has changed` : '') +
           (overLimit.length > 0 ? `, ${overLimit.length} longer than the buyer allows` : '') +
+          (unfinished.length > 0 ? `, ${unfinished.length} still carrying a note to the bid team instead of an answer` : '') +
+          (unsupportedStaff.length > 0 ? `, ${unsupportedStaff.length} claiming staff the firm does not have` : '') +
           '.',
   };
 }
@@ -785,6 +1505,7 @@ export function issueBidResponse(
       liveWaivers(ctx, pack.analysisId),
       approvedOn(ctx, new Date().toISOString().slice(0, 10)),
       openImpacts(ctx, pack.analysisId),
+      reviewContextFor(ctx, pack),
     );
   if (!completeness.ready) {
     throw new DomainError(
@@ -811,6 +1532,16 @@ export function issueBidResponse(
               .join('; ')}. ` +
             'An evaluator does not mark the extra words down — the instruction is that anything past the limit is ' +
             'not read, so the answer is scored on where it happens to stop. Cut it to length. '
+          : '') +
+        (completeness.unfinished.length > 0
+          ? `${completeness.unfinished.length} section(s) still hold a note to the bid team instead of an answer: ` +
+            `${completeness.unfinished.map((entry) => entry.key).join(', ')}. The buyer reads that note as written ` +
+            'and scores the gap. Redraft the section, or edit it, so it commits to what the note left blank. '
+          : '') +
+        (completeness.unsupportedStaff.length > 0
+          ? `${completeness.unsupportedStaff.length} section(s) claim staff a one-person firm does not have: ` +
+            `${completeness.unsupportedStaff.map((entry) => `${entry.key} (${entry.roles.join(', ')})`).join('; ')}. ` +
+            'An evaluator can test that at interview. Redraft the section so it names who actually does the work. '
           : '') +
         (completeness.lapsedEvidence.length > 0
           ? `${completeness.lapsedEvidence.length} claim(s) rest on evidence that expires before ${pack.returnBy.slice(0, 10)}, ` +
@@ -911,7 +1642,10 @@ export type BidResponsePosition = {
       BidResponsePack,
       'id' | 'reference' | 'analysisId' | 'clientName' | 'returnBy' | 'status' | 'passes' | 'qualityFloorPercent'
     > & {
+      basis: PlanBasis;
       completeness: BidCompleteness;
+      /** Sections not yet written at all — what "draft every remaining answer" would run. */
+      toWrite: number;
     }
   >;
   summary: string;
@@ -934,11 +1668,14 @@ export function bidResponsePosition(ctx: EngineContext): BidResponsePosition {
       status: pack.status,
       passes: pack.passes,
       qualityFloorPercent: pack.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR_PERCENT,
+      basis: pack.basis ?? 'WRITTEN_REQUIREMENTS',
+      toWrite: pack.sections.filter((section) => section.status === 'PLANNED').length,
       completeness: bidCompleteness(
       pack,
       liveWaivers(ctx, pack.analysisId),
       approvedOn(ctx, new Date().toISOString().slice(0, 10)),
       openImpacts(ctx, pack.analysisId),
+      reviewContextFor(ctx, pack),
     ),
     }));
 
@@ -971,6 +1708,7 @@ export function bidResponsePack(
       liveWaivers(ctx, pack.analysisId),
       approvedOn(ctx, new Date().toISOString().slice(0, 10)),
       openImpacts(ctx, pack.analysisId),
+      reviewContextFor(ctx, pack),
     ),
   };
 }

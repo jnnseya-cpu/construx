@@ -1,9 +1,12 @@
 import { AREA_CONSOLE_PAGE } from '../../../shared/vocabulary.js';
+import { guideGroundingLines, relevantGuideTopics } from './platformguide.ts';
 import { ENGINE_CONTRACTS } from './orchestrator.ts';
+import { expertPersonaForRoles } from './expertise.ts';
 import { config } from '../config.ts';
 import { abbreviateMoney } from '../domain/locale.ts';
 import type { EngineContext } from '../engines/context.ts';
-import { currentPhase } from '../engines/context.ts';
+import { authorise, currentPhase, runAI } from '../engines/context.ts';
+import { DomainError } from '../core/errors.ts';
 import { evaluateAccess } from '../identity/abac.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
 import type { CapabilityArea, Role } from '../identity/roles.ts';
@@ -375,6 +378,121 @@ export function ask(ctx: EngineContext, question: string): ConversationAnswer {
     // only arises when the user runs one of the suggested engine commands.
     acuConsumed: 0,
     availableTools,
+  };
+}
+
+/**
+ * The same question, answered in plain English — a paid rewrite on request.
+ *
+ * `ask` above is free and deterministic: it reads project state and routes the
+ * question, spending nothing. A first-timer who is still stuck after reading it
+ * can ask for this, which calls a reasoning provider to explain the step in
+ * plain words and name the exact action to take. It is charged to the tenancy's
+ * own ACU wallet, and `runAI` reserves, runs and only then debits — a run that
+ * fails is never charged.
+ *
+ * It is grounded on `ask`'s own output rather than let loose on the question:
+ * the model is given the facts the platform already derived and the next step
+ * it already chose, and told to explain those in plain English. It invents no
+ * figure, deadline or project detail, because it is handed the facts rather than
+ * asked for them. The local stand-in cannot do this honestly — a plain-English
+ * explanation attributed to reasoning that did not happen is the same dishonesty
+ * the bid drafter refuses — so `requireModel` releases the hold and refuses
+ * rather than charging for a synthetic answer. The free grounded answer is
+ * always there regardless.
+ */
+export async function explainPlainly(
+  ctx: EngineContext,
+  question: string,
+): Promise<{
+  question: string;
+  explanation: string[];
+  groundedAnswer: string;
+  acuConsumed: number;
+  provider?: string;
+  modelClass?: string;
+}> {
+  authorise(ctx, 'PROJECT_SETUP', 'R');
+
+  // Ground on the free, deterministic answer first. The paid model explains
+  // these facts; it is never the source of them.
+  const grounded = ask(ctx, question);
+  const nextAction = grounded.suggestedActions[0];
+
+  // The curated platform knowledge relevant to the question — the real screens,
+  // buttons and order. Handed to the model as mechanics it may rely on, the way
+  // the project facts are, so a plain-English answer names how CONSTRUX actually
+  // works instead of inventing it. Empty when the question matches no topic, in
+  // which case the model falls back to the grounded answer and next step alone.
+  const guideTopics = relevantGuideTopics(question);
+  const howThePlatformWorks = guideGroundingLines(guideTopics);
+
+  const result = await runAI(ctx, {
+    engine: 'GUIDE',
+    taskType: 'guide_explain',
+    capability: 'REASONING',
+    inputRefs: [],
+    request: {
+      task:
+        // The copilot answers as the experienced professional whose seat the
+        // person holds — a QS hears a QS, a site manager a CDM principal
+        // contractor — so the universal "Ask for help" is expert, not generic.
+        // Persona, not the full briefing: this explains a platform step in plain
+        // words, it does not analyse a document to quote from.
+        (expertPersonaForRoles(ctx.auth.roles) ?? '') +
+        ' Explain, in plain English for a busy builder with no bid-writing experience, what this step means and exactly ' +
+        'what to do next in the platform. Bring your professional judgement to what matters about the step, but keep the ' +
+        'words plain. Return JSON with `explanation`: an array of short paragraph strings.',
+      payload: {
+        question,
+        phase: currentPhase(ctx) ?? 'none',
+        // The facts the platform already derived, and the step it already chose.
+        whatThePlatformSays: grounded.answer,
+        factsOnRecord: grounded.grounding.map((fact) => `${fact.label}: ${fact.value}`),
+        theNextStep: nextAction ? `${nextAction.label} — taken on the ${nextAction.goTo} screen` : 'none suggested',
+        // How the platform works, from the curated guide — true mechanics, not
+        // project figures. The model may describe these steps, screens and
+        // buttons; it still may not state a figure or project detail.
+        howThePlatformWorks,
+        constraint:
+          'Use only the facts and the platform steps given above. You may describe the screens, buttons and order in ' +
+          '“howThePlatformWorks”, because those are how the platform works. But state no figure, deadline, price or ' +
+          'project detail that is not in the facts on record — an invented fact in guidance is worse than none. Write ' +
+          'in British English, short sentences, first person plural where natural, and name the button to press rather ' +
+          'than describing where to scroll. Do not restate the question.',
+      },
+    },
+    // Advisory: nothing is persisted as state. The ACU charge is recorded by
+    // runAI itself, so returning writes here would double-count nothing useful.
+    toWrites: () => [],
+    requireModel: {
+      code: 'NO_REASONING_PROVIDER',
+      message:
+        'This deployment is running the local stand-in, which cannot write a plain-English explanation honestly. The ' +
+        'grounded answer is free and always available; a reasoning provider is needed only for this plain-English ' +
+        'rewrite. Configure one and set AI_MODE=production.',
+    },
+  });
+
+  const output = result.output as { explanation?: unknown };
+  const explanation = Array.isArray(output.explanation)
+    ? output.explanation.map((line) => String(line).trim()).filter(Boolean)
+    : [];
+  if (explanation.length === 0) {
+    throw new DomainError(
+      'GUIDE_EXPLANATION_UNUSABLE',
+      'The model returned no explanation. Nothing was kept, and the free grounded answer is unchanged — try again.',
+      502,
+    );
+  }
+
+  return {
+    question,
+    explanation,
+    groundedAnswer: grounded.answer,
+    acuConsumed: result.acuConsumed,
+    ...(result.provider ? { provider: result.provider } : {}),
+    ...(result.modelClass ? { modelClass: result.modelClass } : {}),
   };
 }
 

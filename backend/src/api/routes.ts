@@ -1,5 +1,5 @@
 import { CHANGE_ORIGIN, CONTINENT, CONTRACT_FORM, COUNTRY, DELAY_CAUSE, NOTICE_TYPE, SECTOR, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
-import { ask } from '../ai/conversation.ts';
+import { ask, explainPlainly } from '../ai/conversation.ts';
 import * as storage from '../billing/storage.ts';
 import * as stripe from '../billing/stripe.ts';
 import * as koda from '../billing/koda.ts';
@@ -27,9 +27,21 @@ import * as notificationRender from '../notifications/render.ts';
 import type { EventSource } from '../goldenthread/types.ts';
 import type { Engine } from '../ai/orchestrator.ts';
 import type { ProviderCapability } from '../ai/providers/types.ts';
+import { runGatewayTask } from '../ai/gateway/service.ts';
+import { executionDescriptor, orchestratorExecutor } from '../ai/gateway/executor.ts';
+import { isTaskProfile, WIRED_PROVIDERS, type AITaskRequest, type TaskProfile } from '../ai/gateway/contract.ts';
+import type { ProviderAvailability } from '../ai/gateway/router.ts';
+import { approvalRequirement } from '../ai/gateway/policy.ts';
+import {
+  approveGatewayRequest,
+  listGatewayRequests,
+  persistGatewayRequest,
+  readGatewayRequest,
+  rejectGatewayRequest,
+} from '../ai/gateway/store.ts';
 import * as agents from '../agents/runtime.ts';
 import { fleetManifest } from '../agents/runtime.ts';
-import { AUTOMATABLE_COMMANDS, LADDER, envelopeRegister, grantEnvelope, revokeEnvelope } from '../agents/mandate.ts';
+import { AUTOMATABLE_COMMANDS, LADDER, actBudget, envelopeRegister, grantEnvelope, projectAutonomousSpend, revokeEnvelope, setActBudget } from '../agents/mandate.ts';
 import { egressPosition, flush as flushEgress } from '../ops/otlp.ts';
 import { assurancePosition, sweep } from '../ops/assurance.ts';
 import * as consistencySweep from '../ops/consistencysweep.ts';
@@ -93,6 +105,7 @@ import * as oncall from '../ops/oncall.ts';
 import { backupPosition, runBackup } from '../ops/backup.ts';
 import { takeSnapshot } from '../goldenthread/snapshot.ts';
 import * as correspondence from '../domain/correspondence.ts';
+import * as dispatch from '../domain/dispatch.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as programmecontrol from '../domain/programmecontrol.ts';
 import * as qualitycontrol from '../domain/qualitycontrol.ts';
@@ -121,6 +134,8 @@ import * as siteCommand from '../domain/etablix/commandcentre.ts';
 import * as siteWorkflow from '../domain/etablix/workflow.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
+import * as platformguide from '../ai/platformguide.ts';
+import * as supportreports from '../ops/support.ts';
 import * as programmereview from '../domain/programmereview.ts';
 import * as resources from '../domain/resources.ts';
 import * as responsibility from '../domain/responsibility.ts';
@@ -136,6 +151,7 @@ import * as reliability from '../domain/reliability.ts';
 import * as informationcontrol from '../domain/informationcontrol.ts';
 import * as handoverrequirements from '../domain/handoverrequirements.ts';
 import * as itt from '../domain/itt.ts';
+import * as misfileguard from '../domain/misfileguard.ts';
 import * as addendum from '../domain/addendum.ts';
 import * as clauselibrary from '../domain/clauselibrary.ts';
 import * as answers from '../domain/answers.ts';
@@ -155,9 +171,13 @@ import * as pricelineage from '../domain/pricelineage.ts';
 import * as redteam from '../domain/redteam.ts';
 import * as evidenceclaim from '../domain/evidenceclaim.ts';
 import * as bidresponse from '../domain/bidresponse.ts';
+import * as tenderprogramme from '../domain/tenderprogramme.ts';
 import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
 import * as tenderpackcheck from '../domain/tenderpackcheck.ts';
+import * as tenderreading from '../domain/tenderreading.ts';
+import * as clarificationreview from '../domain/clarificationreview.ts';
+import * as riskreview from '../domain/riskreview.ts';
 import { DURATION_COMPLEXITY } from '../engines/maths/programmeDuration.ts';
 import { morningBriefing } from '../agents/briefing.ts';
 import { AGENT_DIVISIONS, type AgentDivision } from '../agents/types.ts';
@@ -248,11 +268,25 @@ import * as conceptcontrols from '../domain/conceptcontrols.ts';
 import * as conceptduediligence from '../domain/conceptduediligence.ts';
 import * as conceptinitiation from '../domain/conceptinitiation.ts';
 import * as conceptoptions from '../domain/conceptoptions.ts';
+import * as feasibility from '../domain/feasibility.ts';
+import * as feasibilitybrief from '../domain/feasibilitybrief.ts';
+import * as consultancybc from '../domain/consultancy/businesscase.ts';
+import * as consultancystore from '../domain/consultancy/store.ts';
+import * as gridstore from '../domain/grid/store.ts';
+import * as addonstore from '../billing/addonstore.ts';
+import * as consultancyevidence from '../domain/consultancy/evidence.ts';
+import * as consultancyrfq from '../domain/consultancy/rfq.ts';
+import * as consultancylifecycle from '../domain/consultancy/lifecycle.ts';
+import * as consultancyorchestrator from '../domain/consultancy/orchestrator.ts';
+import * as consultancyprocurement from '../domain/consultancy/procurement.ts';
+import { intakeBlockers } from '../domain/consultancy/engagement.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
 import { bidFlow } from '../domain/bidflow.ts';
+import { guidedJourney } from '../domain/journey.ts';
 import * as bidrun from '../domain/bidrun.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
-import { quoteFromEstimate, type QuotationInput } from '../domain/quotation.ts';
+import { pricingSchedule, pricingScheduleBlocks, quoteFromEstimate, type QuotationInput } from '../domain/quotation.ts';
+import type { DocumentBlock } from '../export/exporter.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
 import * as stagegate from '../domain/stagegate.ts';
@@ -322,7 +356,8 @@ import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode,
   TENANT_GRANTABLE_ROLES,
 } from '../identity/roles.ts';
 import { customRoleRegister, GRANTABLE_AREAS } from '../identity/customroles.ts';
-import { authorise, AUTHZ_OPTIONS, currentPhase, registerEvidence, write } from '../engines/context.ts';
+import { roleExpertise, expertRole } from '../ai/expertise.ts';
+import { authorise, AUTHZ_OPTIONS, currentPhase, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 import { ulid } from '../core/ids.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import { COMMERCIAL_OUTCOMES, DELIVERY_STATUSES, LIFECYCLE_STATES, LIFECYCLE_STATE_CODES } from '../lifecycle/state.ts';
@@ -456,7 +491,18 @@ export type Route = {
    * minds; one that turns out higher is the platform having understated what
    * it was about to spend.
    */
-  ai?: { engine: Engine; taskType: string; capability: ProviderCapability; passes?: number };
+  ai?: {
+    engine: Engine;
+    taskType: string;
+    capability: ProviderCapability;
+    passes?: number;
+    /**
+     * The text the run will send, where it is assembled from the project rather
+     * than named in the path — the whole tender pack. The quote sizes the
+     * estimate from it, so the price shown is the price of what is sent.
+     */
+    quoteInputText?: (ctx: EngineContext) => string | undefined;
+  };
   /**
    * A control that never belongs on a handset, and which control it is.
    *
@@ -687,6 +733,19 @@ function tenantContext(platform: Platform, ctx: RequestContext) {
 }
 
 /**
+ * A project context for a Grid Connection AI delivery write, gated on the add-on
+ * entitlement where the operator has turned enforcement on. When the flag is off the
+ * machinery is still live and provisionable; it simply does not refuse an unseated
+ * user. When it is on, a write by a user with no grant/active-billing/seat is refused
+ * with the spec's typed error (spec §2, A01) before any state changes.
+ */
+function gridWriteContext(platform: Platform, ctx: RequestContext) {
+  const pctx = projectContext(platform, ctx);
+  if (config.ops.gridConnectionEnforceSeats) addonstore.requireModuleSeat(pctx, pctx.auth.actorId);
+  return pctx;
+}
+
+/**
  * The engine options every route hands `platform.context`.
  *
  * One helper because there are twenty-nine direct call sites, and §15.1's
@@ -810,6 +869,72 @@ function evidenceUploadTarget(
 }
 
 /**
+ * A tender document is read the moment its file has arrived.
+ *
+ * Reading (`ingestFile`) is free and deterministic — what the bytes are, whether
+ * their text can be read, whether they should be quarantined — and nothing
+ * downstream counts a file until it has been read. It used to need a separate
+ * "Look at the file first" press per file, and until then the guide kept
+ * saying "File the pack — nothing is filed", to somebody who had just filed
+ * five documents. Only tender documents, and never at the cost of the upload: a
+ * reading that is refused is reported beside the stored file, with its reason,
+ * and the per-file button still offers it.
+ */
+async function readTenderDocumentOnArrival(
+  platform: Platform,
+  engineCtx: ReturnType<Platform['context']>,
+  _record: NonNullable<ReturnType<typeof evidence.findByHash>>,
+  hash: string,
+): Promise<Record<string, unknown>> {
+  /*
+   * Every project that filed these bytes as a tender document, not only the
+   * first one the tenancy ever filed them on.
+   *
+   * The upload's record is found by hash across the tenancy, which answers with
+   * the *first* project to file the file. The same pack legitimately goes to a
+   * second project — a second lot, a re-tender — and its reading then ran on
+   * the first project, was refused there as already read, and the project the
+   * person was actually uploading to was left showing five files "not yet
+   * looked at". Each filing is read on its own project, under the uploader's
+   * own authority there, newest first: the one this upload follows.
+   */
+  const filings = platform.ledger
+    .listByTenant(engineCtx.tenantId, 'EvidenceItem')
+    .filter((entry) => {
+      const state = entry.state as { hash?: string; type?: string };
+      return state.hash === hash && state.type === 'TENDER_DOCUMENT';
+    })
+    .reverse();
+  let outcome: Record<string, unknown> = {};
+  let alreadyRead: Record<string, unknown> | undefined;
+  for (const filing of filings) {
+    const filename = String((filing.state as { description?: string }).description ?? '').replace(/^Tender document:\s*/, '') || undefined;
+    const onProject =
+      filing.projectId === engineCtx.projectId
+        ? engineCtx
+        : platform.context(engineCtx.auth, filing.projectId, { correlationId: engineCtx.correlationId, source: engineCtx.source });
+    try {
+      const reading = await ingestion.ingestFile(onProject, platform.evidence, { hash, ...(filename ? { filename } : {}) });
+      if (!('reading' in outcome)) outcome = { reading };
+    } catch (error) {
+      const failure = error as { code?: string; message?: string };
+      // Already read on that project: nothing to do there. Reported only when
+      // it is true of every filing, so the same file sent twice still says so.
+      if (failure.code === 'ALREADY_INGESTED') {
+        alreadyRead ??= { readingRefused: { code: failure.code, message: failure.message ?? 'Already read.' } };
+        continue;
+      }
+      if (Object.keys(outcome).length === 0) {
+        outcome = {
+          readingRefused: { code: failure.code ?? 'NOT_READ', message: failure.message ?? 'The file was stored but not read.' },
+        };
+      }
+    }
+  }
+  return Object.keys(outcome).length > 0 ? outcome : (alreadyRead ?? {});
+}
+
+/**
  * Every capability area, read from the permission matrix rather than restated.
  *
  * A signature request names the area its document belongs to, and that choice
@@ -835,6 +960,7 @@ const CORRESPONDENCE_PARTIES: string[] = [
 const PERCEPTION_PATHS: Record<perception.PerceptionTask, string> = {
   TITLE_BLOCK: 'title-block',
   DRAWING_TAKEOFF: 'take-off',
+  PRICE_LIST_BOQ: 'price-list-boq',
   ITT_REQUIREMENTS: 'itt',
   VOICE_NOTE: 'voice-note',
   PROGRESS_FROM_IMAGES: 'progress',
@@ -881,11 +1007,16 @@ const stringField = { type: 'string', minLength: 1 } as const;
  */
 const ITT_ANALYSIS_SCHEMA = {
   type: 'object',
-  required: ['reference', 'clientName', 'returnBy', 'estimatedValueMinor', 'durationWeeks', 'requirements', 'terms'],
+  // estimatedValueMinor and durationWeeks are optional: the matrix needs neither,
+  // and an estimator cannot give a contract value before the take-off. Omitted,
+  // the commercial-term exposures are sized later once a value exists.
+  required: ['reference', 'clientName', 'returnBy', 'requirements', 'terms'],
   properties: {
     reference: stringField,
     clientName: stringField,
     returnBy: stringField,
+    // Override the misfile guard when it flags this ITT as belonging to another project.
+    confirmPlacement: { type: 'boolean' },
     estimatedValueMinor: { type: 'integer', minimum: 0 },
     durationWeeks: { type: 'integer', minimum: 1 },
     requirements: {
@@ -990,6 +1121,43 @@ async function storeBrandImage(
   const hash = hashEvidence(bytes);
   await platform.evidence.store(tenantId, hash, bytes, signature.contentType);
   return { hash, bytes: bytes.length, contentType: signature.contentType };
+}
+
+/**
+ * The same, but for a logo — which the PDF carries inline (`logoRef`) rather
+ * than resolving from the store the way it resolves a cover. A logo is embedded
+ * into every page, so it must be a format a PDF can embed: PNG (FlateDecode) or
+ * JPEG (DCTDecode). WebP is fine for a cover, which is resolved and decoded by a
+ * different path, but a PDF reader cannot embed it as a logo — so it is refused
+ * here with a sentence that says what to do rather than failing silently at
+ * render time with the mark simply missing from the page.
+ */
+async function storeLogoImage(
+  platform: Platform,
+  tenantId: string,
+  bytes: Buffer,
+): Promise<{ hash: string; bytes: number; contentType: string; dataUri: string }> {
+  // Format is decided from the bytes before the store is touched, so a WebP
+  // logo — valid as a cover, unembeddable as a logo — is refused with advice
+  // whether or not an object store is configured, exactly as a non-image is.
+  const signature = SIGNATURES.find((candidate) => candidate.matches(bytes));
+  if (signature && signature.contentType !== 'image/png' && signature.contentType !== 'image/jpeg') {
+    throw new DomainError(
+      'LOGO_FORMAT',
+      `A logo has to be a PNG or JPEG so it can be embedded on every page of a PDF. ` +
+        `${signature.contentType === 'image/webp' ? 'WebP is fine for a cover image but not for a logo. ' : ''}` +
+        `Re-export the logo as PNG or JPEG and upload it again.`,
+      415,
+    );
+  }
+  // A non-image (no signature), the size ceiling and the store itself are
+  // storeBrandImage's job, with its own refusals.
+  const stored = await storeBrandImage(platform, tenantId, bytes);
+  // The PDF reads the logo from `logoRef` as a data URI, so the bytes travel in
+  // the branding record itself; the evidence hash is kept alongside so the
+  // document's content hash still commits to exactly which mark was on the page.
+  const dataUri = `data:${stored.contentType};base64,${bytes.toString('base64')}`;
+  return { ...stored, dataUri };
 }
 
 /**
@@ -1467,11 +1635,21 @@ function teamPosition(platform: Platform, tenantId: string) {
 
   const active = rows.filter((row) => row.state === 'ACTIVE');
   const second = active.filter((row) => row.mfa.passkey || row.mfa.authenticator).length;
-  const roleCatalogue = TENANT_GRANTABLE_ROLES.map((role) => ({
-    role,
-    areas: Object.entries(PERMISSION_MATRIX[role]).map(([area, codes]) => ({ area, codes })),
-    holders: active.filter((row) => row.roles.includes(role)).length,
-  }));
+  const roleCatalogue = TENANT_GRANTABLE_ROLES.map((role) => {
+    // The AI expert the platform reasons as on this role's behalf — its "AI
+    // agent". Null where the role has no single construction profession (the
+    // administrator, the viewer, and the owner, who holds every seat's expert).
+    const discipline = roleExpertise(role);
+    const expert = discipline
+      ? { discipline, ...expertRole(discipline) }
+      : null;
+    return {
+      role,
+      areas: Object.entries(PERMISSION_MATRIX[role]).map(([area, codes]) => ({ area, codes })),
+      holders: active.filter((row) => row.roles.includes(role)).length,
+      expert,
+    };
+  });
 
   return {
     summary: {
@@ -3950,6 +4128,15 @@ export const ROUTES: Route[] = [
         insurances: { type: 'array', items: { type: 'object' } },
         accreditations: { type: 'array', items: { type: 'string' } },
         references: { type: 'array', items: { type: 'object' } },
+        // Enhanced DBS for personnel entering occupied homes. Optional, so a
+        // profile saved before this field still validates; the matrix reads it to
+        // evidence a DBS requirement rather than leaving it a gap.
+        dbs: {
+          type: 'object',
+          required: ['held'],
+          properties: { held: { type: 'boolean' }, detail: { type: 'string' } },
+          additionalProperties: false,
+        },
         selfDeliveredTrades: { type: 'array', items: { type: 'string' } },
         // A range, not a number. `CompanyProfile.targetMarginPercent` is
         // `{ min, max }` and the radar reads both — `profile.targetMarginPercent.max`
@@ -3972,6 +4159,9 @@ export const ROUTES: Route[] = [
           },
           additionalProperties: false,
         },
+        // One-director business: owners default to the owner rather than a role
+        // per category.
+        singleOwnerBids: { type: 'boolean' },
       },
       additionalProperties: false,
     },
@@ -4008,6 +4198,733 @@ export const ROUTES: Route[] = [
         ...(ctx.query.get('name') ? { name: ctx.query.get('name') as string } : {}),
         ...(ctx.query.get('today') ? { today: ctx.query.get('today') as string } : {}),
       }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/feasibility/archetypes',
+    guest: 'REFERENCE',
+    description: 'The dwelling archetypes (with NDSS areas) and the default concept assumptions a feasibility scheme is computed under',
+    handler: () => ({ archetypes: feasibility.DWELLING_ARCHETYPES, assumptions: feasibility.DEFAULT_ASSUMPTIONS }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/feasibility/scheme',
+    readOnly: true,
+    description: 'Turn a site and a brief into a schedule of accommodation, land budget, order-of-cost and indicative programme. Deterministic; nothing is persisted.',
+    schema: {
+      type: 'object',
+      required: ['schemeName', 'siteAreaHa'],
+      additionalProperties: false,
+      properties: {
+        schemeName: { type: 'string', minLength: 1, maxLength: 200 },
+        authority: { type: 'string', maxLength: 200 },
+        tenure: { type: 'string', maxLength: 120 },
+        siteAreaHa: { type: 'number', exclusiveMinimum: 0, maximum: 1000 },
+        // Explicit counts where the mix is decided; the nested shapes are
+        // validated by the engine, which refuses an unknown archetype by name.
+        mix: { type: 'array' },
+        assumptions: { type: 'object' },
+        suggest: { type: 'object' },
+      },
+    },
+    handler: (platform, ctx) => {
+      const tctx = tenantContext(platform, ctx);
+      authorise(tctx, 'PROJECT_SETUP', 'R');
+      const input = body<feasibility.FeasibilityInput & { suggest?: { densityDph?: number; familyWeighted?: boolean } }>(ctx);
+      // A short brief need not carry a mix: where none is given, suggest one from
+      // the site area and target density, which the caller then adjusts. The
+      // suggestion is a transparent rule, not a hidden judgement.
+      const mix = input.mix && input.mix.length > 0
+        ? input.mix
+        : feasibility.suggestMix(input.siteAreaHa, input.suggest?.densityDph, input.suggest?.familyWeighted);
+      return feasibility.feasibilityScheme({ ...input, mix });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/feasibility/brief',
+    readOnly: true,
+    description: 'The feasibility scheme assembled into a narrative brief (project description / Employer’s Requirements), as structured document blocks. Deterministic; the AI narrative layer is added only on the downloadable export.',
+    schema: {
+      type: 'object',
+      required: ['schemeName', 'siteAreaHa'],
+      additionalProperties: false,
+      properties: {
+        schemeName: { type: 'string', minLength: 1, maxLength: 200 },
+        authority: { type: 'string', maxLength: 200 },
+        tenure: { type: 'string', maxLength: 120 },
+        siteAreaHa: { type: 'number', exclusiveMinimum: 0, maximum: 1000 },
+        mix: { type: 'array' },
+        assumptions: { type: 'object' },
+        suggest: { type: 'object' },
+      },
+    },
+    handler: (platform, ctx) => {
+      const tctx = tenantContext(platform, ctx);
+      authorise(tctx, 'PROJECT_SETUP', 'R');
+      const input = body<feasibility.FeasibilityInput & { suggest?: { densityDph?: number; familyWeighted?: boolean } }>(ctx);
+      const mix = input.mix && input.mix.length > 0
+        ? input.mix
+        : feasibility.suggestMix(input.siteAreaHa, input.suggest?.densityDph, input.suggest?.familyWeighted);
+      const scheme = feasibility.feasibilityScheme({ ...input, mix });
+      return { scheme, blocks: feasibilitybrief.feasibilityBriefBlocks(scheme) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/feasibility/brief.docx',
+    binary: true,
+    description: 'The feasibility brief as a branded, downloadable document (PDF or DOCX) — schedule, land budget, cost plan and programme with narrative. All-electric to the Future Homes Standard. Every figure a concept control to replace with measured design and QS data.',
+    schema: {
+      type: 'object',
+      required: ['schemeName', 'siteAreaHa'],
+      additionalProperties: false,
+      properties: {
+        schemeName: { type: 'string', minLength: 1, maxLength: 200 },
+        authority: { type: 'string', maxLength: 200 },
+        tenure: { type: 'string', maxLength: 120 },
+        siteAreaHa: { type: 'number', exclusiveMinimum: 0, maximum: 1000 },
+        mix: { type: 'array' },
+        assumptions: { type: 'object' },
+        suggest: { type: 'object' },
+        format: { type: 'string', enum: ['PDF', 'DOCX'] },
+        withNarrative: { type: 'boolean' },
+      },
+    },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      const tctx = tenantContext(platform, ctx);
+      authorise(tctx, 'PROJECT_SETUP', 'R');
+      const input = body<feasibility.FeasibilityInput & {
+        suggest?: { densityDph?: number; familyWeighted?: boolean };
+        format?: RenderableFormat;
+        withNarrative?: boolean;
+      }>(ctx);
+      const chosen: RenderableFormat = input.format ?? 'DOCX';
+      const mix = input.mix && input.mix.length > 0
+        ? input.mix
+        : feasibility.suggestMix(input.siteAreaHa, input.suggest?.densityDph, input.suggest?.familyWeighted);
+      const scheme = feasibility.feasibilityScheme({ ...input, mix });
+      // The AI layer is best-effort: it adds advisory prose where a reasoning
+      // provider answers, and is simply absent otherwise. It never blocks the
+      // document, which is complete from the deterministic prose alone.
+      let narrative: Record<string, string> = {};
+      if (input.withNarrative !== false) {
+        try { narrative = (await feasibilitybrief.feasibilityNarrative(tctx, scheme)).narrative; } catch { narrative = {}; }
+      }
+      const blocks = feasibilitybrief.feasibilityBriefBlocks(scheme, narrative);
+      // Tenant-level: no project, so an empty projectId — branding falls back to
+      // the tenancy's, and `#finalise` requires no project record.
+      const document = platform.exports.document(actor, '', {
+        title: `${scheme.schemeName} — Feasibility Brief`,
+        subtitle: scheme.authority,
+        blocks,
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+      });
+      return renderAndCharge(
+        platform.wallet(actor.tenantId),
+        document,
+        { format: chosen, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/consultancy/appraisal',
+    description:
+      'Autonomous Consultancy — assemble a public Five Case business case from an intake, options and economics. ' +
+      'Screens options against hard constraints before scoring, runs the deterministic service model, and returns the ' +
+      'proceed/hold/stop recommendation with its conditions. Deterministic; no figure is produced by a model.',
+    schema: {
+      type: 'object',
+      required: ['title', 'intake', 'objectives', 'options'],
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 300 },
+        intake: { type: 'object' },
+        objectives: { type: 'array', items: { type: 'string' } },
+        options: { type: 'array' },
+        preferredOption: { type: 'string', maxLength: 300 },
+        serviceCase: { type: 'object' },
+        capitalCostMinor: { type: 'integer', minimum: 0 },
+        fundingSources: { type: 'array' },
+        programmeMonths: { type: 'integer', minimum: 0 },
+        stage: { type: 'string', maxLength: 60 },
+        outstandingConfirmations: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    handler: (platform, ctx) => {
+      const tctx = tenantContext(platform, ctx);
+      authorise(tctx, 'PROJECT_SETUP', 'R');
+      const input = body<consultancybc.BusinessCaseInput>(ctx);
+      const assembled = consultancybc.assembleBusinessCase(input);
+      return {
+        blockers: intakeBlockers(input.intake ?? {}),
+        screened: assembled.screened,
+        model: assembled.model,
+        scenarios: assembled.scenarios,
+        decision: assembled.decision,
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/consultancy/business-case',
+    binary: true,
+    description:
+      'Autonomous Consultancy — the public Five Case Model business case as a branded, downloadable document (PDF or ' +
+      'DOCX). Options are screened on hard constraints before scoring; the deterministic model carries the break-even, ' +
+      'funding gap and scenarios; economic value and funding are kept separate; and the pack carries its decision and ' +
+      'conditions. An advisory AI narrative is added where a reasoning provider answers, and never produces a figure.',
+    schema: {
+      type: 'object',
+      required: ['title', 'intake', 'objectives', 'options'],
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 300 },
+        intake: { type: 'object' },
+        objectives: { type: 'array', items: { type: 'string' } },
+        options: { type: 'array' },
+        preferredOption: { type: 'string', maxLength: 300 },
+        serviceCase: { type: 'object' },
+        capitalCostMinor: { type: 'integer', minimum: 0 },
+        fundingSources: { type: 'array' },
+        programmeMonths: { type: 'integer', minimum: 0 },
+        stage: { type: 'string', maxLength: 60 },
+        outstandingConfirmations: { type: 'array', items: { type: 'string' } },
+        format: { type: 'string', enum: ['PDF', 'DOCX'] },
+        withNarrative: { type: 'boolean' },
+      },
+    },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      const tctx = tenantContext(platform, ctx);
+      authorise(tctx, 'PROJECT_SETUP', 'R');
+      const input = body<consultancybc.BusinessCaseInput & { format?: RenderableFormat; withNarrative?: boolean }>(ctx);
+      const chosen: RenderableFormat = input.format ?? 'DOCX';
+      // The AI layer is best-effort: advisory prose where a reasoning provider
+      // answers, absent otherwise. The deterministic document is complete alone.
+      let narrative: Record<string, string> = {};
+      if (input.withNarrative !== false) {
+        try { narrative = (await consultancybc.businessCaseNarrative(tctx, input)).narrative; } catch { narrative = {}; }
+      }
+      const { blocks } = consultancybc.assembleBusinessCase(input, narrative);
+      const document = platform.exports.document(actor, '', {
+        title: `${input.title} — Business Case`,
+        subtitle: input.intake?.client ?? '',
+        blocks,
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+      });
+      return renderAndCharge(
+        platform.wallet(actor.tenantId),
+        document,
+        { format: chosen, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/consultancy/rfq/validate',
+    description: 'Autonomous Consultancy — validate an RFQ against its issue-pack contract: mandate, scope, priced core, deliverable acceptance, and evaluation weights that reconcile to 100%.',
+    schema: {
+      type: 'object',
+      required: ['title', 'organisation', 'mandate', 'scope', 'deadline', 'evaluation', 'deliverables', 'priceLines'],
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 300 }, organisation: { type: 'string', maxLength: 200 },
+        mandate: { type: 'string' }, scope: { type: 'string' }, deadline: { type: 'string', maxLength: 120 },
+        dataResponsibilities: { type: 'array', items: { type: 'string' } },
+        evaluation: { type: 'array' }, deliverables: { type: 'array' }, priceLines: { type: 'array' },
+        contractSchedules: { type: 'array', items: { type: 'string' } }, instructions: { type: 'string' },
+      },
+    },
+    handler: (platform, ctx) => {
+      tenantContext(platform, ctx); // authenticated
+      return { issues: consultancyrfq.validateRfqInput(body(ctx)) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/consultancy/bid/validate',
+    description: 'Autonomous Consultancy — validate a bid pack against its issue-pack contract: every mandatory requirement has a response or a named blocker, and the price schedule total reconciles including tax, disbursements and optional items.',
+    schema: {
+      type: 'object',
+      required: ['requirements', 'priceLines', 'statedTotalMinor'],
+      properties: {
+        requirements: { type: 'array' }, priceLines: { type: 'array' }, statedTotalMinor: { type: 'integer' },
+      },
+    },
+    handler: (platform, ctx) => {
+      tenantContext(platform, ctx);
+      return consultancyrfq.validateBidPack(body(ctx));
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/consultancy/rfq',
+    binary: true,
+    description: 'Autonomous Consultancy — the RFQ issue pack as a branded, downloadable document (PDF or DOCX): mandate, scope, data responsibilities, evaluation, deliverable acceptance, pricing schedule, instructions and contract schedules.',
+    schema: {
+      type: 'object',
+      required: ['title', 'organisation', 'mandate', 'scope', 'deadline', 'evaluation', 'deliverables', 'priceLines'],
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 300 }, organisation: { type: 'string', maxLength: 200 },
+        mandate: { type: 'string' }, scope: { type: 'string' }, deadline: { type: 'string', maxLength: 120 },
+        dataResponsibilities: { type: 'array', items: { type: 'string' } },
+        evaluation: { type: 'array' }, deliverables: { type: 'array' }, priceLines: { type: 'array' },
+        contractSchedules: { type: 'array', items: { type: 'string' } }, instructions: { type: 'string' },
+        format: { type: 'string', enum: ['PDF', 'DOCX'] },
+      },
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      tenantContext(platform, ctx);
+      const input = body<consultancyrfq.RfqInput & { format?: RenderableFormat }>(ctx);
+      const chosen: RenderableFormat = input.format ?? 'DOCX';
+      const blocks = consultancyrfq.composeRfqBlocks(input);
+      const document = platform.exports.document(actor, '', {
+        title: `${input.title} — Request for Quotation`,
+        subtitle: input.organisation,
+        blocks,
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+      });
+      return renderAndCharge(
+        platform.wallet(actor.tenantId),
+        document,
+        { format: chosen, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements',
+    description: 'Autonomous Consultancy — open a stateful engagement. Checks the minimum intake and returns any missing inputs as blockers; the engagement opens in INTAKE, never silently authorised.',
+    schema: {
+      type: 'object',
+      required: ['route', 'assignment', 'intake'],
+      properties: {
+        route: { type: 'string', enum: ['COMMISSION_RFQ', 'RESPOND_TO_RFQ', 'DELIVER_COMMISSION', 'REAPPRAISE'] },
+        assignment: { type: 'string', enum: ['FEASIBILITY_ONLY', 'BUSINESS_CASE_ONLY', 'COMBINED'] },
+        profile: { type: 'string', enum: ['PUBLIC_FIVE_CASE', 'PRIVATE_CLIENT'] },
+        intake: { type: 'object' },
+        sponsor: { type: 'string', maxLength: 200 },
+        sector: { type: 'string', maxLength: 120 },
+        stage: { type: 'string', maxLength: 60 },
+        confirmPlacement: { type: 'boolean' },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancystore.openEngagement(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/actions',
+    description: 'Autonomous Consultancy — record a typed action against an engagement (authorise, scope change, issue, reappraise, cancel) and move its workflow state. Authorising is refused while mandatory intake is outstanding.',
+    schema: {
+      type: 'object',
+      required: ['kind'],
+      properties: {
+        kind: { type: 'string', enum: ['AUTHORISE', 'SCOPE_CHANGE', 'ISSUE', 'REAPPRAISE', 'CANCEL'] },
+        note: { type: 'string', maxLength: 2000 },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancystore.recordAction(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/tasks',
+    description: 'Autonomous Consultancy — register a required digital work-package task against an engagement (capability, title, dependencies).',
+    schema: {
+      type: 'object',
+      required: ['key', 'capability', 'title'],
+      properties: {
+        key: { type: 'string', minLength: 1, maxLength: 120 },
+        capability: { type: 'string', minLength: 1, maxLength: 120 },
+        title: { type: 'string', minLength: 1, maxLength: 300 },
+        dependsOn: { type: 'array', items: { type: 'string' } },
+        requiredDigital: { type: 'boolean' },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancystore.registerTask(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/tasks/:taskId',
+    description: 'Autonomous Consultancy — update a task’s agent-run state, validation, owner or blocker.',
+    schema: {
+      type: 'object',
+      properties: {
+        runState: { type: 'string', enum: ['QUEUED', 'RUNNING', 'WAITING_INPUT', 'WAITING_AUTHORITY', 'RETRYABLE_FAILURE', 'BLOCKED', 'COMPLETE', 'CANCELLED'] },
+        validated: { type: 'boolean' },
+        owner: { type: 'string', maxLength: 200 },
+        blocker: { type: 'string', maxLength: 2000 },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancystore.updateTask(projectContext(platform, ctx), ctx.params.taskId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/tasks/:taskId/run',
+    description:
+      'Autonomous Consultancy — execute a work-package task with an agent, grounded in the client requirement attached to its engagement. ' +
+      'Refused unless the engagement is authorised and the task is runnable (every dependency complete and validated); a task waiting on a ' +
+      'dependency, or with no reasoning provider configured, is parked in WAITING_INPUT rather than run. A completed run leaves the task ' +
+      'awaiting independent validation before it counts toward coverage.',
+    schema: { type: 'object', properties: {} },
+    handler: (platform, ctx) =>
+      consultancystore.runTask(projectContext(platform, ctx), ctx.params.taskId as string),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/workboard',
+    description: 'Autonomous Consultancy — the engagement workboard: workflow state, tasks, blockers with owners, verified digital coverage (completed and validated required tasks over all required), and the next permissible actions.',
+    handler: (platform, ctx) =>
+      consultancystore.workboard(projectContext(platform, ctx), ctx.params.engagementId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/grid/engagements',
+    description: 'Grid Connection AI — open an HV grid-connection delivery engagement against a project; the 42 playbook steps start PLANNED across gates G0–G7.',
+    schema: {
+      type: 'object',
+      required: ['connection', 'route'],
+      properties: {
+        connection: { type: 'string', minLength: 1, maxLength: 200 },
+        route: { type: 'string', minLength: 1, maxLength: 120 },
+        pointOfConnection: { type: 'string', maxLength: 200 },
+        capacityNote: { type: 'string', maxLength: 400 },
+      },
+    },
+    handler: (platform, ctx) => gridstore.openGridEngagement(gridWriteContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/grid/engagements/:engagementId/steps/:stepId',
+    description: 'Grid Connection AI — update a playbook step’s agent-run state, validation, owner or blocker.',
+    schema: {
+      type: 'object',
+      properties: {
+        runState: { type: 'string', enum: ['PLANNED', 'WORKING', 'WAITING_EVIDENCE', 'WAITING_AUTHORITY', 'VALIDATED', 'RELEASED', 'STALE', 'BLOCKED'] },
+        validated: { type: 'boolean' },
+        owner: { type: 'string', maxLength: 200 },
+        blocker: { type: 'string', maxLength: 2000 },
+      },
+    },
+    handler: (platform, ctx) =>
+      gridstore.updateStep(gridWriteContext(platform, ctx), ctx.params.engagementId as string, ctx.params.stepId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/grid/engagements/:engagementId/gates/:gateId/decision',
+    description: 'Grid Connection AI — record a gate decision. The gate must be at digital readiness; an electrical gate (G4–G7) advances only with a verified authority record (authorityRef), never on a decision flag alone.',
+    schema: {
+      type: 'object',
+      properties: {
+        decisionApproved: { type: 'boolean' },
+        authorityRef: { type: 'string', maxLength: 300 },
+        note: { type: 'string', maxLength: 2000 },
+      },
+    },
+    handler: (platform, ctx) =>
+      gridstore.decideGate(gridWriteContext(platform, ctx), ctx.params.engagementId as string, ctx.params.gateId as gridstore.GateId, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/grid/engagements/:engagementId/steps/:stepId/run',
+    description: 'Grid Connection AI — execute a playbook step with its owning agent, grounded in the project sources. Records the grounded output; does not validate (independent validation is separate). No provider configured parks the step WAITING_EVIDENCE, uncharged. No run can switch, energise or set plant.',
+    schema: { type: 'object', properties: {} },
+    handler: (platform, ctx) =>
+      gridstore.runStep(gridWriteContext(platform, ctx), ctx.params.engagementId as string, ctx.params.stepId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/grid/engagements/:engagementId/triggers',
+    description: 'Grid Connection AI — record a reappraisal trigger (a revision, withdrawn outage, failed test or new notification) that reopens impacted steps to STALE and marks impacted gates SUPERSEDED.',
+    schema: {
+      type: 'object',
+      required: ['event'],
+      properties: {
+        event: { type: 'string', minLength: 1, maxLength: 300 },
+        affectedSteps: { type: 'array', items: { type: 'string' } },
+        affectedGates: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    handler: (platform, ctx) =>
+      gridstore.recordTrigger(gridWriteContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/grid/engagements/:engagementId/archive',
+    description: 'Grid Connection AI — archive an engagement (e.g. a finished or test connection) so it is no longer offered in the picker. Not a delete: the append-only Golden Thread record and everything filed against it stay readable.',
+    schema: { type: 'object', properties: { reason: { type: 'string', maxLength: 300 } } },
+    handler: (platform, ctx) =>
+      gridstore.archiveGridEngagement(gridWriteContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/grid/engagements',
+    description: 'Grid Connection AI — the grid-connection engagements on this project, each with its verified digital coverage.',
+    handler: (platform, ctx) => ({ engagements: gridstore.listGridEngagements(projectContext(platform, ctx)) }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/grid/engagements/:engagementId/workboard',
+    description: 'Grid Connection AI — the engagement workboard: every one of the 42 playbook steps with its agent-run state, each gate G0–G7 with its computed state (an electrical gate only APPROVED on a verified authority record), verified digital coverage and the next permissible actions.',
+    handler: (platform, ctx) =>
+      gridstore.gridWorkboard(projectContext(platform, ctx), ctx.params.engagementId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:tenantId/addons/grid',
+    description: 'Grid Connection AI add-on — provision (platform operator only): record the Platform-Admin grant, the verified billing-provider status and the paid seat quantity for a tenant. Entitlement is derived from the grant AND the provider status; neither is taken from a client. A decrease below the seats already assigned is refused.',
+    schema: {
+      type: 'object',
+      required: ['adminGrant', 'providerStatus', 'paidQuantity'],
+      properties: {
+        adminGrant: { type: 'boolean' },
+        providerStatus: { type: 'string', enum: ['PENDING', 'ACTIVE', 'PAST_DUE_GRACE', 'SUSPENDED', 'EXPIRED', 'CANCEL_AT_PERIOD_END'] },
+        paidQuantity: { type: 'integer', minimum: 1 },
+        priceVersion: { type: 'string', maxLength: 32 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      // Operator-only, like a module grant: a tenant administrator cannot provision
+      // their own add-on any more than they can grant themselves a module.
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may provision an add-on', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const input = body<{
+        adminGrant: boolean;
+        providerStatus: 'PENDING' | 'ACTIVE' | 'PAST_DUE_GRACE' | 'SUSPENDED' | 'EXPIRED' | 'CANCEL_AT_PERIOD_END';
+        paidQuantity: number;
+        priceVersion?: string;
+      }>(ctx);
+      return platform.setAddonGrant({
+        tenantId: ctx.params.tenantId!,
+        adminGrant: input.adminGrant,
+        providerStatus: input.providerStatus,
+        paidQuantity: input.paidQuantity,
+        ...(input.priceVersion ? { priceVersion: input.priceVersion } : {}),
+        decidedBy: actor.actorId,
+      });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/billing/addons/seats',
+    description: 'Grid Connection AI add-on — allocate a named module seat to a user within the paid quantity. Idempotent for a user who already holds one. Requires the tenant to hold an active grant.',
+    schema: {
+      type: 'object',
+      required: ['userId'],
+      properties: { userId: { type: 'string', minLength: 1, maxLength: 200 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => addonstore.allocateSeat(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/billing/addons/seats/revoke',
+    description: 'Grid Connection AI add-on — revoke a user’s named module seat, releasing capacity.',
+    schema: {
+      type: 'object',
+      required: ['userId'],
+      properties: { userId: { type: 'string', minLength: 1, maxLength: 200 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => addonstore.revokeSeat(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/billing/addons/entitlement',
+    description: 'Grid Connection AI add-on — this tenant’s effective entitlement and seat usage: the admin grant, the provider status, the derived entitlement, whether new module use is permitted, and the assigned/available seats.',
+    handler: (platform, ctx) => addonstore.addonEntitlement(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/evidence',
+    description: 'Autonomous Consultancy — register a source against an engagement with its locator, authority, time period, licence, extraction method and confidence.',
+    schema: {
+      type: 'object',
+      required: ['source'],
+      properties: {
+        source: { type: 'string', minLength: 1, maxLength: 400 },
+        revision: { type: 'string', maxLength: 120 },
+        locator: { type: 'string', maxLength: 400 },
+        authority: { type: 'string', maxLength: 200 },
+        period: { type: 'string', maxLength: 120 },
+        licence: { type: 'string', maxLength: 200 },
+        method: { type: 'string', maxLength: 120 },
+        confidence: { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW', 'UNVERIFIED'] },
+        classification: { type: 'string', maxLength: 120 },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancyevidence.registerEvidence(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/evidence/:evidenceId/supersede',
+    description: 'Autonomous Consultancy — mark a registered source superseded; it can no longer back a new claim.',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      consultancyevidence.supersedeEvidence(projectContext(platform, ctx), ctx.params.evidenceId as string);
+      return { superseded: ctx.params.evidenceId };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/evidence',
+    description: 'Autonomous Consultancy — the evidence register for an engagement: every source with its locator, authority, confidence and current/superseded status.',
+    handler: (platform, ctx) =>
+      consultancyevidence.evidenceRegister(projectContext(platform, ctx), ctx.params.engagementId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/claims',
+    description: 'Autonomous Consultancy — record a claim with its lineage. Refused unless it cites a source, assumption or calculation, and refused if a cited source has been superseded.',
+    schema: {
+      type: 'object',
+      required: ['statement'],
+      properties: {
+        kind: { type: 'string', enum: ['FINDING', 'CONDITIONAL_FINDING', 'ASSUMPTION', 'RECOMMENDATION'] },
+        statement: { type: 'string', minLength: 1, maxLength: 2000 },
+        sourceRefs: { type: 'array', items: { type: 'string' } },
+        calculationRefs: { type: 'array', items: { type: 'string' } },
+        assumptionRefs: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancyevidence.recordClaim(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/consultancy/claims/:claimId/lineage',
+    description: 'Autonomous Consultancy — the lineage of a claim: the cited evidence resolved, and any cited source that has since been superseded.',
+    handler: (platform, ctx) =>
+      consultancyevidence.claimLineage(projectContext(platform, ctx), ctx.params.claimId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/award',
+    description: 'Autonomous Consultancy — promote a won tender to an award (C05). Links the winning bid and signed terms and transfers only the named commitments; refused without signed terms.',
+    schema: {
+      type: 'object',
+      required: ['winningBidRef', 'signedTermsRef'],
+      properties: {
+        winningBidRef: { type: 'string', minLength: 1, maxLength: 200 },
+        signedTermsRef: { type: 'string', minLength: 1, maxLength: 200 },
+        transferredCommitments: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancylifecycle.promoteAward(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/reappraise',
+    description: 'Autonomous Consultancy — trigger a reappraisal (C08). Produces the decision delta between the approved baseline figures and the revised ones; the approved baseline version persists.',
+    schema: {
+      type: 'object',
+      required: ['event', 'baseline', 'revised'],
+      properties: {
+        event: { type: 'string', minLength: 1, maxLength: 400 },
+        baseline: { type: 'object' },
+        revised: { type: 'object' },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancylifecycle.triggerReappraisal(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/release',
+    description: 'Autonomous Consultancy — issue a controlled release (C09/C11/C14): authority rechecked at release, a cited superseded source blocks it, and the idempotency key makes a retry yield one side effect.',
+    schema: {
+      type: 'object',
+      required: ['idempotencyKey'],
+      properties: {
+        idempotencyKey: { type: 'string', minLength: 1, maxLength: 200 },
+        citedEvidenceIds: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancylifecycle.release(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/plan',
+    description: 'Autonomous Consultancy — the orchestration plan for an engagement: which tasks are runnable now, which wait on what, the concurrent waves the dependency graph resolves into (or a cycle if the graph has one), and whether it is complete.',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      const board = consultancystore.workboard(engineCtx, ctx.params.engagementId as string);
+      return consultancyorchestrator.plan(board.tasks);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/procurements',
+    description: 'Autonomous Consultancy — open a shared procurement (the opener is its buyer). Buyer deliberations and evaluations are visible only to the buyer; each bidder sees only their own submission (C03).',
+    schema: {
+      type: 'object',
+      required: ['reference', 'published'],
+      properties: {
+        reference: { type: 'string', minLength: 1, maxLength: 120 },
+        published: { type: 'object' },
+      },
+    },
+    handler: (platform, ctx) => consultancyprocurement.openProcurement(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/procurements/:procurementId/deliberations',
+    description: 'Autonomous Consultancy — record a buyer deliberation (buyer-only; never visible to any bidder).',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 1, maxLength: 2000 } } },
+    handler: (platform, ctx) => {
+      consultancyprocurement.addDeliberation(projectContext(platform, ctx), ctx.params.procurementId as string, body<{ note: string }>(ctx).note);
+      return { recorded: true };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/procurements/:procurementId/evaluations',
+    description: 'Autonomous Consultancy — record an evaluation of a bidder (buyer-only; never visible to any bidder).',
+    schema: {
+      type: 'object',
+      required: ['bidderId', 'score'],
+      properties: { bidderId: { type: 'string', maxLength: 120 }, score: { type: 'number' }, note: { type: 'string', maxLength: 2000 } },
+    },
+    handler: (platform, ctx) => {
+      consultancyprocurement.recordEvaluation(projectContext(platform, ctx), ctx.params.procurementId as string, body(ctx));
+      return { recorded: true };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/procurements/:procurementId/submissions',
+    description: 'Autonomous Consultancy — submit a bid against a procurement (the submitter is the bidder; the buyer cannot bid on their own procurement).',
+    schema: {
+      type: 'object',
+      required: ['content'],
+      properties: { content: { type: 'string', minLength: 1, maxLength: 20000 }, marginMinor: { type: 'integer' } },
+    },
+    handler: (platform, ctx) => consultancyprocurement.submitBid(projectContext(platform, ctx), ctx.params.procurementId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/consultancy/procurements/:procurementId/view',
+    description: 'Autonomous Consultancy — the caller’s entitled view of a procurement (C03). The viewer’s side is derived from who is asking: a bidder sees only their own submission; buyer deliberations, evaluations and other bidders never enter the view.',
+    handler: (platform, ctx) => consultancyprocurement.viewProcurement(projectContext(platform, ctx), ctx.params.procurementId as string),
   },
   {
     method: 'GET',
@@ -4179,6 +5096,20 @@ export const ROUTES: Route[] = [
           },
           additionalProperties: false,
         },
+        // A conditional bid: limited work to a named condition, with an owner, a
+        // spend cap and a kill date. The engine validates each; the schema only
+        // shapes it.
+        conditional: {
+          type: 'object',
+          required: ['condition', 'owner', 'spendCapMinor', 'killDate'],
+          properties: {
+            condition: stringField,
+            owner: stringField,
+            spendCapMinor: { type: 'integer', minimum: 1 },
+            killDate: stringField,
+          },
+          additionalProperties: false,
+        },
       },
       additionalProperties: false,
     },
@@ -4216,6 +5147,19 @@ export const ROUTES: Route[] = [
     pattern: '/v1/pipeline/analyses/:analysisId/evidence-coverage',
     description: 'Held evidence read against the matrix: what covers each requirement, and what could',
     handler: (platform, ctx) => itt.evidenceCoverage(tenantContext(platform, ctx), ctx.params.analysisId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/analyses/:analysisId/undertakings',
+    description:
+      'Confirm the compliance undertakings on the matrix — the lines answered by a statement the agent drafted, not a document. Confirming records that a person declares each true. Idempotent; omit references to confirm them all',
+    schema: {
+      type: 'object',
+      properties: { references: { type: 'array', items: stringField } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      itt.confirmUndertakings(tenantContext(platform, ctx), ctx.params.analysisId as string, body(ctx)),
   },
   /*
    * Waivers.
@@ -4259,6 +5203,22 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => evidenceclaim.assertClaim(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/evidence/claims/:claimId/link',
+    description: 'Link a held claim to the requirements it answers on a tender — a document filed once answers the same clause on every bid',
+    schema: {
+      type: 'object',
+      required: ['references'],
+      properties: { references: { type: 'array', minItems: 1, items: stringField } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      evidenceclaim.linkClaim(tenantContext(platform, ctx), {
+        claimId: ctx.params.claimId as string,
+        references: body<{ references: string[] }>(ctx).references,
+      }),
   },
   {
     method: 'POST',
@@ -4450,10 +5410,32 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/replan',
+    description:
+      'Plan a drafting pack’s sections again — from the questions the buyer scores where the matrix has them — against its own matrix or the tender’s newer one. Written prose is kept wherever its requirement is still planned word for word',
+    schema: {
+      type: 'object',
+      properties: { analysisId: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidresponse.replanBidResponse(projectContext(platform, ctx), {
+        packId: ctx.params.packId as string,
+        ...body<{ analysisId?: string }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/bid-responses/:packId/sections',
     description:
       'Write the next section that has none. Called until nothing remains, so no single call carries a whole submission; a pass that dies leaves its section unwritten and the next call writes exactly that one',
-    ai: { engine: 'TENDER', taskType: 'bid_response_section', capability: 'REASONING' },
+    // Sized from the tender documents, which each answer is drafted with.
+    ai: {
+      engine: 'TENDER',
+      taskType: 'bid_response_section',
+      capability: 'REASONING',
+      quoteInputText: (engineCtx) => bidresponse.draftingDocuments(engineCtx).text || undefined,
+    },
     // Takes no body: which section is next is the pack's own answer, not the
     // caller's. Declared all the same, because a write route with no declared
     // shape is a write route accepting whatever arrives.
@@ -4475,6 +5457,44 @@ export const ROUTES: Route[] = [
       bidresponse.shortenSection(projectContext(platform, ctx), {
         packId: ctx.params.packId as string,
         key: ctx.params.key as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/sections/:key/redraft',
+    description:
+      'Write one drafted section again from its requirement — the way forward from the issue check refusing a section that still holds a note to the bid team instead of an answer. Only a section the drafter wrote; one a person rewrote is edited, not replaced',
+    // The first draft's prompt, under its own task type: a quote identifies a
+    // route by the task it declares, so two routes cannot share one.
+    ai: {
+      engine: 'TENDER',
+      taskType: 'bid_response_redraft',
+      capability: 'REASONING',
+      quoteInputText: (engineCtx) => bidresponse.draftingDocuments(engineCtx).text || undefined,
+    },
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      bidresponse.redraftSection(projectContext(platform, ctx), {
+        packId: ctx.params.packId as string,
+        key: ctx.params.key as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/sections/:key/revise',
+    description:
+      'Replace one section’s prose with what a person wrote or edited — to put real project names into an experience answer or a named site manager into a team answer, which the drafter leaves for a person. Marked human-authored; no model is called',
+    schema: {
+      type: 'object',
+      required: ['body'],
+      properties: { body: { type: 'array', minItems: 1, items: { type: 'string' } } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidresponse.reviseSection(projectContext(platform, ctx), {
+        packId: ctx.params.packId as string,
+        key: ctx.params.key as string,
+        body: body<{ body: string[] }>(ctx).body,
       }),
   },
   {
@@ -4520,6 +5540,21 @@ export const ROUTES: Route[] = [
     schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (platform, ctx) =>
       redteam.challengeSubmission(projectContext(platform, ctx), { packId: ctx.params.packId as string }),
+  },
+  {
+    /*
+     * The same review with the model left out: the evaluator's deterministic
+     * lenses — every requirement answered, evidence that stands, limits kept,
+     * the quality floor — and nothing sent anywhere. No `ai` descriptor,
+     * because it calls no provider and costs nothing; a high finding it raises
+     * is cleared the same way, by a named person recording a decision.
+     */
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/checks',
+    description: 'Check the pack against the matrix without a model — the deterministic half of the review, at no cost',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      redteam.challengeSubmission(projectContext(platform, ctx), { packId: ctx.params.packId as string, withModel: false }),
   },
   {
     method: 'GET',
@@ -4631,7 +5666,13 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) => {
       const engineCtx = tenantContext(platform, ctx);
-      const input = body(ctx) as { deliverables: tenderintake.TenderDeliverable[]; analysis: Parameters<typeof itt.analyseITT>[1] };
+      const input = body(ctx) as { deliverables: tenderintake.TenderDeliverable[]; analysis: Parameters<typeof itt.analyseITT>[1] & { confirmPlacement?: boolean } };
+      // Misfile guard: refuse an ITT whose buyer belongs to another tender.
+      misfileguard.assertInvitationPlacement(engineCtx, ctx.params.invitationId as string, {
+        statedClient: input.analysis.clientName,
+        text: `${input.analysis.reference} ${(input.analysis.requirements ?? []).map((r) => r.requirement).join(' ')}`,
+        confirmPlacement: input.analysis.confirmPlacement,
+      });
       const analysis = itt.analyseITT(engineCtx, input.analysis);
       const bound = tenderintake.extractRequirements(engineCtx, ctx.params.invitationId as string, {
         deliverables: input.deliverables,
@@ -4700,6 +5741,31 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/pipeline/tenders/:invitationId/deliverables/assign-all',
+    description: 'Fill the owner, internal date and source on every mandatory return still missing one, in one act',
+    schema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string', enum: TENANT_GRANTABLE_ROLES },
+        internalDueBy: stringField,
+        source: {
+          type: 'object',
+          required: ['document'],
+          properties: { document: stringField, clause: { type: 'string' }, page: { type: 'integer', minimum: 1 } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintake.assignDeliverablesBulk(
+        tenantContext(platform, ctx),
+        ctx.params.invitationId as string,
+        body(ctx) as Parameters<typeof tenderintake.assignDeliverablesBulk>[2],
+      ),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/pipeline/tenders/:invitationId/addenda',
     description: 'Record an addendum. It appends to the invitation and never rewrites it',
     schema: {
@@ -4730,7 +5796,12 @@ export const ROUTES: Route[] = [
     description: 'Back-plan the tender programme and the bid work packages from the return deadline',
     schema: {
       type: 'object',
-      properties: { from: stringField },
+      properties: {
+        from: stringField,
+        // Asked for, with a reason, when the window is shorter than the
+        // spine's minimum. Never applied silently.
+        compression: { type: 'object', required: ['reason'], properties: { reason: stringField }, additionalProperties: false },
+      },
       additionalProperties: false,
     },
     handler: (platform, ctx) =>
@@ -7735,6 +8806,19 @@ export const ROUTES: Route[] = [
       // would otherwise have to hard-code which roles are operator-only, and
       // that rule would then drift from this one.
       tenantGrantableRoles: [...TENANT_GRANTABLE_ROLES],
+      // The AI expert behind each role — the experienced construction
+      // professional the platform's agents reason as on that role's behalf, with
+      // the real UK standards that profession works to. Published here, keyed by
+      // role, so the "what your role can do" screen can show a person who their
+      // AI agent is without the browser restating the mapping. Null where a role
+      // has no single construction profession (the administrator, the viewer,
+      // and the owner, who holds every seat's expert at once).
+      roleExpertise: Object.fromEntries(
+        TENANT_GRANTABLE_ROLES.map((role) => {
+          const discipline = roleExpertise(role);
+          return [role, discipline ? { discipline, ...expertRole(discipline) } : null];
+        }),
+      ),
     }),
   },
 
@@ -9819,6 +10903,10 @@ export const ROUTES: Route[] = [
         portfolioId: stringField,
         programmeId: { type: 'string' },
         name: stringField,
+        // The client this project is for, so one client can carry many projects.
+        // Optional and a plain label; the create form offers the clients already
+        // used so the same client is one string, not several near-misses.
+        client: { type: 'string', maxLength: 200 },
         // From the shared vocabulary, so the picker the browser renders and the
         // enum this validates against are the same bytes rather than two lists
         // that happen to agree.
@@ -9896,6 +10984,16 @@ export const ROUTES: Route[] = [
     },
   },
   {
+    method: 'GET',
+    pattern: '/v1/clients',
+    readOnly: true,
+    description: 'The clients this tenant already has projects for, each with its project count — so the create-project form can offer an existing client rather than a free-typed name that splits one client into several.',
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'PROJECT_SETUP', 'R');
+      return { clients: structure.clientsOf(platform.ledger, actor.tenantId) };
+    },
+  },
+  {
     method: 'POST',
     pattern: '/v1/projects/:projectId/amend',
     description: 'Correct what a project says about itself — its name, what is being built, where, when and what it is worth. Refused on the value once a cost baseline is approved or a contract executed',
@@ -9905,6 +11003,9 @@ export const ROUTES: Route[] = [
       properties: {
         reason: { type: 'string', minLength: 10, maxLength: 500 },
         name: stringField,
+        // Set or correct the client, so projects recorded before the field
+        // existed can be put under their client. Empty clears it.
+        client: { type: 'string', maxLength: 200 },
         assetType: stringField,
         sectorType: { type: 'string', enum: values(SECTOR) },
         contractValueMinor: { type: 'integer', minimum: 0 },
@@ -10078,6 +11179,7 @@ export const ROUTES: Route[] = [
         // read it through the calibration signals; a summary of it would be
         // somebody's opinion of what the buyer meant.
         feedback: { type: 'array', items: { type: 'string', maxLength: 2000 } },
+        reasonClass: { type: 'string', enum: [...learning.LOSS_REASON_CLASS] },
       },
       additionalProperties: false,
     },
@@ -13000,6 +14102,198 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => bidFlow(platform, projectContext(platform, ctx)),
   },
   {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/pricing-schedule',
+    readOnly: true,
+    description:
+      'The priced take-off as a pricing schedule — every measured line with the tender total apportioned across it, the ' +
+      'same arithmetic the quotation uses, for transcribing into the buyer’s Appendix B or attaching as the priced ' +
+      'breakdown. Reads the latest complete estimate and refuses an incomplete one rather than exporting a wrong total',
+    handler: (platform, ctx) => pricingSchedule(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/programme/tender-drafts',
+    readOnly: true,
+    description: 'The tender programme drafts on this project, newest first — waiting, confirmed or replaced',
+    handler: (platform, ctx) => ({ drafts: tenderprogramme.tenderProgrammeDrafts(projectContext(platform, ctx)) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/tender-draft',
+    description:
+      'Draft the tender programme from the measured bill — activities, working-day durations, logic, resources, specialist subcontract trades and a risk allowance — checked by the critical-path engine against the period. A draft only: nothing is written to the programme until a person confirms it',
+    ai: { engine: 'TENDER', taskType: 'tender_programme_draft', capability: 'REASONING' },
+    schema: {
+      type: 'object',
+      // The period from whichever the buyer stated: a completion date usually,
+      // sometimes a number of days. The engine refuses when neither is given.
+      required: ['startDate'],
+      properties: {
+        startDate: stringField,
+        periodDays: { type: 'integer', minimum: 1, maximum: 3650 },
+        completionDate: stringField,
+        // What the estimator knows that the bill does not say — "soil nails take
+        // four weeks", "the closure runs from 18 January". Passed to the drafter
+        // as guidance, never as a fact about the tender.
+        guidance: { type: 'string', maxLength: 2000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderprogramme.draftTenderProgramme(
+        projectContext(platform, ctx),
+        body<{ startDate: string; periodDays?: number; completionDate?: string; guidance?: string }>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/tender-drafts/:draftId/confirm',
+    description:
+      'Accept a tender programme draft: its activities and logic are written into this project’s programme and scheduled from the start date, editable on the Programme screen from then on',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      tenderprogramme.confirmTenderProgramme(projectContext(platform, ctx), { draftId: ctx.params.draftId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/tender.pdf',
+    binary: true,
+    description:
+      'The confirmed tender programme as a branded, downloadable document (PDF or DOCX) — a Gantt chart with the critical path, the activity table with logic, resources and bill items, and the assumptions behind the durations — for the buyer’s portal',
+    schema: {
+      type: 'object',
+      properties: { format: { type: 'string', enum: ['PDF', 'DOCX'] } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const projectId = ctx.params.projectId as string;
+      const actor = auth(ctx);
+      const chosen: RenderableFormat = body<{ format?: RenderableFormat }>(ctx).format ?? 'PDF';
+      const { blocks, projectName } = tenderprogramme.tenderProgrammeBlocks(projectContext(platform, ctx));
+      const client = String(platform.ledger.get({ refType: 'Project', refId: projectId })?.state.client ?? '').trim();
+      const document = platform.exports.document(actor, projectId, {
+        title: 'Tender Programme',
+        subtitle: projectName,
+        blocks,
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+        ...(client ? { preparedFor: client } : {}),
+      });
+      return renderAndCharge(
+        platform.spendingWalletFor(actor, projectId).wallet,
+        document,
+        { format: chosen, projectId, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/pricing-schedule.pdf',
+    binary: true,
+    description:
+      'The priced take-off as a branded, downloadable pricing schedule (PDF or DOCX) — the same apportioned lines as the ' +
+      'quotation, produced in the platform for the buyer’s own schedule or as the priced breakdown, so a tender is never ' +
+      'finished outside it',
+    schema: {
+      type: 'object',
+      properties: { format: { type: 'string', enum: ['PDF', 'DOCX'] } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const projectId = ctx.params.projectId as string;
+      const actor = auth(ctx);
+      const chosen: RenderableFormat = body<{ format?: RenderableFormat }>(ctx).format ?? 'PDF';
+      const schedule = pricingSchedule(projectContext(platform, ctx));
+      const document = platform.exports.document(actor, projectId, {
+        title: 'Pricing Schedule',
+        subtitle: schedule.projectName,
+        blocks: pricingScheduleBlocks(schedule),
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+      });
+      return renderAndCharge(
+        platform.spendingWalletFor(actor, projectId).wallet,
+        document,
+        { format: chosen, projectId, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/submission.pdf',
+    binary: true,
+    description:
+      'The bid response pack as a branded, downloadable submission document (PDF or DOCX) — every answer under its ' +
+      'question, exactly as edited on the record, produced in the platform for attaching to the buyer’s portal',
+    schema: {
+      type: 'object',
+      properties: { format: { type: 'string', enum: ['PDF', 'DOCX'] } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const projectId = ctx.params.projectId as string;
+      const actor = auth(ctx);
+      const chosen: RenderableFormat = body<{ format?: RenderableFormat }>(ctx).format ?? 'PDF';
+      const pack = bidresponse.bidResponsePack(projectContext(platform, ctx), ctx.params.packId as string);
+      const blocks: DocumentBlock[] = bidresponse.submissionBlocks(pack);
+      const document = platform.exports.document(actor, projectId, {
+        title: `Tender Submission — ${pack.clientName}`,
+        subtitle: pack.reference,
+        blocks,
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+        // Prepared for the buyer this submission answers, not the issuing
+        // business — a tender to a council that reads "prepared for" the bidder
+        // is addressed to the wrong party.
+        preparedFor: pack.clientName,
+      });
+      return renderAndCharge(
+        platform.spendingWalletFor(actor, projectId).wallet,
+        document,
+        { format: chosen, projectId, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/journey',
+    readOnly: true,
+    description:
+      'The whole guided walkthrough for this workspace — set the company up, open a job, then the road to a priced, ' +
+      'submitted bid — with the one thing to do next, computed from the record rather than a checklist anybody ticks. ' +
+      'Tenant-scoped so it answers on a brand-new account with no job open; pass ?projectId to fold in that job’s own flow.',
+    handler: (platform, ctx) => {
+      // The open job, where the browser knows one. A guide is advisory, so a
+      // project the caller cannot read (no access, a stale id) degrades to the
+      // setup stages rather than failing the whole strip — but only those two
+      // refusals are swallowed; any other error is a real fault and is rethrown.
+      const requested = ctx.query.get('projectId');
+      const projectId = requested && requested.length > 0 ? requested : null;
+      let projectFlow: ReturnType<typeof bidFlow> | null = null;
+      if (projectId) {
+        try {
+          projectFlow = bidFlow(platform, projectContext(platform, ctx, projectId));
+        } catch (error) {
+          if (!(error instanceof NotFoundError || error instanceof ForbiddenError)) throw error;
+          projectFlow = null;
+        }
+      }
+      const tenant = tenantContext(platform, ctx);
+      return guidedJourney(tenant, {
+        projectFlow,
+        projectId,
+        brandingConfigured: platform.exports.brandingIfConfigured(tenant.tenantId) !== undefined,
+      });
+    },
+  },
+  {
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/pack/price',
     // Its own task type, and quoted per sheet. The run reads one drawing per
@@ -13077,8 +14371,9 @@ export const ROUTES: Route[] = [
         },
         quotation: {
           type: 'object',
-          required: ['clientName', 'validUntil'],
+          required: ['validUntil'],
           properties: {
+            // Optional: blank addresses the offer to the tender's buyer.
             clientName: { type: 'string', minLength: 2, maxLength: 200 },
             validUntil: stringField,
             paymentTerms: { type: 'string', maxLength: 500 },
@@ -13175,6 +14470,94 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/boq/retire-items',
+    description:
+      'Retire named measured lines rather than a whole package: for a bill where a few lines are stale — an empty ' +
+      'placeholder, a duplicate — and the rest of the package is the measure. The items stay on the record with a ' +
+      'reason against them, same as retiring a package. Nothing is deleted',
+    schema: {
+      type: 'object',
+      required: ['boqItemIds', 'reason'],
+      properties: {
+        boqItemIds: { type: 'array', items: stringField, minItems: 1 },
+        reason: { type: 'string', minLength: 5, maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tender.supersedeItems(projectContext(platform, ctx), body<{ boqItemIds: string[]; reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/boq/move',
+    description:
+      'Move a package’s measured lines into another package. Two readings of one job can be filed under names that read ' +
+      'identically but differ by a character a human cannot see, splitting the bill into two packages an estimate prices ' +
+      'one at a time. This re-files the lines under the package they belong to, keeping their quantities and cost codes, ' +
+      'with a reason against the move. Nothing is created and nothing is destroyed',
+    schema: {
+      type: 'object',
+      required: ['fromPackageId', 'toPackageId', 'reason'],
+      properties: {
+        fromPackageId: stringField,
+        toPackageId: stringField,
+        reason: { type: 'string', minLength: 5, maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tender.movePackageMeasure(
+        projectContext(platform, ctx),
+        body<{ fromPackageId: string; toPackageId: string; reason: string }>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/fee-schedule',
+    description: 'Price a bid as a professional-services fee — a schedule of day-rates rather than a measured construction bill',
+    schema: {
+      type: 'object',
+      required: ['resources'],
+      properties: {
+        packageName: { type: 'string', minLength: 1, maxLength: 120 },
+        resources: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            // Days are optional: a framework/DPS rate card tenders rates with no
+            // committed day counts, and prices as a schedule of rates.
+            required: ['role', 'dayRateMinor'],
+            properties: {
+              role: { type: 'string', minLength: 1, maxLength: 200 },
+              days: { type: 'number', exclusiveMinimum: 0 },
+              dayRateMinor: { type: 'integer', exclusiveMinimum: 0 },
+            },
+            additionalProperties: false,
+          },
+        },
+        disbursements: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['label', 'amountMinor'],
+            properties: {
+              label: { type: 'string', minLength: 1, maxLength: 200 },
+              amountMinor: { type: 'integer', minimum: 0 },
+            },
+            additionalProperties: false,
+          },
+        },
+        basisOfEstimate: { type: 'string', maxLength: 4000 },
+        overheadPercent: { type: 'number', minimum: 0 },
+        profitPercent: { type: 'number', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => tender.priceDayRateSchedule(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/tender/estimate',
     description: 'Engine A — build a bottom-up estimate across the twenty tender cost heads',
     schema: {
@@ -13204,6 +14587,9 @@ export const ROUTES: Route[] = [
         inflation: { type: 'object' },
         margin: { type: 'object' },
         exclusions: { type: 'array', items: { type: 'object' } },
+        // Fixed and provisional sums added after margin — the same open shape as
+        // the heads above, validated by the cost model that reads them.
+        fixedSums: { type: 'array', items: { type: 'object' } },
       },
     },
     handler: (platform, ctx) => tender.buildEstimate(projectContext(platform, ctx), body(ctx)),
@@ -13256,7 +14642,18 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/tender/itt',
     description: 'Analyse an invitation to tender: compliance matrix and commercial terms',
     schema: ITT_ANALYSIS_SCHEMA,
-    handler: (platform, ctx) => itt.analyseITT(projectContext(platform, ctx), body(ctx)),
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      const input = body<Parameters<typeof itt.analyseITT>[1] & { confirmPlacement?: boolean }>(ctx);
+      // Misfile guard: refuse an ITT whose buyer belongs to another project,
+      // unless placement is explicitly confirmed.
+      misfileguard.assertProjectPlacement(engineCtx, {
+        statedClient: input.clientName,
+        text: `${input.reference} ${(input.requirements ?? []).map((r) => r.requirement).join(' ')}`,
+        confirmPlacement: input.confirmPlacement,
+      });
+      return itt.analyseITT(engineCtx, input);
+    },
   },
   {
     method: 'GET',
@@ -13328,8 +14725,10 @@ export const ROUTES: Route[] = [
       'any other instrument',
     schema: {
       type: 'object',
-      required: ['clientName', 'validUntil'],
+      required: ['validUntil'],
       properties: {
+        // Optional: left blank, the offer is addressed to the tender's buyer —
+        // the client on the opportunity this project is pursuing.
         clientName: { type: 'string', minLength: 2, maxLength: 200 },
         validUntil: stringField,
         paymentTerms: { type: 'string', maxLength: 500 },
@@ -13374,11 +14773,28 @@ export const ROUTES: Route[] = [
         tenderers: { type: 'integer', minimum: 1 },
         reviewId: stringField,
         feedback: { type: 'array', items: stringField },
+        // The class a loss is filed under, for the calibration to separate "we
+        // price too high" from "we write poor answers".
+        reasonClass: { type: 'string', enum: [...learning.LOSS_REASON_CLASS] },
       },
       additionalProperties: false,
     },
     handler: (platform, ctx) =>
       learning.recordBidOutcome(tenantContext(platform, ctx), ctx.params.opportunityId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/opportunities/:opportunityId/outcome/correction',
+    description:
+      'Reverse a bid outcome recorded in error — a privileged, reasoned correction that keeps the original on the record and returns the pursuit to live so its true outcome can be recorded.',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      learning.correctBidOutcome(tenantContext(platform, ctx), ctx.params.opportunityId as string, body(ctx)),
   },
   {
     method: 'GET',
@@ -15622,12 +17038,18 @@ export const ROUTES: Route[] = [
       }),
   },
   {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/programme/duration-basis',
+    description: 'The measured-works value and trade-phase count read off the priced bill, to pre-fill the duration estimate; null when nothing is priced yet',
+    handler: (platform, ctx) => ({ basis: costintel.programmeDurationBasis(projectContext(platform, ctx)) }),
+  },
+  {
     method: 'POST',
     pattern: '/v1/projects/:projectId/programme/duration-estimate',
-    description: 'Propose a construction duration from the measured works — a structural estimate to confirm, feeding the period and the WBS',
+    description: 'Propose a construction duration from the measured works — a structural estimate to confirm, feeding the period and the WBS. The figures default to the priced bill when omitted',
     schema: {
       type: 'object',
-      required: ['netMeasuredMinor', 'tradeGroups'],
+      required: [],
       properties: {
         netMeasuredMinor: { type: 'integer', minimum: 0 },
         tradeGroups: { type: 'integer', minimum: 1 },
@@ -20448,15 +21870,30 @@ export const ROUTES: Route[] = [
 
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/risks/ai-review',
+    ai: { engine: 'RISK_SAFETY', taskType: 'risk_register_review', capability: 'REASONING' },
+    description:
+      'Review the live risk register as a chartered risk manager and propose the risks worth adding or strengthening — a missing risk, an event with no cause, no owner or no trigger, a control that watches rather than acts, a misallocated risk — each stated as cause→event→impact and saying what it rests on. Advice to verify and add; writes nothing, and adding or re-scoring a risk stays a person’s act',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => riskreview.reviewProjectRisks(projectContext(platform, ctx)),
+  },
+
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/risk',
     description: 'Engine D — register and score a risk',
     schema: {
       type: 'object',
-      required: ['id', 'title', 'category', 'probability', 'costImpact', 'scheduleImpactDays', 'projectValueMinor', 'projectDurationDays'],
+      required: ['title', 'category', 'probability', 'costImpact', 'scheduleImpactDays', 'projectValueMinor', 'projectDurationDays'],
       properties: {
+        // Optional: the engine mints a ulid when the caller does not supply one,
+        // so a browser form need not invent an id.
         id: stringField,
         title: stringField,
         category: stringField,
+        // cause → event → impact as one record, and who carries it.
+        cause: stringField,
+        allocation: { type: 'string', enum: ['CLIENT', 'CONTRACTOR', 'SHARED'] },
         // A proportion, not a percentage. A risk with a probability of 40 would
         // otherwise be scored as forty times certain.
         probability: { type: 'number', minimum: 0, maximum: 1 },
@@ -20949,6 +22386,73 @@ export const ROUTES: Route[] = [
         projectContext(platform, ctx),
         body<Parameters<typeof correspondence.issueCorrespondence>[1]>(ctx),
       ),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/dispatches',
+    description: 'Dispatch reconciliation — the transmission record of every outbound notice/bid/PO on this project, with its state (PENDING, sent-unconfirmed, receipt-verified, unknown-outcome, rejected, cancelled). An unknown outcome is never blindly retried.',
+    handler: (platform, ctx) => ({ dispatches: dispatch.listDispatches(projectContext(platform, ctx)) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches',
+    description: 'Open a dispatch for an outbound intent (e.g. a served notice), with a stable idempotency key. The same key with a changed payload is refused.',
+    schema: {
+      type: 'object',
+      required: ['dispatchKey', 'kind', 'subject', 'recipient', 'channel', 'payloadHash'],
+      properties: {
+        dispatchKey: { type: 'string', minLength: 1, maxLength: 200 },
+        kind: { type: 'string', enum: ['NOTICE', 'BID', 'PURCHASE_ORDER', 'OTHER'] },
+        subject: { type: 'object', required: ['refType', 'refId'], properties: { refType: stringField, refId: stringField }, additionalProperties: false },
+        recipient: { type: 'string', minLength: 1, maxLength: 200 },
+        channel: { type: 'string', minLength: 1, maxLength: 120 },
+        payloadHash: { type: 'string', minLength: 1, maxLength: 200 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => dispatch.openDispatch(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches/:dispatchId/sent',
+    description: 'Record that the intent was sent and is awaiting confirmation. Valid only from PENDING — never a blind re-send of an intent that may already have landed.',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => dispatch.markSent(projectContext(platform, ctx), ctx.params.dispatchId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches/:dispatchId/unknown',
+    description: 'A send timed out in a way that could mean success: park it UNKNOWN_OUTCOME and reconcile before any retry (no blind retries for notices).',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => dispatch.markUnknownOutcome(projectContext(platform, ctx), ctx.params.dispatchId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches/:dispatchId/receipt',
+    description: 'Record a verified authorised receipt — the intent arrived. Valid from PENDING (synchronous), sent-unconfirmed, or a now-reconciled unknown outcome.',
+    schema: { type: 'object', required: ['receiptRef'], properties: { receiptRef: { type: 'string', minLength: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => dispatch.verifyReceipt(projectContext(platform, ctx), ctx.params.dispatchId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches/:dispatchId/reject',
+    description: 'The destination refused the intent.',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => dispatch.markRejected(projectContext(platform, ctx), ctx.params.dispatchId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches/:dispatchId/cancel',
+    description: 'Cancel a dispatch that has not completed.',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => dispatch.cancelDispatch(projectContext(platform, ctx), ctx.params.dispatchId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches/:dispatchId/redispatch',
+    description: 'Reconcile an unknown outcome as NOT delivered (how confirmed is recorded), returning it to PENDING so it may be sent afresh. The only edge out of an unknown outcome toward a send — so a retry is always a fresh send, never a blind one.',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 4 } }, additionalProperties: false },
+    handler: (platform, ctx) => dispatch.reconcileNotDelivered(projectContext(platform, ctx), ctx.params.dispatchId as string, body(ctx)),
   },
   {
     method: 'POST',
@@ -22790,8 +24294,31 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/projects/:projectId/agents/envelopes',
-    description: 'Every grant of unattended authority ever made, live or withdrawn',
-    handler: (platform, ctx) => ({ envelopes: envelopeRegister(projectContext(platform, ctx)) }),
+    description: 'Every grant of unattended authority ever made, live or withdrawn, with the project’s cumulative autonomous-act budget and the value of unattended acts committed against it',
+    handler: (platform, ctx) => {
+      const pctx = projectContext(platform, ctx);
+      const budget = actBudget(pctx);
+      return {
+        envelopes: envelopeRegister(pctx),
+        actBudget: budget ?? null,
+        autonomousSpendMinor: projectAutonomousSpend(pctx),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/agents/act-budget',
+    description: 'Set the project’s cumulative cap on the aggregate value of unattended agent acts, across every agent and envelope (the per-act envelope ceiling caps one act; this caps the running total). Governance over the enterprise.',
+    schema: {
+      type: 'object',
+      required: ['cumulativeBudgetMinor', 'note'],
+      properties: {
+        cumulativeBudgetMinor: { type: 'integer', minimum: 0 },
+        note: { type: 'string', minLength: 8 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => setActBudget(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
@@ -23023,6 +24550,33 @@ export const ROUTES: Route[] = [
   },
 
   {
+    method: 'GET',
+    pattern: '/v1/guide/topics',
+    description: 'The platform step-by-step guide — how CONSTRUX works, from an empty account to a won job. Deterministic content; no provider is called',
+    handler: (platform, ctx) => platformguide.guideTopics(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/support/reports',
+    description:
+      'Report a problem — the copilot could not help, or a request errored. Put on the record, delivered to the ' +
+      'tenancy’s owners in-platform, and forwarded to the ops webhook where one is configured; the person is shown ' +
+      'the reference. Filed by a person, never an AI',
+    schema: {
+      type: 'object',
+      required: ['kind', 'message'],
+      properties: {
+        kind: { type: 'string', enum: [...supportreports.REPORT_KINDS] },
+        message: { type: 'string', minLength: 3, maxLength: 4000 },
+        screen: { type: 'string', maxLength: 80 },
+        correlationId: { type: 'string', maxLength: 120 },
+        question: { type: 'string', maxLength: 2000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => supportreports.fileSupportReport(platform, tenantContext(platform, ctx), body(ctx)),
+  },
+  {
     method: 'POST',
     pattern: '/v1/projects/:projectId/ask',
     description: 'Conversational copilot — grounded answer plus suggested actions',
@@ -23033,6 +24587,22 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => ask(projectContext(platform, ctx), body<{ question: string }>(ctx).question),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/ask/explain',
+    description:
+      'The same question answered in plain English — a paid rewrite on request, for a first-timer still stuck after the ' +
+      'free grounded answer. Grounded on that answer so it invents no fact; charged to the tenancy wallet, reserved and ' +
+      'only debited on success, and refused rather than charged when no reasoning provider is configured',
+    ai: { engine: 'GUIDE', taskType: 'guide_explain', capability: 'REASONING' },
+    schema: {
+      type: 'object',
+      required: ['question'],
+      properties: { question: { type: 'string', minLength: 2, maxLength: 2000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => explainPlainly(projectContext(platform, ctx), body<{ question: string }>(ctx).question),
   },
 
   // ------------------------------------------------- offline field execution
@@ -23745,6 +25315,15 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => stagegate.gateFor(projectContext(platform, ctx)),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/stage-gate/narrative',
+    ai: { engine: 'EXECUTIVE', taskType: 'stage_gate_narrative', capability: 'REASONING' },
+    description:
+      'The senior professional’s read of the stage-gate verdict — chaired as the discipline that owns this phase: where the gate genuinely stands, the material risks it turns on, and what must close before it can pass, each tied to the clause it rests on. Advice to weigh; writes nothing, and the gate decision stays a person’s act',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => stagegate.gateNarrative(projectContext(platform, ctx)),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/stages/design/validate',
     description: 'Steps 1 to 4 of the design gate: what may freeze, what is late for its need date, and what tender is waiting for',
@@ -24394,6 +25973,28 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-clarifications/from-analysis',
+    description:
+      'Raise the questions the analysis already wrote onto the register, to the client, in one act — the structured form of the "Questions for the buyer" list, so a reader never retypes them into a delimited box. Idempotent: a question already on the register is skipped, not duplicated',
+    schema: {
+      type: 'object',
+      required: ['analysisId'],
+      properties: { analysisId: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => tenderintel.raiseClarificationsFromAnalysis(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-clarifications/ai-review',
+    ai: { engine: 'TENDER', taskType: 'tender_clarification_review', capability: 'REASONING' },
+    description:
+      'Review the tender as a construction bid manager and propose genuine clarification questions — contradictions, missing information, ambiguous scope — each quoting the passage it comes from. Advice to verify and raise; writes nothing, and a gap it will not turn into a question is the bidder’s own to close',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => clarificationreview.reviewTenderForClarifications(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/tender-clarifications/:clarificationId/pack-check',
     ai: { engine: 'TENDER', taskType: 'clarification_pack_check', capability: 'REASONING' },
     description: 'Check whether the tender pack already answers a clarification, before it is sent — advice, citing the passage; never withdraws it',
@@ -24877,6 +26478,23 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/bid/external-submission',
+    description:
+      'Record a bid submitted on the buyer’s own portal, not assembled in the platform — the date and the portal reference — so the tender reads as submitted and awaiting its outcome instead of still in preparation',
+    schema: {
+      type: 'object',
+      required: ['submittedOn', 'portalReference'],
+      properties: {
+        submittedOn: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}' },
+        portalReference: stringField,
+        channel: { type: 'string', enum: [...award.SUBMISSION_CHANNEL] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => award.recordExternalSubmission(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/bid-packs/:packId/award',
     description: 'Record the client’s award and compute what departs from what was bid',
     schema: {
@@ -24907,11 +26525,87 @@ export const ROUTES: Route[] = [
         },
         notes: { type: 'string' },
         evidenceHash: stringField,
+        // The standstill window the award notice opened, counted down in the
+        // award position. The reason a bid was lost lives on the opportunity
+        // outcome, not here.
+        standstillEndsOn: stringField,
       },
       additionalProperties: false,
     },
     handler: (platform, ctx) =>
       award.recordAward(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/queries',
+    description: 'Log a buyer’s post-tender question against the submitted pack',
+    schema: {
+      type: 'object',
+      required: ['question', 'receivedOn'],
+      properties: {
+        question: { type: 'string' },
+        receivedOn: stringField,
+        replyDueBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      award.logPostTenderQuery(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/queries/:queryId/answer',
+    description: 'Record our reply to a post-tender query, and what it changed',
+    schema: {
+      type: 'object',
+      required: ['reply', 'impact'],
+      properties: {
+        reply: { type: 'string' },
+        impact: { type: 'string', enum: [...award.QUERY_IMPACT] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      award.answerPostTenderQuery(
+        projectContext(platform, ctx),
+        ctx.params.packId as string,
+        ctx.params.queryId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/price-challenge',
+    description: 'Record that the buyer has challenged the price as abnormally low',
+    schema: {
+      type: 'object',
+      required: ['raisedOn'],
+      properties: {
+        raisedOn: stringField,
+        responseDueBy: stringField,
+        concern: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      award.recordPriceChallenge(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/price-challenge/substantiate',
+    description: 'Substantiate the price against an abnormally-low challenge, with the evidence it can be performed at',
+    schema: {
+      type: 'object',
+      required: ['basis'],
+      properties: {
+        basis: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        directCostMinor: { type: 'integer', minimum: 0 },
+        netMarginPercent: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      award.substantiatePriceChallenge(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
   },
   {
     method: 'POST',
@@ -24994,6 +26688,18 @@ export const ROUTES: Route[] = [
         format,
         correlationId: ctx.correlationId,
       });
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/branding',
+    readOnly: true,
+    description:
+      "The tenancy's own document identity — the name, colour, legal detail and logo every document inherits where a " +
+      'project sets none of its own. Read so the company brand screen can show what is set rather than asking blind.',
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      return platform.exports.branding(actor.tenantId);
     },
   },
   {
@@ -25096,6 +26802,50 @@ export const ROUTES: Route[] = [
         engine.auth.actorId,
       );
       return stored;
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/branding/logo',
+    upload: true,
+    maxBytes: config.site.mediaMaxBytes,
+    description: "Set the logo on this tenancy's documents. PNG or JPEG, read from the file itself",
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      // The same authority the tenancy-level identity itself takes.
+      authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'U');
+      const existing = platform.exports.branding(actor.tenantId);
+      const stored = await storeLogoImage(platform, actor.tenantId, ctx.rawBody ?? Buffer.alloc(0));
+      platform.exports.setBranding(
+        actor.tenantId,
+        { ...existing, logoRef: stored.dataUri, logoEvidenceHash: stored.hash },
+        undefined,
+        actor.actorId,
+      );
+      recordBrandChange(platform, actor);
+      return { hash: stored.hash, bytes: stored.bytes, contentType: stored.contentType };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/branding/logo',
+    upload: true,
+    maxBytes: config.site.mediaMaxBytes,
+    description: "Set the logo on this project's client-facing documents",
+    handler: async (platform, ctx) => {
+      const engine = projectContext(platform, ctx);
+      // The same authority the identity itself takes — a role that may set the
+      // name on every document may set the mark above it.
+      authorise(engine, 'PROJECT_SETUP', 'U');
+      const existing = platform.exports.branding(engine.tenantId, engine.projectId);
+      const stored = await storeLogoImage(platform, engine.tenantId, ctx.rawBody ?? Buffer.alloc(0));
+      platform.exports.setBranding(
+        engine.tenantId,
+        { ...existing, logoRef: stored.dataUri, logoEvidenceHash: stored.hash },
+        engine.projectId,
+        engine.auth.actorId,
+      );
+      return { hash: stored.hash, bytes: stored.bytes, contentType: stored.contentType };
     },
   },
   {
@@ -26005,11 +27755,19 @@ export const ROUTES: Route[] = [
       properties: {
         method: { type: 'string', enum: ['POST'] },
         path: stringField,
+        // The held file the action will send, where it is named by hash in
+        // the action's body rather than in its path.
+        hash: stringField,
+        // How many times the caller will run the action in a row — "draft
+        // every remaining answer" is the one-answer route run once per answer,
+        // so a connection that drops loses one answer rather than all of them.
+        // The price shown is for all of them.
+        repeat: { type: 'integer', minimum: 1, maximum: 200 },
       },
       additionalProperties: false,
     },
     handler: (platform, ctx) => {
-      const input = body<{ method: string; path: string }>(ctx);
+      const input = body<{ method: string; path: string; hash?: string; repeat?: number }>(ctx);
       const [pathname] = input.path.split('?');
       const matched = matchRoute(input.method, pathname ?? '');
 
@@ -26070,14 +27828,190 @@ export const ROUTES: Route[] = [
 
       authorise(engineCtx, 'AI_EXECUTION', 'X', { lifecyclePhase: currentPhase(engineCtx) });
 
+      /*
+       * The file the run will send, where the action names one — by its
+       * ingestion in the path, or by hash. Its extracted text is what the
+       * provider is sent, so it is what the estimate is sized from. Reading a
+       * sixty-page invitation was quoted as an empty request — a penny — and
+       * the charge after the run would have been pounds.
+       */
+      const ingestionId = matched.params.ingestionId;
+      const heldFile = ingestionId || input.hash
+        ? ingestion.ingestedFiles(engineCtx).find((file) => (ingestionId ? file.ingestionId === ingestionId : file.hash === input.hash))
+        : undefined;
+      const inputText = heldFile?.extraction.text || matched.route.ai.quoteInputText?.(engineCtx);
+      const passes = (matched.route.ai.passes ?? 1) * (input.repeat ?? 1);
+
       return platform.orchestrator.quote({
+        ...(inputText ? { inputText } : {}),
         capability: matched.route.ai.capability,
         engine: matched.route.ai.engine,
         taskType: matched.route.ai.taskType,
-        ...(matched.route.ai.passes ? { passes: matched.route.ai.passes } : {}),
+        ...(passes > 1 ? { passes } : {}),
         wallet: engineCtx.wallet,
         projectId,
       });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ai/requests',
+    description: 'Run one canonical CONSTRUX AI task through the provider-neutral gateway and return a user-safe result',
+    schema: {
+      type: 'object',
+      required: ['projectId', 'taskProfile', 'instruction'],
+      properties: {
+        projectId: stringField,
+        taskProfile: stringField,
+        instruction: stringField,
+        inputRefs: { type: 'array', items: { type: 'string', minLength: 1 } },
+        outputSchema: { type: 'string', minLength: 1 },
+        approvalPolicy: { type: 'string', minLength: 1 },
+        acuSponsor: { type: 'string', minLength: 1 },
+        idempotencyKey: { type: 'string', minLength: 1 },
+      },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const input = body<{
+        projectId: string;
+        taskProfile: string;
+        instruction: string;
+        inputRefs?: string[];
+        outputSchema?: string;
+        approvalPolicy?: string;
+        acuSponsor?: string;
+        idempotencyKey?: string;
+      }>(ctx);
+
+      // The task profile is the whole contract — an unknown one is a client
+      // error, named as one, before a project is even resolved.
+      if (!isTaskProfile(input.taskProfile)) {
+        throw new DomainError('AI_UNKNOWN_TASK_PROFILE', `${input.taskProfile} is not a CONSTRUX AI task profile`, 400);
+      }
+      const taskProfile: TaskProfile = input.taskProfile;
+
+      // The gateway is an AI action: it funnels through the same project
+      // resolution, the same AI_EXECUTION authority and the same phase gate as
+      // every other AI route, so a caller who may not run AI here is refused
+      // before any provider is contacted.
+      const engineCtx = projectContext(platform, ctx, input.projectId);
+      authorise(engineCtx, 'AI_EXECUTION', 'X', { lifecyclePhase: currentPhase(engineCtx) });
+
+      // Price the work under the project's wallet so the gateway can fail
+      // closed on an empty wallet *before* a provider is contacted (spec §14,
+      // P07). The real debit is taken by the orchestrator on settlement.
+      const descriptor = executionDescriptor(taskProfile);
+      const quote = platform.orchestrator.quote({
+        capability: descriptor.capability,
+        engine: descriptor.engine,
+        taskType: descriptor.taskType,
+        wallet: engineCtx.wallet,
+        projectId: input.projectId,
+      });
+
+      // Every wired provider is offered to the router as reachable; the
+      // orchestrator applies the real clearance, health and context-window
+      // constraints when it runs, throwing if the chosen provider cannot serve
+      // the work — which the gateway service catches to walk the fallback chain
+      // or fail closed. (Data-classification clearance in the router itself is
+      // Increment 4's context builder.)
+      const availability: ProviderAvailability = (provider) => ({
+        wired: (WIRED_PROVIDERS as readonly string[]).includes(provider),
+        healthy: true,
+        cleared: true,
+      });
+
+      const request: AITaskRequest = {
+        taskProfile,
+        tenantId: engineCtx.tenantId,
+        projectId: input.projectId,
+        inputRefs: input.inputRefs ?? [],
+        instruction: input.instruction,
+        ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
+        ...(input.approvalPolicy ? { approvalPolicy: input.approvalPolicy } : {}),
+        ...(input.acuSponsor ? { acuSponsor: input.acuSponsor } : {}),
+        idempotencyKey: input.idempotencyKey ?? ulid(),
+      };
+
+      // Idempotent replay (spec §15.2): a caller-supplied key that already names
+      // a persisted request returns that request unchanged — nothing re-runs and
+      // no second provider call or ACU reservation is made.
+      if (input.idempotencyKey) {
+        const prior = readGatewayRequest(engineCtx, request.idempotencyKey);
+        if (prior) return prior;
+      }
+
+      const outcome = await runGatewayTask({
+        request,
+        availability,
+        execute: orchestratorExecutor(engineCtx),
+        reserveAcu: () => ({ ok: quote.affordable, reserved: quote.estimatedChargeMinor }),
+        requestId: request.idempotencyKey,
+      });
+
+      // Persist the user-safe half to the Golden Thread so it can be read back by
+      // id and, where consequential, held for a named approver. The provider,
+      // model and raw cost on the admin record never cross this boundary (P03),
+      // so they are never written to this customer-scoped entity.
+      const authority = approvalRequirement(taskProfile, input.approvalPolicy).authority;
+      const persisted = persistGatewayRequest(engineCtx, {
+        response: outcome.user,
+        ...(authority ? { authority } : {}),
+      });
+      return persisted.response;
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/ai/requests',
+    readOnly: true,
+    description: 'Every persisted CONSTRUX AI request for a project — the held ones a reviewer acts on, and the decided record',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      authorise(engineCtx, 'AI_EXECUTION', 'R');
+      return listGatewayRequests(engineCtx);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/ai/requests/:requestId',
+    readOnly: true,
+    description: 'Read one persisted CONSTRUX AI request by id — the user-safe view only',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      authorise(engineCtx, 'AI_EXECUTION', 'R');
+      const found = readGatewayRequest(engineCtx, ctx.params.requestId as string);
+      if (!found) {
+        throw new DomainError('AI_GATEWAY_REQUEST_NOT_FOUND', `No AI request ${ctx.params.requestId}`, 404);
+      }
+      return found;
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/ai/requests/:requestId/approvals',
+    description: 'Approve or reject a held AI output. A decision only a named, authorised person may take.',
+    schema: {
+      type: 'object',
+      required: ['decision'],
+      properties: {
+        decision: { type: 'string', enum: ['APPROVE', 'REJECT'] },
+        reason: { type: 'string', minLength: 1 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const input = body<{ decision: 'APPROVE' | 'REJECT'; reason?: string }>(ctx);
+      // projectContext resolves and tenant-scopes; the authority the specific
+      // task demands is checked inside the store against the persisted request,
+      // so an approver who lacks that capability is refused even here.
+      const engineCtx = projectContext(platform, ctx);
+      const requestId = ctx.params.requestId as string;
+      if (input.decision === 'APPROVE') {
+        return approveGatewayRequest(engineCtx, requestId);
+      }
+      return rejectGatewayRequest(engineCtx, requestId, { reason: input.reason ?? '' });
     },
   },
 
@@ -26320,6 +28254,23 @@ export const ROUTES: Route[] = [
         projectContext(platform, ctx),
         body<{ hash: string; filename?: string; invitationId?: string }>(ctx),
       ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/read-pack',
+    // Its own task type: a whole pack is several times the length of one file,
+    // and the price the orchestrator learns for it should not be averaged with
+    // single-file readings.
+    ai: {
+      engine: 'TENDER',
+      taskType: perception.textTaskType('ITT_REQUIREMENTS', 'TENDER_PACK'),
+      capability: 'REASONING',
+      quoteInputText: (engineCtx) => tenderreading.packText(engineCtx).text || undefined,
+    },
+    description:
+      'Read every tender document on the project together, in one run, into one draft: the invitation facts, the requirements matrix and the returns, with the checks run on it in code',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => tenderreading.readTenderPack(projectContext(platform, ctx)),
   },
   {
     method: 'POST',
@@ -26586,7 +28537,12 @@ export const ROUTES: Route[] = [
             mediaType(ctx.contentType),
             partHash === undefined ? {} : { partHash },
           );
-          return { ...state, evidenceId: record.refId, projectId: record.projectId };
+          return {
+            ...state,
+            evidenceId: record.refId,
+            projectId: record.projectId,
+            ...(state.complete ? await readTenderDocumentOnArrival(platform, engineCtx, record, ctx.params.hash as string) : {}),
+          };
         }
         // The part's own checksum, where the device sends one — §15.2. Optional
         // because every existing client omits it, and load-bearing when present:
@@ -26604,7 +28560,12 @@ export const ROUTES: Route[] = [
           mediaType(ctx.contentType),
           partHash === undefined ? {} : { partHash },
         );
-        return { ...state, evidenceId: record.refId, projectId: record.projectId };
+        return {
+          ...state,
+          evidenceId: record.refId,
+          projectId: record.projectId,
+          ...(state.complete ? await readTenderDocumentOnArrival(platform, engineCtx, record, ctx.params.hash as string) : {}),
+        };
       }
 
       // The whole file, streamed. `putStream` hashes the plaintext as it
@@ -26627,7 +28588,12 @@ export const ROUTES: Route[] = [
       // the evidence; bytes that hash to it add no assertion, and bytes that do
       // not are refused above. There is no new fact to record, and inventing an
       // event type to record a non-fact would widen a closed catalogue.
-      return { ...stored, evidenceId: record.refId, projectId: record.projectId };
+      return {
+        ...stored,
+        evidenceId: record.refId,
+        projectId: record.projectId,
+        ...(await readTenderDocumentOnArrival(platform, engineCtx, record, ctx.params.hash as string)),
+      };
     },
   },
   {
@@ -27061,6 +29027,18 @@ export const ROUTES: Route[] = [
   // three different engines and three different cost profiles cannot be quoted
   // at all — which would make this the one AI action in the platform that
   // spends money without showing a price first.
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/perception/bundle-scan',
+    description: 'Map a held PDF bundle into named sections with page ranges, so the take-off can be pointed at the drawings',
+    schema: {
+      type: 'object',
+      required: ['hash'],
+      properties: { hash: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => perception.scanBundle(projectContext(platform, ctx), platform.evidence, body<{ hash: string }>(ctx).hash),
+  },
   ...(Object.entries(perception.PERCEPTION_TASKS) as Array<[perception.PerceptionTask, (typeof perception.PERCEPTION_TASKS)[perception.PerceptionTask]]>)
     .map(([task, definition]): Route => ({
       method: 'POST',
@@ -27069,15 +29047,24 @@ export const ROUTES: Route[] = [
       schema: {
         type: 'object',
         required: ['hash'],
-        properties: { hash: stringField },
+        // `fromPage`/`toPage` carve a page range out of a bundled PDF before it
+        // is read — both or neither; the engine refuses a range on a non-PDF or
+        // outside the document.
+        properties: { hash: stringField, fromPage: { type: 'integer', minimum: 1 }, toPage: { type: 'integer', minimum: 1 } },
         additionalProperties: false,
       },
       ai: { engine: definition.engine, taskType: definition.taskType, capability: 'PERCEPTION' },
-      handler: (platform, ctx) =>
-        perception.extract(projectContext(platform, ctx), platform.evidence, {
-          ...body<{ hash: string }>(ctx),
+      handler: (platform, ctx) => {
+        const { hash, fromPage, toPage } = body<{ hash: string; fromPage?: number; toPage?: number }>(ctx);
+        if ((fromPage === undefined) !== (toPage === undefined)) {
+          throw new DomainError('PERCEPTION_PAGE_RANGE', 'A page range needs both a first and a last page.', 422);
+        }
+        return perception.extract(projectContext(platform, ctx), platform.evidence, {
+          hash,
           task,
-        }),
+          ...(fromPage !== undefined && toPage !== undefined ? { pages: { from: fromPage, to: toPage } } : {}),
+        });
+      },
     })),
   {
     method: 'POST',
@@ -27096,6 +29083,10 @@ export const ROUTES: Route[] = [
         corrections: { type: 'object' },
         packageId: stringField,
         costCodePrefix: stringField,
+        // DRAWING_TAKEOFF / PRICE_LIST_BOQ — the method of measurement the
+        // person confirms the bill is drawn to, so a civils schedule is tagged
+        // MMHW/CESMM rather than taking the NRM2 building default.
+        measurementRule: stringField,
         /*
          * ITT_REQUIREMENTS — the invitation the reading is filed against, and
          * the three commercial figures no invitation states about the bidder.
@@ -27109,6 +29100,25 @@ export const ROUTES: Route[] = [
          * narrower than the room behind.
          */
         invitationId: stringField,
+        // Where the project has no invitation yet: the one the reading found,
+        // as the person confirmed it on the review. Recorded through the
+        // ordinary invitation command, with every rule it applies.
+        invitation: {
+          type: 'object',
+          required: ['reference', 'clientName', 'issuedAt', 'returnLocal', 'timeZone', 'timeZoneStated', 'channel'],
+          properties: {
+            reference: { type: 'string', minLength: 1, maxLength: 200 },
+            clientName: { type: 'string', minLength: 1, maxLength: 200 },
+            issuedAt: stringField,
+            returnLocal: stringField,
+            timeZone: stringField,
+            timeZoneStated: { type: 'boolean' },
+            channel: { type: 'string', enum: [...tenderintake.SUBMISSION_CHANNEL] },
+            clarificationLocal: stringField,
+            siteVisitLocal: stringField,
+          },
+          additionalProperties: false,
+        },
         estimatedValueMinor: { type: 'integer', minimum: 0 },
         durationWeeks: { type: 'integer', minimum: 1 },
         targetMarginPercent: { type: 'number', minimum: 0, maximum: 100 },
@@ -27130,9 +29140,9 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) =>
-      perception.confirm(projectContext(platform, ctx), {
+      tenderreading.confirmReading(projectContext(platform, ctx), () => tenantContext(platform, ctx), {
         draftId: ctx.params.draftId as string,
-        ...body<Omit<perception.ConfirmInput, 'draftId'>>(ctx),
+        ...body<Omit<perception.ConfirmInput, 'draftId'> & { invitation?: tenderreading.InvitationFromReading }>(ctx),
       }),
   },
   // --- The command catalogue -------------------------------------------------

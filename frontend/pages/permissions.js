@@ -4,6 +4,7 @@ import {
   closedAreas,
   permissionMatrix,
   phaseGates,
+  roleExpertFor,
   rolesThatCanRead,
   tenantGrantableRoles,
 } from '../app.js';
@@ -141,10 +142,54 @@ function whoToAsk(roles) {
   return ordered.length > 3 ? `${named} — or ${ordered.length - 3} others` : named;
 }
 
+/**
+ * The AI expert behind a role, rendered as a card: who the professional is, the
+ * judgement they bring, and the real UK standards they work to. This is the
+ * "AI agent" the platform's reasoning runs as on that role's behalf — the same
+ * framing the engines open with, surfaced so a person can see who is reasoning
+ * for them rather than take "AI" on trust.
+ */
+function expertCard(expert, backedBy) {
+  return html`<div class="card pad0" style="margin-bottom:12px">
+    <div style="padding:15px 17px 4px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        ${badge('AI expert', 'info')}
+        ${badge(humanise(expert.discipline), 'neutral')}
+        ${backedBy ? html`<span class="metric-sub">for ${backedBy}</span>` : ''}
+      </div>
+      <h3 style="margin:8px 0 2px;text-transform:capitalize">${expert.title}</h3>
+      <p class="metric-sub" style="margin:0 0 10px">It ${expert.judgement}.</p>
+    </div>
+    ${table({
+      headers: ['Works to these real UK standards'],
+      rows: expert.standards.map((s) => [html`${s}`]),
+    })}
+  </div>`;
+}
+
 export async function permissions(root) {
   const matrix = permissionMatrix();
   const gates = phaseGates();
   const roles = state.session?.user?.roles ?? [];
+
+  // The AI expert(s) behind the signed-in person's own role(s), de-duplicated by
+  // discipline (two roles can share one profession), each labelled with the
+  // role(s) it backs.
+  const mineByDiscipline = new Map();
+  for (const role of roles) {
+    const expert = roleExpertFor(role);
+    if (!expert) continue;
+    const entry = mineByDiscipline.get(expert.discipline) ?? { expert, roles: [] };
+    entry.roles.push(humanise(role));
+    mineByDiscipline.set(expert.discipline, entry);
+  }
+  const myExperts = [...mineByDiscipline.values()];
+
+  // The whole team, one row per grantable role: the professional its agent
+  // reasons as, or a note where the seat has no single construction profession.
+  const team = tenantGrantableRoles()
+    .map((role) => ({ role, mine: roles.includes(role), expert: roleExpertFor(role) }))
+    .sort((a, b) => Number(b.mine) - Number(a.mine));
 
   if (!matrix) {
     render(
@@ -214,6 +259,41 @@ export async function permissions(root) {
             offers you any command.
           </p>
         </div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px">
+        <h2>The AI expert behind your role</h2>
+        <p class="metric-sub" style="margin:6px 0 12px">
+          When you ask the platform's AI to reason on your work, it does not reason as a general model — it reasons as
+          the experienced construction professional your seat belongs to, working to the real UK standards that
+          profession is held to. ${myExperts.length > 0
+            ? html`This is who reasons for <b>you</b>.`
+            : html`Your seat is an administrative or read-only one, so it has no single construction profession — the
+                full team is below.`}
+        </p>
+        ${myExperts.length > 0
+          ? myExperts.map((entry) => expertCard(entry.expert, entry.roles.join(', ')))
+          : ''}
+      </div>
+
+      <div class="card pad0" style="margin-bottom:14px">
+        <h2 style="padding:15px 17px 0">The AI expert team, across every role</h2>
+        <p class="metric-sub" style="padding:2px 17px 0">
+          Every seat in the business has an AI agent that reasons as its profession. Yours ${myExperts.length > 0 ? 'is marked' : 'is an administrative or read-only seat'}.
+        </p>
+        ${table({
+          headers: ['Role', 'Reasons as', 'Grounded in'],
+          rows: team.map((row) => [
+            html`<b>${humanise(row.role)}</b>${row.mine ? html` ${badge('you', 'ok')}` : ''}`,
+            row.expert
+              ? html`<span style="text-transform:capitalize">${row.expert.title}</span>
+                  <div class="metric-sub mono" style="font-size:10.5px">${humanise(row.expert.discipline)}</div>`
+              : html`<span class="metric-sub">— an administrative or read-only seat, not a construction profession</span>`,
+            row.expert
+              ? html`<span class="metric-sub">${row.expert.standards[0]}${row.expert.standards.length > 1 ? html` <span class="mono">+${row.expert.standards.length - 1}</span>` : ''}</span>`
+              : html`<span class="metric-sub">—</span>`,
+          ]),
+        })}
       </div>
 
       <section class="grid g4" style="margin-bottom:14px">

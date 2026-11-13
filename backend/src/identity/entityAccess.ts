@@ -21,9 +21,32 @@ export type EntityClassification = {
 export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // Business development — the pipeline, before a project exists
   Opportunity: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  // Autonomous Consultancy — the stateful engagement and its workboard tasks.
+  // Commercially sensitive: a bidder's engagement and its deliberations must not
+  // read across to a buyer or another bidder.
+  ConsultancyEngagement: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  ConsultancyTask: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  // Evidence and the claims that trace to it — the provenance a released finding
+  // rests on. Commercially sensitive, like the engagement they belong to.
+  ConsultancyEvidence: { area: 'EVIDENCE_AUDIT', sensitivity: 'COMMERCIAL_L3' },
+  ConsultancyClaim: { area: 'EVIDENCE_AUDIT', sensitivity: 'COMMERCIAL_L3' },
+  // A controlled release of a consultancy deliverable.
+  ConsultancyRelease: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  // A shared procurement and the bids received against it. The per-party view is
+  // filtered at read time (C03); the records are commercially sensitive.
+  ConsultancyProcurement: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  ConsultancySubmission: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  // Grid Connection AI — the HV grid-connection delivery engagement (42 steps, eight
+  // gates). A commissioning/assurance delivery record; commercially sensitive.
+  GridEngagement: { area: 'QUALITY_COMMISSIONING', sensitivity: 'COMMERCIAL_L3' },
   LessonLearned: { area: 'RISK_REGISTER' },
   CompanyProfile: { area: 'BUSINESS_DEVELOPMENT' },
   RadarRun: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  // Trend Intelligence AI: the ingested demand signal and the scored opportunity derived
+  // from it. Business-development area, commercial-in-confidence — a tenancy's own demand
+  // and what it plans to do about it is not shared across businesses (spec §8).
+  TrendObservation: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  TrendOpportunity: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
 
   // Tenancy and platform — the operator layer, never delivery
   Tenant: { area: 'PLATFORM_ADMINISTRATION' },
@@ -55,7 +78,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   PaymentReversal: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   PaymentException: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   GroupPurchase: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
+  // A commercial add-on's two halves. The AddonGrant is the operator's provision,
+  // written on the platform tenancy and classified like a ModuleGrant (operator
+  // decision); the AddonSeat is the company's own assignment of a paid seat.
+  AddonGrant: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'COMMERCIAL_L3' },
+  AddonSeat: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   AIRequest: { area: 'AI_EXECUTION' },
+  AIGatewayRequest: { area: 'AI_EXECUTION' },
 
   // Structure and setup
   Enterprise: { area: 'ENTERPRISE_STRUCTURE' },
@@ -263,6 +292,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // designer holding `DESIGN_INFORMATION` read could have listed them.
   Clarification: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Correspondence: { area: 'DESIGN_INFORMATION' },
+  // The transmission record of an outbound intent (a notice, a bid, a PO), separate from
+  // the thing's own contractual state. Same area as the notices it most often carries.
+  Dispatch: { area: 'DESIGN_INFORMATION' },
   // CN-WF-08. The controlled issue of information, with who acknowledged it.
   Transmittal: { area: 'DESIGN_INFORMATION' },
   StorageEntitlement: { area: 'BILLING_ACU' },
@@ -313,6 +345,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   IntermediationPosition: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
   Calendar: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
   ScheduleRun: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
+  TenderProgrammeDraft: { area: 'WORKPACKAGES_TASKS', sensitivity: 'INTERNAL' },
   Resource: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
   ResourceAssignment: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
   ActivityCode: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
@@ -443,6 +476,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   DocumentSequence: { area: 'ENTERPRISE_STRUCTURE' },
   RecordShare: { area: 'ENTERPRISE_STRUCTURE' },
   SupportAccessGrant: { area: 'ENTERPRISE_STRUCTURE' },
+  SupportReport: { area: 'ENTERPRISE_STRUCTURE' },
   AccountRequest: { area: 'PLATFORM_ADMINISTRATION' },
   Agreement: { area: 'ENTERPRISE_STRUCTURE', sensitivity: 'COMMERCIAL_L3' },
   // A legal instrument the company issues, and its issuance. Under evidence
@@ -725,6 +759,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // must be readable by the people who govern the enterprise, and it must not
   // be reachable by holding the capability to run AI, which every role holds.
   AgentEnvelope: { area: 'ENTERPRISE_STRUCTURE' },
+  AgentActBudget: { area: 'ENTERPRISE_STRUCTURE' },
   // The developer surface is enterprise governance, not project data: who holds
   // a credential against this tenancy, and where its data is being sent.
   ApiKey: { area: 'ENTERPRISE_STRUCTURE' },

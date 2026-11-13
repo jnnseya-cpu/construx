@@ -12,6 +12,7 @@ import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import { ingestFile, ingestedFiles, ittFromFile } from '../src/evidence/pipeline.ts';
 import { projectRegister } from '../src/evidence/registry.ts';
 import * as perception from '../src/engines/perception.ts';
+import { analysisBoard, complianceMatrix } from '../src/domain/itt.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import { grantEnvelope } from '../src/agents/mandate.ts';
 import { runAgents, runAgentsForChanges } from '../src/agents/runtime.ts';
@@ -62,6 +63,25 @@ function multimodalStub(output: Record<string, unknown>): AIProviderAdapter {
     healthy: () => true,
     async execute(request: ProviderRequest): Promise<ProviderResponse> {
       lastRequest = request;
+      return { provider: 'GEMINI', modelClass: 'perception-standard', output, rawCostMinor: 40, latencyMs: 8, confidence: 0.9 };
+    },
+  };
+}
+
+/** A provider that returns a different reading on each call, for the merge path. */
+function sequencingStub(outputs: Record<string, unknown>[]): AIProviderAdapter {
+  let call = 0;
+  return {
+    name: 'GEMINI',
+    capability: 'PERCEPTION',
+    multimodal: true,
+    transmits: true,
+    estimateCostMinor: () => 40,
+    healthy: () => true,
+    async execute(request: ProviderRequest): Promise<ProviderResponse> {
+      lastRequest = request;
+      const output = outputs[Math.min(call, outputs.length - 1)]!;
+      call += 1;
       return { provider: 'GEMINI', modelClass: 'perception-standard', output, rawCostMinor: 40, latencyMs: 8, confidence: 0.9 };
     },
   };
@@ -139,6 +159,33 @@ const ITT_READING = {
 
 const ITT_FILE = Buffer.from('PDF-ish bytes standing in for an invitation to tender', 'utf8');
 const ITT_HASH = hashBytes(ITT_FILE);
+
+/** A second document of the same tender — a social-value appendix with its own requirements and no commercial terms. */
+const APPENDIX_READING = {
+  reference: 'YW/2026/SPILLWAY/014 — Appendix D Social Value',
+  clientName: 'Yorkshire Water Services Limited',
+  returnBy: '2026-11-20',
+  requirements: [
+    {
+      reference: 'SV 1',
+      category: 'SOCIAL_VALUE',
+      requirement: 'Apprenticeship weeks committed over the works duration.',
+      mandatory: false,
+      weightingPercent: 5,
+      evidenceRequired: 'TOMs schedule',
+    },
+    {
+      reference: 'SV 2',
+      category: 'ENVIRONMENTAL',
+      requirement: 'Carbon reduction plan for the works.',
+      mandatory: false,
+      evidenceRequired: 'Carbon reduction plan',
+    },
+  ],
+  deliverables: [{ reference: 'RD-04', title: 'Social value schedule', mandatory: true, channel: 'PORTAL' }],
+  // An appendix states no commercial terms of its own.
+  terms: { contractForm: 'Not stated in the invitation' },
+};
 
 /**
  * A project at TENDER, walked through the gates.
@@ -294,6 +341,81 @@ describe('the invitation is read rather than typed', () => {
   });
 });
 
+describe('one matrix per tender — a second reading merges in', () => {
+  it('adds a second document’s requirements to the one matrix, keeps the terms, merges the returns', async () => {
+    await buildFixture(sequencingStub([ITT_READING, APPENDIX_READING]));
+    registerEvidenceFor(ctx('qs'), ITT_HASH, 'TENDER_DOCUMENT');
+    await store.put(seed.tenantId, ITT_HASH, ITT_FILE, 'application/pdf');
+
+    // First reading: the ITT itself — three requirements, the NEC4 terms, three returns.
+    const first = await perception.extract(ctx('qs'), store, { hash: ITT_HASH, task: 'ITT_REQUIREMENTS' });
+    const firstConfirmed = await perception.confirm(ctx('qs'), { draftId: first.draftId, invitationId });
+    assert.equal((firstConfirmed.result as { requirements: number }).requirements, 3);
+
+    // Second reading of the same tender — a social-value appendix, two new
+    // requirements and one new return, stating no commercial terms of its own.
+    const second = await perception.extract(ctx('qs'), store, { hash: ITT_HASH, task: 'ITT_REQUIREMENTS' });
+    const secondConfirmed = await perception.confirm(ctx('qs'), { draftId: second.draftId, invitationId });
+    assert.equal(
+      (secondConfirmed.result as { requirements: number }).requirements,
+      5,
+      'the second reading minted a fresh matrix instead of merging into the one on the tender',
+    );
+
+    // The tender holds one matrix, carrying both readings.
+    const invitation = platform.ledger.require({ refType: 'TenderInvitation', refId: invitationId }).state;
+    const analysis = platform.ledger.require({ refType: 'ITTAnalysis', refId: invitation.analysisId as string }).state as {
+      reference?: string;
+      matrix: Array<{ reference: string }>;
+      commercialTerms?: { contractForm?: string };
+    };
+    assert.deepEqual(
+      analysis.matrix.map((line) => line.reference).sort(),
+      ['AW 2.4', 'SQ 4.1', 'SQ 6.2', 'SV 1', 'SV 2'],
+      'the one matrix does not carry both readings’ requirements',
+    );
+    // The appendix was titled "YW/2026/SPILLWAY/014 — Appendix D Social Value".
+    // Merging it must not rename the tender's matrix after the appendix: the
+    // matrix keeps the tender's own reference from the first reading, or the
+    // live list ends up showing a fragment's title over the full set.
+    assert.equal(
+      analysis.reference,
+      'YW/2026/SPILLWAY/014',
+      'a later document renamed the whole matrix after itself',
+    );
+    // The appendix stated no terms, so the ITT terms are kept rather than wiped.
+    assert.equal(
+      analysis.commercialTerms?.contractForm,
+      'NEC4 Option A with Z-clauses',
+      'a later reading with no terms wiped the tender’s commercial terms',
+    );
+    // The returns are merged, not replaced: the ITT’s three plus the appendix’s one.
+    assert.deepEqual(
+      (invitation.deliverables as Array<{ reference: string }>).map((deliverable) => deliverable.reference).sort(),
+      ['RD-01', 'RD-02', 'RD-03', 'RD-04'],
+      'a later reading wiped the tender’s return register',
+    );
+
+    // The board marks exactly one matrix as bound — the current one the
+    // invitation points at — and the earlier reading as not bound, so the
+    // screen can show one live matrix per tender and hold the rest as earlier
+    // readings rather than calling them separate tenders.
+    const board = analysisBoard(ctx('qs'));
+    const current = board.analyses.find((a) => a.analysisId === invitation.analysisId);
+    const earlier = board.analyses.find(
+      (a) => a.analysisId === (firstConfirmed.result as { analysisId: string }).analysisId,
+    );
+    assert.ok(current?.bound, 'the current matrix is not marked bound to the tender');
+    assert.equal(current?.invitationId, invitationId, 'the bound matrix does not name its invitation');
+    assert.ok(earlier && !earlier.bound, 'an earlier reading is still marked as a live matrix');
+    assert.equal(
+      board.analyses.filter((a) => a.invitationId === invitationId).length,
+      1,
+      'more than one matrix is bound to a single tender',
+    );
+  });
+});
+
 describe('what the invitation does not say about the bidder', () => {
   before(async () => {
     await buildFixture(multimodalStub(ITT_READING));
@@ -301,19 +423,27 @@ describe('what the invitation does not say about the bidder', () => {
     await store.put(seed.tenantId, ITT_HASH, ITT_FILE, 'application/pdf');
   });
 
-  it('refuses to confirm without the value and the duration', async () => {
+  it('confirms without a value or a duration, and invents neither', async () => {
     // An ITT names its return date and its contract form. It does not name what
-    // this business expects to price the job at, and a model that produced one
-    // would be inventing the number the whole bid turns on.
+    // this business expects to price the job at. The reading does not demand that
+    // number up front — it cannot be known before the take-off — and it does not
+    // invent one. The matrix is filed unsized; the commercial terms are still
+    // read, and their cash figures size themselves later, once the job is priced.
     const draft = await perception.extract(ctx('qs'), store, { hash: ITT_HASH, task: 'ITT_REQUIREMENTS' });
 
-    await assert.rejects(
-      () => perception.confirm(ctx('qs'), { draftId: draft.draftId, invitationId }),
-      (error: Error & { code?: string }) => {
-        assert.equal(error.code, 'PERCEPTION_TARGET_REQUIRED');
-        return true;
-      },
-    );
+    const confirmed = await perception.confirm(ctx('qs'), { draftId: draft.draftId, invitationId });
+    const result = confirmed.result as { analysisId: string; requirements: number; bars: string[] };
+    assert.ok(result.analysisId, 'the reading was not confirmed into a matrix without a value or duration');
+    assert.equal(result.requirements, 3, 'the requirements the model read did not reach the matrix');
+    // The terms are assessed even unsized — a fitness-for-purpose bar does not
+    // depend on the contract value, and must still end the bid.
+    assert.ok(result.bars.length > 0, 'a fitness-for-purpose obligation was not raised as a bar');
+
+    // No number was invented for what the invitation does not state.
+    const matrix = complianceMatrix(ctx('qs'), result.analysisId);
+    assert.equal(matrix.sizedFrom, 'NONE', 'the matrix reported a size it was never given');
+    assert.equal(matrix.estimatedValueMinor, undefined, 'a contract value the invitation does not state was invented');
+    assert.equal(matrix.durationWeeks, undefined, 'a duration the invitation does not state was invented');
   });
 });
 

@@ -1,7 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { OBSERVATION_TYPE, RISK_CATEGORY } from '../lib/enums.js';
-import { badge, date, days, drillable, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
+import { badge, date, days, drillable, html, humanise, money, pct, raw, render, resolveHtml, statusTone, table, toast, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
 import { barChart, heatmap, lineChart, radarChart } from '../lib/charts.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -136,6 +136,13 @@ export async function risk(root) {
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
           <h2 style="padding:15px 17px 0">Risk register</h2>
+          ${can('RISK_REGISTER', 'C') ? html`<div style="padding:8px 17px 0">
+            <button class="btn quiet sm" data-risk-review="1"
+              title="A chartered risk manager reads the live register and proposes the risks worth adding or strengthening — a missing risk, an event with no cause, no owner or no trigger, a control that watches rather than acts, a misallocated risk. It proposes; adding or re-scoring a risk stays your act.">
+              Ask the risk manager to review the register
+            </button>
+            <div data-risk-review-results style="margin-top:8px"></div>
+          </div>` : ''}
           ${table({
             headers: ['Risk', 'Category', 'P', 'Expected cost', 'Days', 'Severity', 'Mitigation'],
             align: ['', '', 'num', 'num', 'num', '', ''],
@@ -278,6 +285,50 @@ export async function risk(root) {
       toast('Forecast failed', error.message, 'err');
       button.disabled = false;
       button.textContent = 'Run safety forecast';
+    }
+  });
+
+  // The chartered risk manager's read of the live register. Advice re-fetched
+  // each press — it writes nothing, and adding or re-scoring a risk stays the
+  // person's act through the Register / Rescore commands.
+  root.addEventListener('click', async (event) => {
+    const reviewBtn = event.target.closest('[data-risk-review]');
+    if (!reviewBtn) return;
+    const results = root.querySelector('[data-risk-review-results]');
+    reviewBtn.disabled = true;
+    reviewBtn.textContent = 'Reading the register…';
+    try {
+      const review = await api.post(`/v1/projects/${projectId}/risks/ai-review`, {});
+      const proposed = review.proposed ?? [];
+      if (!review.available) {
+        if (results) results.innerHTML = '';
+        toast('Review unavailable', review.note ?? 'The expert risk review could not run on this deployment.', 'warn');
+      } else if (proposed.length === 0) {
+        if (results) results.innerHTML = resolveHtml(html`<div class="empty" style="margin:0"><b>Nothing to add</b>${review.note ?? ''}</div>`);
+        toast('Reviewed', review.note ?? 'The register is complete and well formed.', 'ok');
+      } else if (results) {
+        results.innerHTML = resolveHtml(html`
+          <div class="notice" style="margin:0 0 8px"><div style="font-size:12px">${review.note ?? ''}</div></div>
+          ${proposed.map(
+            (r) => html`<div class="card pad" style="margin-bottom:8px">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px">
+                <span style="font-weight:600;font-size:13px">${r.subject}</span>
+                ${r.category ? badge(humanise(r.category), 'neutral') : ''}
+                ${r.owner ? badge(r.owner, 'info') : ''}
+              </div>
+              <div style="font-size:12.5px;margin-bottom:5px"><b>Cause → event → impact:</b> ${r.cause}</div>
+              ${r.trigger ? html`<div style="font-size:12px;color:var(--text-3);margin-bottom:3px"><b>Trigger:</b> ${r.trigger}</div>` : ''}
+              <div style="font-size:12px;margin-bottom:5px"><b>Control:</b> ${r.mitigation}</div>
+              <div style="font-size:11.5px;color:var(--text-3)"><b>Basis:</b> ${r.basis}</div>
+            </div>`,
+          )}`);
+        toast('Reviewed', `${proposed.length} risk${proposed.length === 1 ? '' : 's'} proposed. Verify each, then register or re-score the ones worth carrying.`, 'ok');
+      }
+    } catch (error) {
+      toast('Review failed', error.message, 'err');
+    } finally {
+      reviewBtn.disabled = false;
+      reviewBtn.textContent = 'Ask the risk manager to review the register';
     }
   });
 

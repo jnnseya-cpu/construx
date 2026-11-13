@@ -117,7 +117,12 @@ export function legalVerificationOf(profile: IssuerProfile): LegalVerification {
  * (§8.2 "legal-profile readiness"). Not a guess: the fields a contractual
  * document has to carry are named, and what is missing is said.
  */
-export function legalReadiness(profile: IssuerProfile): { complete: boolean; missing: string[]; verification: LegalVerification['state'] } {
+export function legalReadiness(profile: IssuerProfile): {
+  complete: boolean;
+  missing: string[];
+  missingLabels: string[];
+  verification: LegalVerification['state'];
+} {
   const missing: string[] = [];
   const issuer = profile.issuer;
   if (!issuer.registeredName.trim()) missing.push('registeredName');
@@ -125,8 +130,21 @@ export function legalReadiness(profile: IssuerProfile): { complete: boolean; mis
   if (!issuer.registeredAddress.line1.trim()) missing.push('registeredAddress.line1');
   if (!issuer.registeredAddress.city.trim()) missing.push('registeredAddress.city');
   if (!issuer.registeredAddress.country.trim()) missing.push('registeredAddress.country');
-  return { complete: missing.length === 0, missing, verification: legalVerificationOf(profile).state };
+  return { complete: missing.length === 0, missing, missingLabels: missing.map((field) => LEGAL_FIELD_LABELS[field] ?? field), verification: legalVerificationOf(profile).state };
 }
+
+/**
+ * The names the "Registered company details" form gives these fields. A
+ * refusal that said `registeredAddress.line1` sent a quantity surveyor looking
+ * for a field called that; the form calls it "Registered address".
+ */
+export const LEGAL_FIELD_LABELS: Record<string, string> = {
+  registeredName: 'Registered name',
+  registrationNo: 'Company number',
+  'registeredAddress.line1': 'Registered address',
+  'registeredAddress.city': 'City',
+  'registeredAddress.country': 'Country code',
+};
 
 const governance = (tenantId: string) => `${tenantId}-governance`;
 
@@ -150,6 +168,24 @@ function emptyIssuer(): IssuerBlock {
  * carried before profiles existed, so nothing changes until somebody
  * changes it.
  */
+/** The report numbering a company has before it sets its own: its branding prefix and five digits. */
+function defaultReportRule(brand: ClientBranding): NumberingRule {
+  return { prefix: `${brand.documentReferencePrefix}-`, pattern: '{seq:5}', seqScope: 'all' };
+}
+
+/**
+ * Whether this rule is one the company chose, rather than the default made from
+ * its branding prefix. A saved profile carries the default forward unchanged, so
+ * the record existing proves nothing; the rule differing from the default does.
+ * A project's documents take the company's number only where the company chose
+ * one — the default is a prefix, and a prefix is not a project's reference.
+ */
+export function isAuthoredRule(rule: NumberingRule, brand: ClientBranding | undefined): boolean {
+  if (!brand) return true;
+  const fallback = defaultReportRule(brand);
+  return rule.prefix !== fallback.prefix || rule.pattern !== fallback.pattern;
+}
+
 export function issuerProfile(platform: Platform, tenantId: string): IssuerProfile {
   const record = platform.ledger.get({ refType: 'IssuerProfile', refId: tenantId });
   if (record) return record.state as unknown as IssuerProfile;
@@ -166,7 +202,7 @@ export function issuerProfile(platform: Platform, tenantId: string): IssuerProfi
       registeredAddress: { line1: '', line2: '', city: '', postcode: '', country: tenant.jurisdiction },
       footerLegalText: brand?.legalFooter ?? '',
     },
-    numberingRules: brand ? { report: { prefix: `${brand.documentReferencePrefix}-`, pattern: '{seq:5}', seqScope: 'all' } } : {},
+    numberingRules: brand ? { report: defaultReportRule(brand) } : {},
     signatories: [],
     brand,
     legal: { state: 'UNVERIFIED', note: 'Display name from onboarding; registered details not yet entered' },
@@ -295,7 +331,7 @@ export function verifyIssuerProfile(platform: Platform, operator: AuthContext, t
   const current = issuerProfile(platform, tenantId);
   const readiness = legalReadiness(current);
   if (!readiness.complete) {
-    throw new DomainError('LEGAL_PROFILE_INCOMPLETE', `The registered issuer details are incomplete (${readiness.missing.join(', ')}); the company enters them before they can be verified`, 422);
+    throw new DomainError('LEGAL_PROFILE_INCOMPLETE', `The registered company details are incomplete (${readiness.missingLabels.join(', ')} not entered); the company enters them before they can be verified`, 422);
   }
   const now = new Date().toISOString();
   const next: IssuerProfile = {

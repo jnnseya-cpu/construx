@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { rejectsCode, throwsCode } from './helpers.ts';
 import { ACUWallet } from '../src/billing/acu.ts';
+import { config } from '../src/config.ts';
 import { AIOrchestrator, ENGINE_CONTRACTS, engineActiveIn } from '../src/ai/orchestrator.ts';
 import { LIFECYCLE_ORDER } from '../src/lifecycle/phases.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
@@ -36,6 +37,9 @@ function stubProvider(
     transmits: true,
     calls: 0,
     estimateCostMinor: () => options.cost ?? 100,
+    // Same basis as the estimate: the rate at a token size, so cheapest-first
+    // routing can rank this stand-in against another the way it ranks vendors.
+    costAtTokensMinor: () => options.cost ?? 100,
     healthy: () => options.healthy ?? true,
     async execute(request: ProviderRequest): Promise<ProviderResponse> {
       provider.calls += 1;
@@ -103,6 +107,76 @@ describe('provider routing and failover', () => {
     });
 
     assert.throws(() => orchestrator.adapterFor('REASONING'), /AI_UNAVAILABLE|No healthy AI provider/);
+  });
+
+  it('routes to the cheapest healthy provider when AI_SELECT_CHEAPEST is on', () => {
+    // Two cleared, healthy providers whose windows both hold the call; the only
+    // thing to choose between them is price. The primary (OPENAI) is the dearer
+    // one, so default order and cheapest-first give different answers — which is
+    // what makes this a real test of the flag rather than of the chain order.
+    const reasoning = stubProvider('OPENAI', 'REASONING', { cost: 500 });
+    const perception = stubProvider('GEMINI', 'PERCEPTION', { cost: 20 });
+    const orchestrator = new AIOrchestrator({ reasoning, perception });
+
+    // Default: the configured primary wins, price notwithstanding.
+    assert.equal(orchestrator.adapterFor('REASONING').name, 'OPENAI', 'default keeps chain order');
+
+    const original = config.ai.selectCheapest;
+    try {
+      (config.ai as { selectCheapest: boolean }).selectCheapest = true;
+      assert.equal(
+        orchestrator.adapterFor('REASONING').name,
+        'GEMINI',
+        'cheapest-first picks the lower-cost cleared, healthy provider',
+      );
+    } finally {
+      (config.ai as { selectCheapest: boolean }).selectCheapest = original;
+    }
+  });
+
+  it('cheapest-first still prefers a provider not yet tried for this work', () => {
+    // Health is a condition and "already tried" a preference, and cheapest-first
+    // must not override the preference: an escalating draft the red team sent
+    // back on the cheap model is retried on a different one, not trapped on the
+    // cheapest because it is cheapest.
+    const reasoning = stubProvider('OPENAI', 'REASONING', { cost: 20 });
+    const perception = stubProvider('GEMINI', 'PERCEPTION', { cost: 500 });
+    const orchestrator = new AIOrchestrator({ reasoning, perception });
+
+    const original = config.ai.selectCheapest;
+    try {
+      (config.ai as { selectCheapest: boolean }).selectCheapest = true;
+      // Avoid the cheap one: the dearer untried vendor is chosen over it.
+      assert.equal(
+        orchestrator.adapterFor('REASONING', 'INTERNAL', 0, ['OPENAI']).name,
+        'GEMINI',
+        'a vendor already tried is passed over even when it is cheapest',
+      );
+    } finally {
+      (config.ai as { selectCheapest: boolean }).selectCheapest = original;
+    }
+  });
+
+  it('publishes the active routing mode so an operator can confirm it', () => {
+    const orchestrator = new AIOrchestrator({
+      reasoning: stubProvider('OPENAI', 'REASONING'),
+      perception: stubProvider('GEMINI', 'PERCEPTION'),
+    });
+
+    const original = config.ai.selectCheapest;
+    try {
+      (config.ai as { selectCheapest: boolean }).selectCheapest = false;
+      let status = orchestrator.controlPlaneStatus();
+      assert.equal(status.routing.mode, 'CONFIGURED_ORDER');
+      assert.equal(status.routing.selectCheapest, false);
+
+      (config.ai as { selectCheapest: boolean }).selectCheapest = true;
+      status = orchestrator.controlPlaneStatus();
+      assert.equal(status.routing.mode, 'CHEAPEST');
+      assert.equal(status.routing.selectCheapest, true);
+    } finally {
+      (config.ai as { selectCheapest: boolean }).selectCheapest = original;
+    }
   });
 
   it('publishes provider health without naming a credential', () => {

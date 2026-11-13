@@ -7,6 +7,7 @@ import * as engagements from '../src/domain/bidon/engagements.ts';
 import * as evidence from '../src/domain/bidon/evidence.ts';
 import * as bids from '../src/domain/bidon/bids.ts';
 import * as engine from '../src/domain/bidon/engine.ts';
+import { brandArgb } from '../src/export/xlsx.ts';
 import { ROUTES } from '../src/api/routes.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import { classifyEntity } from '../src/identity/entityAccess.ts';
@@ -1081,17 +1082,48 @@ describe('the pack comes out in the questionnaire’s own structure', () => {
     // the clear. A test that searched the raw bytes would pass on a stored
     // (uncompressed) writer and fail on a correct one.
     const workbook = partOf(bytes, 'xl/workbook.xml');
+    // A branded workbook opens on its cover, then the sections in source order.
+    // The cover is sheet1; the sections keep their order after it.
+    assert.ok(workbook.includes('name="Cover"'), 'the branded workbook has no cover sheet');
+    const cover = workbook.indexOf('name="Cover"');
     const zebra = workbook.indexOf('Zebra section');
     const alpha = workbook.indexOf('Alpha section');
     assert.ok(zebra >= 0 && alpha >= 0, `a section name is missing from the workbook: ${workbook}`);
+    assert.ok(cover < zebra && cover < alpha, 'the cover is not the first sheet');
     assert.ok(zebra < alpha, 'the workbook sorted the sheets');
 
     // A row per question, in the buyer's numbering, on the sheet for its own
-    // section.
-    const first = partOf(bytes, 'xl/worksheets/sheet1.xml');
-    assert.ok(first.includes('9.1'), 'the first sheet does not carry its own section’s questions');
-    assert.ok(first.includes('9.2'));
-    assert.ok(!first.includes('1.1'), 'a question from another section is on this sheet');
+    // section — which now follows the cover, so the first section is sheet2.
+    const firstSection = partOf(bytes, 'xl/worksheets/sheet2.xml');
+    assert.ok(firstSection.includes('9.1'), 'the first section sheet does not carry its own section’s questions');
+    assert.ok(firstSection.includes('9.2'));
+    assert.ok(!firstSection.includes('1.1'), 'a question from another section is on this sheet');
+  });
+
+  it('brands the spreadsheet like the other formats: a cover, the brand colour, the issuer in its properties', () => {
+    const pack = bids.renderPack(asProviderAdmin(), ready.id, 'XLSX', branding());
+    const bytes = Buffer.from(pack.content, 'base64');
+    const brand = branding();
+
+    // The cover sheet carries the issuing identity, verbatim.
+    const cover = partOf(bytes, 'xl/worksheets/sheet1.xml');
+    const origin = brand.issuingEntity ?? brand.clientName;
+    assert.ok(cover.includes(origin), 'the cover does not name the issuer');
+    assert.ok(cover.includes(brand.legalFooter), 'the cover carries no legal footer');
+
+    // The brand colour is a real fill in the stylesheet, not just prose: the
+    // header band every section row sits under takes it. The expected ARGB is
+    // derived from the tenancy's own colour through the same parser the renderer
+    // uses, so this holds whether the colour is stored as hex or as the seeded
+    // `rgba(...)` — a hex-only reader would have dropped the latter to grey.
+    const styles = partOf(bytes, 'xl/styles.xml');
+    assert.ok(styles.includes('patternType="solid"'), 'the stylesheet has no brand fill');
+    assert.ok(styles.includes(brandArgb(brand.primaryColour)), 'the brand colour did not reach the stylesheet');
+
+    // The file's own properties name the issuer, not this platform — the same
+    // decision the PDF and Word renderers make.
+    const core = partOf(bytes, 'docProps/core.xml');
+    assert.ok(core.includes(`<dc:creator>${origin}`), 'the file is not authored as the issuer');
   });
 
   it('writes a real Word file carrying the answers', () => {

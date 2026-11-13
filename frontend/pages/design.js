@@ -759,8 +759,18 @@ export async function design(root) {
                         rows: readable.slice(0, 12).map((entry) => [
                           entry.description,
                           entry.contentType,
-                          html`<button class="btn quiet sm" data-read="TITLE_BLOCK" data-hash="${entry.hash}">Title block</button>
-                            <button class="btn quiet sm" data-read="DRAWING_TAKEOFF" data-hash="${entry.hash}">Quantities</button>`,
+                          html`${
+                            entry.contentType === 'application/pdf'
+                              ? html`<input data-pages-for="${entry.hash}" placeholder="pages e.g. 7-19"
+                                  title="For a bundled PDF, the pages to read — a range like 7-19, a single page like 7, or blank for the whole file. A 360-page tender pack is read a few sheets at a time."
+                                  style="width:118px;margin-right:6px" />`
+                              : ''
+                          }<button class="btn quiet sm" data-read="TITLE_BLOCK" data-hash="${entry.hash}">Title block</button>
+                            <button class="btn quiet sm" data-read="DRAWING_TAKEOFF" data-hash="${entry.hash}">Quantities</button>${
+                              entry.contentType === 'application/pdf'
+                                ? html` <button class="btn quiet sm" data-scan="${entry.hash}" data-name="${entry.description}">Scan bundle</button>`
+                                : ''
+                            }`,
                         ]),
                         empty: evidence?.storeConfigured
                           ? 'No drawing files are held yet. A hash on its own cannot be read.'
@@ -768,10 +778,27 @@ export async function design(root) {
                       })
                     : ''
                 }
+                <div data-bundle-scan style="padding:0 17px"></div>
                 ${
                   openDrafts.length > 0
                     ? html`<div style="padding:0 17px 15px">
                         <h2 style="margin-top:14px">Awaiting confirmation</h2>
+                        ${(() => {
+                          // File every measured take-off in one action, under one package, when
+                          // there is more than one to file. Each still lands as its own take-off;
+                          // this only saves typing the same package and code on each.
+                          const confirmable = openDrafts.filter(
+                            (d) => d.task === 'DRAWING_TAKEOFF' && (d.extraction.items ?? []).length > 0,
+                          );
+                          return confirmable.length >= 2
+                            ? html`<div class="notice" style="margin:8px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                                <span>File all ${confirmable.length} measured take-offs under one package:</span>
+                                <input data-confirm-all-pkg placeholder="work package e.g. Superstructure" style="width:190px" />
+                                <input data-confirm-all-code placeholder="code e.g. SUP" style="width:110px" />
+                                <button class="btn sm" data-confirm-all>Confirm all ${confirmable.length}</button>
+                              </div>`
+                            : '';
+                        })()}
                         ${table({
                           headers: ['Read', 'What it says', 'Confidence', ''],
                           rows: openDrafts.map((draft) => [
@@ -782,8 +809,21 @@ export async function design(root) {
                                 ? `${(draft.extraction.items ?? []).length} measured item(s)`
                                 : String(draft.extraction.transcript ?? '').slice(0, 70),
                             draft.confidence !== undefined && draft.confidence !== null ? pct(draft.confidence * 100) : '—',
-                            html`<button class="btn sm" data-confirm="${draft.id}">Confirm</button>
-                              <button class="btn quiet sm" data-discard="${draft.id}">Reject</button>`,
+                            // A take-off that measured nothing — a text or form section read as a
+                            // drawing — has nothing to file, so it asks for no package or code: just
+                            // dismiss it. Everything else is confirmed against a package.
+                            draft.task === 'DRAWING_TAKEOFF' && (draft.extraction.items ?? []).length === 0
+                              ? html`<span class="metric-sub" style="margin-right:8px">nothing measurable on these pages</span>
+                                  <button class="btn quiet sm" data-discard="${draft.id}">Dismiss</button>`
+                              : html`${
+                                  draft.task === 'DRAWING_TAKEOFF'
+                                    ? html`<input data-pkg-for="${draft.id}" placeholder="work package e.g. Substructure"
+                                        title="The work package these measured items belong to. Use the same name when you price them." style="width:150px;margin-right:4px" />
+                                      <input data-code-for="${draft.id}" placeholder="code e.g. SUB"
+                                        title="Cost code prefix — the measured items are numbered SUB.001, SUB.002 and so on." style="width:92px;margin-right:4px" /> `
+                                    : ''
+                                }<button class="btn sm" data-confirm="${draft.id}" data-task="${draft.task}">Confirm</button>
+                                  <button class="btn quiet sm" data-discard="${draft.id}">Reject</button>`,
                           ]),
                         })}
                       </div>`
@@ -2094,10 +2134,25 @@ export async function design(root) {
         read.dataset.read === 'TITLE_BLOCK'
           ? `/v1/projects/${projectId}/perception/title-block`
           : `/v1/projects/${projectId}/perception/take-off`;
+      // A page range, where one was typed beside this file. "7-19" reads those
+      // sheets; "7" reads one; blank reads the whole file, as before. Carving
+      // the pages out before the read is what lets a 360-page bundle be measured
+      // at all — the whole of it is refused on its token count.
+      const pagesInput = read.closest('tr')?.querySelector(`[data-pages-for="${read.dataset.hash}"]`);
+      const typed = (pagesInput?.value ?? '').trim();
+      let pageRange = {};
+      if (typed) {
+        const match = /^(\d+)\s*(?:[-–]\s*(\d+))?$/.exec(typed);
+        if (!match) {
+          toast('Pages not understood', 'Type a range like 7-19, a single page like 7, or leave it blank to read the whole file.', 'warn');
+          return;
+        }
+        pageRange = { fromPage: Number(match[1]), toPage: match[2] ? Number(match[2]) : Number(match[1]) };
+      }
       read.disabled = true;
       read.textContent = 'Reading…';
       try {
-        await api.post(path, { hash: read.dataset.hash });
+        await api.post(path, { hash: read.dataset.hash, ...pageRange });
         await draw();
       } catch (error) {
         // A refusal here is usually a true statement about the file or the
@@ -2109,11 +2164,131 @@ export async function design(root) {
       return;
     }
 
+    // Scan a bundle into its sections, so the drawings in a 360-page pack can be
+    // found without hunting page numbers. The scan reads only — it charges
+    // nothing — and the person measures the sections they choose.
+    const scan = event.target.closest('[data-scan]');
+    if (scan) {
+      // The hash is the value of the data-scan attribute itself.
+      const scanHash = scan.dataset.scan;
+      const panel = root.querySelector('[data-bundle-scan]');
+      scan.disabled = true;
+      scan.textContent = 'Scanning…';
+      try {
+        const result = await api.post(`/v1/projects/${projectId}/perception/bundle-scan`, { hash: scanHash });
+        const sections = result.sections ?? [];
+        if (panel) {
+          panel.innerHTML = resolveHtml(html`
+            <div class="notice" style="margin-top:12px">
+              <div><b>${scan.dataset.name}</b> — ${result.pageCount} pages${
+                result.hasOutline ? ', read from the document’s own bookmarks' : ', inferred from the pages (no bookmarks in this file)'
+              }. Measure the sections that hold drawings; a text section is read, not measured.</div>
+            </div>
+            ${
+              sections.length === 0
+                ? html`<div class="metric-sub" style="padding:8px 0">No sections were found. Enter a page range beside the file instead.</div>`
+                : table({
+                    headers: ['Section', 'Pages', 'Reads as', ''],
+                    rows: sections.map((section) => [
+                      section.title,
+                      `${section.fromPage}–${section.toPage} (${section.pages})`,
+                      section.kind === 'DRAWINGS'
+                        ? badge('drawings', 'ok')
+                        : section.kind === 'MIXED'
+                          ? badge('mixed', 'info')
+                          : badge('text', 'warn'),
+                      section.kind === 'TEXT'
+                        ? html`<span class="metric-sub">read, not measured</span>`
+                        : html`<button class="btn quiet sm" data-measure data-measure-hash="${scanHash}"
+                            data-from="${section.fromPage}" data-to="${section.toPage}">Measure quantities</button>`,
+                    ]),
+                  })
+            }`);
+        }
+      } catch (error) {
+        toast('Not scanned', error.message, 'err');
+      } finally {
+        scan.disabled = false;
+        scan.textContent = 'Scan bundle';
+      }
+      return;
+    }
+
+    // Measure one scanned section — the page-range take-off, pointed at the pages
+    // the scan found rather than at a range typed by hand.
+    const measure = event.target.closest('[data-measure]');
+    if (measure) {
+      measure.disabled = true;
+      measure.textContent = 'Reading…';
+      try {
+        await api.post(`/v1/projects/${projectId}/perception/take-off`, {
+          hash: measure.dataset.measureHash,
+          fromPage: Number(measure.dataset.from),
+          toPage: Number(measure.dataset.to),
+        });
+        toast('Measured', 'A take-off draft is waiting below to confirm.', 'ok');
+        await draw();
+      } catch (error) {
+        toast('Not measured', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
+        measure.disabled = false;
+        measure.textContent = 'Measure quantities';
+      }
+      return;
+    }
+
+    // File every measured take-off at once, under one package and cost code.
+    const confirmAll = event.target.closest('[data-confirm-all]');
+    if (confirmAll) {
+      const packageId = root.querySelector('[data-confirm-all-pkg]')?.value?.trim();
+      const costCodePrefix = root.querySelector('[data-confirm-all-code]')?.value?.trim();
+      if (!packageId || !costCodePrefix) {
+        toast('Package and cost code needed', 'Type a work package and a cost code — e.g. “Superstructure” / “SUP” — then Confirm all.', 'warn');
+        return;
+      }
+      const ids = [...root.querySelectorAll('button[data-confirm][data-task="DRAWING_TAKEOFF"]')].map((button) => button.dataset.confirm);
+      if (ids.length === 0) {
+        toast('Nothing to confirm', 'There are no measured take-offs waiting.', 'info');
+        return;
+      }
+      confirmAll.disabled = true;
+      confirmAll.textContent = 'Confirming…';
+      let filed = 0;
+      try {
+        for (const id of ids) {
+          await api.post(`/v1/projects/${projectId}/perception/${id}/confirm`, { packageId, costCodePrefix });
+          filed += 1;
+        }
+        toast('Confirmed', `${filed} take-off${filed === 1 ? '' : 's'} filed under ${packageId}.`, 'ok');
+      } catch (error) {
+        toast(filed > 0 ? `${filed} filed, then stopped` : 'Not confirmed', error.message, 'err');
+      }
+      await draw();
+      return;
+    }
+
     const confirmDraft = event.target.closest('[data-confirm]');
     if (confirmDraft) {
+      const draftId = confirmDraft.dataset.confirm;
+      // A measured take-off is filed against a work package under a cost code, so
+      // the quantities land somewhere an estimator can find and price them. The
+      // other reads (a title block, a transcript) need neither.
+      let payload = {};
+      if (confirmDraft.dataset.task === 'DRAWING_TAKEOFF') {
+        const packageId = root.querySelector(`[data-pkg-for="${draftId}"]`)?.value?.trim();
+        const costCodePrefix = root.querySelector(`[data-code-for="${draftId}"]`)?.value?.trim();
+        if (!packageId || !costCodePrefix) {
+          toast(
+            'Package and cost code needed',
+            'A measured take-off is filed against a work package under a cost code — e.g. “Substructure” / “SUB”. Fill both beside this draft, then Confirm.',
+            'warn',
+          );
+          return;
+        }
+        payload = { packageId, costCodePrefix };
+      }
       confirmDraft.disabled = true;
       try {
-        await api.post(`/v1/projects/${projectId}/perception/${confirmDraft.dataset.confirm}/confirm`, {});
+        await api.post(`/v1/projects/${projectId}/perception/${draftId}/confirm`, payload);
         toast('Confirmed', 'Filed through the same command as entering it by hand', 'ok');
         await draw();
       } catch (error) {

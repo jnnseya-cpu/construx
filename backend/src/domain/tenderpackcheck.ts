@@ -1,6 +1,7 @@
+import { expertBriefing } from '../ai/expertise.ts';
 import { DomainError } from '../core/errors.ts';
 import { authorise, currentPhase, runAI, type EngineContext } from '../engines/context.ts';
-import { ingestedFiles } from '../evidence/pipeline.ts';
+import { packDocuments } from '../evidence/pipeline.ts';
 
 /**
  * Check a clarification against the tender pack before it is sent.
@@ -62,13 +63,7 @@ export async function checkClarificationAgainstPack(
   // The pack is the ingested documents that yielded text. A drawing's text layer
   // is its title block, so a check runs against the documents that actually say
   // something, and names which they were.
-  const docs = ingestedFiles(ctx)
-    .filter((file) => file.status === 'INGESTED')
-    .map((file) => ({
-      label: file.filename ?? file.classification?.kind ?? file.hash.slice(0, 8),
-      text: String((file.extraction as { text?: unknown } | undefined)?.text ?? '').trim(),
-    }))
-    .filter((doc) => doc.text.length > 0);
+  const docs = packDocuments(ctx);
 
   const documentsSearched = docs.map((doc) => doc.label);
 
@@ -106,7 +101,8 @@ export async function checkClarificationAgainstPack(
     inputRefs: [{ refType: 'Clarification', refId: input.clarificationId }],
     request: {
       task:
-        'You are a bid manager checking, before a tender clarification is sent to the buyer, whether the tender ' +
+        `${expertBriefing('BID_MANAGER')} ` +
+        'You are checking, before a tender clarification is sent to the buyer, whether the tender ' +
         'documents already answer it. Decide only from the documents supplied. If one answers the question, set ' +
         'answered true, name that document and quote the exact passage that answers it. If nothing in the documents ' +
         'answers it, set answered false. Never invent an answer the documents do not contain, and do not treat a ' +
@@ -131,7 +127,7 @@ export async function checkClarificationAgainstPack(
       message:
         'This deployment is running the local stand-in, which reads nothing. A verdict on whether the pack answers a ' +
         'clarification has to come from a model that actually read the pack — configure a reasoning provider and set ' +
-        'AI_MODE=live, or check the clarification against the documents by hand.',
+        'AI_MODE=production, or check the clarification against the documents by hand.',
     },
     // Advisory: it writes no state. The withdrawal, if any, is a person's act.
     toWrites: (_output, confidence) => {

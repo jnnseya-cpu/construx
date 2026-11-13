@@ -99,6 +99,11 @@ let sharedState: SharedLockoutState = { backend: 'process', fallbacks: 0, roundT
 
 /** Attach the backend every replica shares. Undefined detaches; the map is then the whole truth again. */
 export function attachShared(backend: SharedLockouts | undefined): void {
+  // The backend being replaced is closed, not just forgotten. A dropped
+  // backend kept its socket open, and an open socket keeps the process alive:
+  // against an external Redis the lockout suite passed and then never exited,
+  // and CI was cancelled at its time limit on every run.
+  if (shared && shared !== backend) shared.close();
   shared = backend;
   sharedState = backend ? { backend: 'redis', host: backend.host, fallbacks: 0, roundTrips: 0 } : { backend: 'process', fallbacks: 0, roundTrips: 0 };
 }

@@ -318,6 +318,15 @@ export function createProject(
     portfolioId: string;
     programmeId?: string;
     name: string;
+    /**
+     * The client this project is for, where there is one — so one client can
+     * carry many projects under its name. A plain label rather than a separate
+     * entity: the firm types it, or picks a client it has used before, and the
+     * platform groups by the exact string. Optional, because an internal or
+     * speculative project has no external client, and trimmed so " Acme " and
+     * "Acme" are the same client rather than two.
+     */
+    client?: string;
     sectorType: SectorType;
     assetType: string;
     location: { continentCode: string; countryCode: string; city: string; coordinates?: { lat: number; lng: number } };
@@ -435,6 +444,9 @@ export function createProject(
       portfolioId: input.portfolioId,
       programmeId: input.programmeId,
       name: input.name,
+      // Only set when given and non-empty, so a project with no client keeps the
+      // shape it always had (no `client` key) rather than carrying an empty one.
+      ...(input.client && input.client.trim() !== '' ? { client: input.client.trim() } : {}),
       sectorType: input.sectorType,
       assetType: input.assetType,
       location: input.location,
@@ -1766,6 +1778,26 @@ export function liveProjects(ledger: EngineContext['ledger'], tenantId: string):
   return ledger.listByTenant(tenantId, 'Project').filter((record) => isLiveProject(record.state));
 }
 
+/**
+ * The clients this tenant has projects for, each with its project count.
+ *
+ * Derived from the projects' own `client` field rather than kept as a second
+ * list, so a client cannot exist that no project is for, and the count cannot
+ * drift from the projects. The create-project form reads this to offer an
+ * existing client, which is what keeps one client from becoming three
+ * near-identical strings nobody can group on.
+ */
+export function clientsOf(ledger: EngineContext['ledger'], tenantId: string): Array<{ name: string; projects: number }> {
+  const counts = new Map<string, number>();
+  for (const record of liveProjects(ledger, tenantId)) {
+    const client = (record.state as { client?: string }).client?.trim();
+    if (client) counts.set(client, (counts.get(client) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([name, projects]) => ({ name, projects }))
+    .sort((a, b) => b.projects - a.projects || a.name.localeCompare(b.name));
+}
+
 /** The portfolios that have not been deleted. */
 export function livePortfolios(ledger: EngineContext['ledger'], tenantId: string): ReturnType<EngineContext['ledger']['listByTenant']> {
   return ledger.listByTenant(tenantId, 'Portfolio').filter((record) => record.state.status !== 'DELETED');
@@ -1820,6 +1852,12 @@ export function amendProject(
   input: {
     reason: string;
     name?: string;
+    /**
+     * The client this project is for. A correction, so existing projects
+     * recorded before the field existed can be put under their client and group
+     * with the others. An empty string clears it; absent leaves it unchanged.
+     */
+    client?: string;
     assetType?: string;
     sectorType?: SectorType;
     contractValueMinor?: number;
@@ -1879,6 +1917,9 @@ export function amendProject(
   }
 
   move('name', input.name?.trim());
+  // A trimmed client, or an empty string to clear it. `move` records the
+  // from/to and skips a no-op, so re-setting the same client changes nothing.
+  if (input.client !== undefined) move('client', input.client.trim() === '' ? '' : input.client.trim());
   move('assetType', input.assetType?.trim());
   move('sectorType', input.sectorType);
   move('contractValueMinor', input.contractValueMinor);

@@ -548,9 +548,31 @@ export function extractRequirements(
     references.add(deliverable.reference);
   }
 
+  // A re-read refreshes the buyer's side of each return — its title, whether it
+  // is mandatory, any stated format. It must NOT un-assign what a person already
+  // owned: the owner, our internal date and the source are the bidder's
+  // resourcing decisions, they are never in the buyer's document, and a fresh
+  // reading carries none of them. Replacing the array wholesale wiped every
+  // assignment a bidder had made, which read on the guide and the gate as
+  // "nothing is assigned" on a register the bidder had already owned in full.
+  // So the bidder-side fields are carried across by reference.
+  const priorByRef = new Map(
+    ((record.state.deliverables as TenderDeliverable[] | undefined) ?? []).map((d) => [d.reference, d] as const),
+  );
+  const deliverables = input.deliverables.map((incoming) => {
+    const prior = priorByRef.get(incoming.reference);
+    if (!prior) return incoming;
+    return {
+      ...incoming,
+      ...(prior.owner ? { owner: prior.owner } : {}),
+      ...(prior.internalDueBy ? { internalDueBy: prior.internalDueBy } : {}),
+      ...(prior.source ? { source: prior.source } : {}),
+    };
+  });
+
   const returnDeadline = deadlineInForce(record.state);
   const conflicts: Clarification[] = [];
-  for (const deliverable of input.deliverables) {
+  for (const deliverable of deliverables) {
     if (deliverable.internalDueBy && `${deliverable.internalDueBy}T00:00:00Z` > returnDeadline.instant) {
       conflicts.push({
         severity: 'CRITICAL',
@@ -566,7 +588,7 @@ export function extractRequirements(
     entity: { refType: 'TenderInvitation', refId: invitationId },
     nextState: {
       ...record.state,
-      deliverables: input.deliverables,
+      deliverables,
       // Kept when the register is filed ahead of the analysis, rather than
       // overwritten with undefined — a later analysis links itself, and a
       // re-filed register must not unlink one already there.
@@ -582,7 +604,35 @@ export function extractRequirements(
     },
   });
 
-  return { deliverables: input.deliverables.length, blockers: deliverableBlockers(input.deliverables) };
+  return { deliverables: deliverables.length, blockers: deliverableBlockers(deliverables) };
+}
+
+/**
+ * Point a tender at its compliance matrix without touching the return register.
+ *
+ * `extractRequirements` binds the matrix *and* files the deliverables, and
+ * refuses an empty register — which is right when a reading found return items.
+ * But a reading can legitimately find requirements and no deliverables (a
+ * questionnaire, a social-value appendix), and that reading still produces part
+ * of the tender's one matrix. This binds the analysis so the next reading can
+ * merge into it, and leaves the deliverables exactly as they were.
+ */
+export function bindAnalysis(ctx: EngineContext, invitationId: string, analysisId: string): void {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireInvitation(ctx, invitationId);
+  write(ctx, {
+    projectId: record.projectId,
+    eventType: 'TENDER_REQUIREMENTS_EXTRACTED',
+    entity: { refType: 'TenderInvitation', refId: invitationId },
+    nextState: {
+      ...record.state,
+      analysisId,
+      requirementsExtracted: true,
+      extractedAt: new Date().toISOString(),
+      extractedBy: ctx.auth.actorId,
+    },
+  });
 }
 
 /**
@@ -739,6 +789,117 @@ export function assignDeliverable(
 }
 
 /**
+ * Fill the three things a mandatory return needs — an owner, our internal date
+ * and a source in the invitation — across every return still missing one, in a
+ * single act.
+ *
+ * For a one-director business, assigning seventeen returns one modal at a time
+ * is the busywork that turns "frictionless for busy people" into a lie. This
+ * fills only what is *missing* on each mandatory, still-blocking return, so a
+ * deliverable somebody deliberately gave a different owner or date is left
+ * exactly as it was. The source defaults to the invitation itself: these returns
+ * were read *out of* the invitation, so "where in the invitation it comes from"
+ * is the invitation — a bidder should never have to invent that.
+ */
+export function assignDeliverablesBulk(
+  ctx: EngineContext,
+  invitationId: string,
+  input: { owner?: Role; internalDueBy?: string; source?: SourceAnchor },
+): { assigned: number; blockers: string[] } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireInvitation(ctx, invitationId);
+  const existing = (record.state.deliverables as TenderDeliverable[] | undefined) ?? [];
+  if (existing.length === 0) {
+    throw new DomainError(
+      'NO_DELIVERABLES',
+      'Nothing is recorded about what the submission has to contain yet — read the invitation or add the return items first.',
+    );
+  }
+
+  // The source a return was read from is the invitation. Where the caller gives
+  // one, use it; otherwise name the invitation by its own reference, so the
+  // "source" that was never anybody's to invent is filled from what is known.
+  const defaultSource: SourceAnchor =
+    input.source ?? { document: `Invitation to tender ${String(record.state.reference ?? '')}`.trim() };
+
+  const returnDeadline = deadlineInForce(record.state);
+  const clarifications = [...((record.state.clarifications as Clarification[] | undefined) ?? [])];
+
+  let assigned = 0;
+  const deliverables = existing.map((deliverable) => {
+    // Only mandatory returns still missing one of the three. An optional return,
+    // or a mandatory one already complete, is left exactly as it is.
+    if (!deliverable.mandatory) return deliverable;
+    const needsOwner = !deliverable.owner;
+    const needsDate = !deliverable.internalDueBy;
+    const needsSource = !deliverable.source;
+    if (!needsOwner && !needsDate && !needsSource) return deliverable;
+
+    const next: TenderDeliverable = {
+      ...deliverable,
+      ...(needsOwner && input.owner ? { owner: input.owner } : {}),
+      ...(needsDate && input.internalDueBy ? { internalDueBy: input.internalDueBy } : {}),
+      ...(needsSource ? { source: defaultSource } : {}),
+    };
+    // Only count it as assigned where something actually changed — a return that
+    // needed an owner but none was supplied is not cleared by a no-op.
+    if (next !== deliverable && JSON.stringify(next) !== JSON.stringify(deliverable)) assigned += 1;
+
+    if (next.internalDueBy && `${next.internalDueBy}T00:00:00Z` > returnDeadline.instant) {
+      clarifications.push({
+        severity: 'CRITICAL',
+        subject: `${next.reference} is due after the return`,
+        question: `${next.title} carries an internal date of ${next.internalDueBy}, which is after the return deadline of ${readable(returnDeadline.local)}. The internal date has to move.`,
+      });
+    }
+    return next;
+  });
+
+  // The bulk door promises to clear *every* blocking return, so it must either
+  // do that or say why it could not — never write a half-assignment and report
+  // a success. The source always fills (it defaults to the invitation) and the
+  // owner usually defaults to the director, so a run that supplies no internal
+  // date would otherwise write owner+source, count them as "assigned", and
+  // leave all of them still blocking on the date they never got — the gate
+  // stuck at the same number with nothing explaining it. Refuse before writing,
+  // naming exactly what is still missing, so one more run with it set clears
+  // the lot. Checked before NOTHING_TO_ASSIGN, which only means "already
+  // complete" when nothing is still blocking.
+  const stillBlocking = deliverables.filter(
+    (d) => d.mandatory && (!d.owner || !d.internalDueBy || !d.source),
+  );
+  if (stillBlocking.length > 0) {
+    const missing: string[] = [];
+    if (stillBlocking.some((d) => !d.owner)) missing.push('an owner');
+    if (stillBlocking.some((d) => !d.internalDueBy)) missing.push('our internal date');
+    if (stillBlocking.some((d) => !d.source)) missing.push('a source');
+    throw new DomainError(
+      'BULK_ASSIGN_INCOMPLETE',
+      `${stillBlocking.length} mandatory ${stillBlocking.length === 1 ? 'return is' : 'returns are'} still missing ` +
+        `${missing.join(' and ')}. Set ${missing.length === 1 ? 'it' : 'them'} for all of them above and run this again — ` +
+        'the owner defaults to you and the source fills itself from the invitation, so the internal date is usually the one to add.',
+    );
+  }
+
+  if (assigned === 0) {
+    throw new DomainError(
+      'NOTHING_TO_ASSIGN',
+      'Every mandatory return already has an owner, an internal date and a source. There is nothing to fill.',
+    );
+  }
+
+  write(ctx, {
+    projectId: record.projectId,
+    eventType: 'TENDER_DELIVERABLE_ASSIGNED',
+    entity: { refType: 'TenderInvitation', refId: invitationId },
+    nextState: { ...record.state, deliverables, clarifications },
+  });
+
+  return { assigned, blockers: deliverableBlockers(deliverables) };
+}
+
+/**
  * `AC-T-WF-01-01`, stated as the list of reasons a bid cannot yet be approved.
  *
  * Source, owner and internal date, on every **mandatory** deliverable. Not on
@@ -882,7 +1043,24 @@ export function deadlineInForce(state: Record<string, unknown>): ZonedInstant {
 export type BidApprovalPosition = {
   invitationId?: string;
   reference?: string;
+  /**
+   * Everything standing between the opportunity and a submission that can go
+   * out — the invitation being read *and* every mandatory return having an
+   * owner, a date and a source. Kept whole for the guide and the submission
+   * gate, which care about all of it.
+   */
   blockers: string[];
+  /**
+   * Whether anybody has recorded what the submission has to contain. This is
+   * the only part of `blockers` that gates the *decision* to bid: you commit to
+   * a tender from its score and what it asks for, then plan who produces each
+   * return. Assigning owners and internal dates is that planning, and gating
+   * the go/no-go behind it put production admin in front of a commercial
+   * decision — the thing a bid manager does first.
+   */
+  invitationRead: boolean;
+  /** Just the return-assignment half of `blockers`: owner, date or source missing. */
+  deliverableBlockers: string[];
   /** Set when an addendum has landed since the last bid decision. */
   reReviewReasons: string[];
 };
@@ -933,14 +1111,15 @@ function decidedAfterLastAddendum(
 
 export function bidApprovalPosition(ctx: EngineContext, opportunityId: string): BidApprovalPosition {
   const opportunity = ctx.ledger.get({ refType: 'Opportunity', refId: opportunityId });
-  if (!opportunity) return { blockers: [], reReviewReasons: [] };
+  if (!opportunity) return { blockers: [], invitationRead: false, deliverableBlockers: [], reReviewReasons: [] };
 
   const invitation = ctx.ledger
     .list(opportunity.projectId, 'TenderInvitation')
     .find((r) => r.state.opportunityId === opportunityId);
-  if (!invitation) return { blockers: [], reReviewReasons: [] };
+  if (!invitation) return { blockers: [], invitationRead: false, deliverableBlockers: [], reReviewReasons: [] };
 
   const blockers: string[] = [];
+  const invitationRead = invitation.state.requirementsExtracted === true;
   if (!invitation.state.requirementsExtracted) {
     /*
      * Named the remedy as well as the fault.
@@ -961,7 +1140,8 @@ export function bidApprovalPosition(ctx: EngineContext, opportunityId: string): 
         'invitation with AI to file the whole register and a compliance matrix at once.',
     );
   }
-  blockers.push(...deliverableBlockers((invitation.state.deliverables as TenderDeliverable[] | undefined) ?? []));
+  const returnBlockers = deliverableBlockers((invitation.state.deliverables as TenderDeliverable[] | undefined) ?? []);
+  blockers.push(...returnBlockers);
 
   const addenda = (invitation.state.addenda as Addendum[] | undefined) ?? [];
   const material = addenda.filter((a) => a.reReviewReasons.length > 0);
@@ -974,6 +1154,8 @@ export function bidApprovalPosition(ctx: EngineContext, opportunityId: string): 
     invitationId: String(invitation.state.id),
     reference: String(invitation.state.reference),
     blockers,
+    invitationRead,
+    deliverableBlockers: returnBlockers,
     reReviewReasons,
   };
 }
@@ -1015,6 +1197,11 @@ export type BidMilestone = {
   businessDays: number;
   /** True where the stage was held at its floor because the window was tight. */
   atMinimum: boolean;
+  /**
+   * True on a compressed programme where the stage has fewer days than its
+   * normal minimum — zero meaning it runs on the same day as the stage before.
+   */
+  belowMinimum?: boolean;
 };
 
 export type BidWorkPackage = {
@@ -1033,6 +1220,12 @@ export type BidProgramme = {
   milestones: BidMilestone[];
   workPackages: BidWorkPackage[];
   fixedDates: Array<{ label: string; date: string }>;
+  /**
+   * Present where the window was shorter than the spine's minimum and a person
+   * chose to build it anyway: who, when, why, and against what. Never set
+   * silently — the programme is refused unless somebody asks for this.
+   */
+  compression?: { reason: string; normalMinimumDays: number; acceptedBy: string; acceptedAt: string };
 };
 
 /**
@@ -1075,6 +1268,28 @@ function allocate(available: number): number[] {
 }
 
 /**
+ * The days of a window shorter than the spine's minimum, shared in proportion.
+ *
+ * Only reached when a person has asked for it, with a reason. Each stage gets
+ * its weight's share of the days that exist, rounded down, and what the
+ * rounding leaves goes to the stages that lost most to it. A stage with nothing
+ * left runs on the same day as the one before — which is what a five-day tender
+ * is, and the programme says so on the stage rather than pretending otherwise.
+ */
+function allocateCompressed(available: number): number[] {
+  const exact = BID_SPINE.map((stage) => stage.weight * available);
+  const days = exact.map((value) => Math.floor(value));
+  let remaining = available - days.reduce((sum, d) => sum + d, 0);
+  const byLoss = exact.map((value, index) => ({ index, loss: value - Math.floor(value) })).sort((a, b) => b.loss - a.loss);
+  for (const { index } of byLoss) {
+    if (remaining <= 0) break;
+    days[index]! += 1;
+    remaining -= 1;
+  }
+  return days;
+}
+
+/**
  * Build the tender programme and the bid work packages.
  *
  * Refused for anything not decided as a bid — `AC-T-WF-01-03` says a no-bid
@@ -1084,7 +1299,7 @@ function allocate(available: number): number[] {
 export function generateBidProgramme(
   ctx: EngineContext,
   invitationId: string,
-  options: { from?: string; calendar?: BusinessCalendar } = {},
+  options: { from?: string; calendar?: BusinessCalendar; compression?: { reason: string } } = {},
 ): BidProgramme {
   authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
 
@@ -1115,15 +1330,25 @@ export function generateBidProgramme(
   const from = (options.from ?? new Date().toISOString()).slice(0, 10);
 
   const available = businessDaysBetween(from, submissionDay, calendar);
-  if (available < BID_SPINE_MINIMUM_DAYS) {
+  const reason = options.compression?.reason?.trim() ?? '';
+  const compressed = available < BID_SPINE_MINIMUM_DAYS;
+  if (compressed && available < 1) {
+    throw new DomainError(
+      'TENDER_WINDOW_CLOSED',
+      `No working day remains before ${submissionDay}. There is nothing to programme — submit what is ready, or ask the buyer for an extension.`,
+    );
+  }
+  if (compressed && reason === '') {
     throw new DomainError(
       'TENDER_WINDOW_TOO_SHORT',
       `${available} business day${available === 1 ? '' : 's'} remain to ${submissionDay}, and the tender spine needs ${BID_SPINE_MINIMUM_DAYS}. ` +
-        'Ask the buyer for an extension, or record the decision to bid on a compressed programme knowingly — the platform will not compress it silently.',
+        'Ask the buyer for an extension, or build it compressed — tick "Build it compressed" and say why. Every stage then gets less than its ' +
+        'normal minimum and the programme says so on each one. The platform will not compress it silently into a timetable that reads as ' +
+        'achievable and is not; and the bid itself (matrix, returns, response pack, pricing) is not held up by it either way.',
     );
   }
 
-  const days = allocate(available);
+  const days = compressed ? allocateCompressed(available) : allocate(available);
   const milestones: BidMilestone[] = [];
   let cursor = from;
   for (let i = 0; i < BID_SPINE.length; i++) {
@@ -1136,6 +1361,7 @@ export function generateBidProgramme(
       finish,
       businessDays: days[i]!,
       atMinimum: days[i] === stageDef.minDays,
+      ...(compressed ? { belowMinimum: days[i]! < stageDef.minDays } : {}),
     });
     cursor = finish;
   }
@@ -1157,6 +1383,9 @@ export function generateBidProgramme(
     milestones,
     workPackages,
     fixedDates,
+    ...(compressed
+      ? { compression: { reason, normalMinimumDays: BID_SPINE_MINIMUM_DAYS, acceptedBy: ctx.auth.actorId, acceptedAt: new Date().toISOString() } }
+      : {}),
   };
 
   write(ctx, {
@@ -1289,6 +1518,12 @@ export type TenderPosition = {
   reReviewReasons: string[];
   clarifications: Clarification[];
   programmeId?: string;
+  /**
+   * The bid programme's stages, so the board can show them. Only its id was
+   * published, and no screen read the stages at all — a programme could be
+   * built and then never seen.
+   */
+  programme?: Pick<BidProgramme, 'submissionDay' | 'availableBusinessDays' | 'milestones' | 'compression'>;
 };
 
 export function tenderPosition(
@@ -1325,9 +1560,11 @@ function readPosition(
   const deliveryProjectId =
     (opportunity?.state.projectId as string | undefined) ?? (opportunity?.state.convertedProjectId as string | undefined);
 
+  // The latest: a programme built again replaces the earlier one on the board.
   const programme = ctx.ledger
     .list(record.projectId, 'BidProgramme')
-    .find((r) => r.state.invitationId === record.state.id);
+    .filter((r) => r.state.invitationId === record.state.id)
+    .at(-1);
 
   return {
     invitationId: String(record.state.id),
@@ -1355,6 +1592,16 @@ function readPosition(
     reReviewReasons: position.reReviewReasons,
     clarifications: (record.state.clarifications as Clarification[] | undefined) ?? [],
     programmeId: programme ? String(programme.state.programmeId) : undefined,
+    ...(programme
+      ? {
+          programme: {
+            submissionDay: String(programme.state.submissionDay),
+            availableBusinessDays: Number(programme.state.availableBusinessDays),
+            milestones: (programme.state.milestones as BidMilestone[] | undefined) ?? [],
+            ...(programme.state.compression ? { compression: programme.state.compression as NonNullable<BidProgramme['compression']> } : {}),
+          },
+        }
+      : {}),
   };
 }
 

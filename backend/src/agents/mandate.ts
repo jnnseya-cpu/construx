@@ -274,6 +274,75 @@ export function envelopeRegister(ctx: EngineContext, today?: string): Array<ActE
 }
 
 /**
+ * A per-project ceiling on the TOTAL value of unattended acts — across every agent and
+ * every envelope in the project (spec §1 A2 "per-project ... cumulative budget").
+ *
+ * An envelope's `valueCeilingMinor` caps a single act; this caps the running total, which
+ * the per-act ceiling cannot. A fleet of agents, each acting under its own ceiling, could
+ * still commit far more in aggregate than anybody intended — a hundred acts each a pound
+ * under the ceiling is a large number nobody decided. This is the aggregate answer: once
+ * the project's committed autonomous value would pass the budget, unattended acts are
+ * refused and fall back to a proposal a person decides. Absent means no aggregate cap — the
+ * position before this existed — so it is purely additive.
+ */
+export type ActBudget = {
+  projectId: string;
+  cumulativeBudgetMinor: number;
+  setBy: string;
+  setAt: string;
+  note: string;
+};
+
+/**
+ * Set (or change) the project's cumulative autonomous-act budget. Governance over the
+ * enterprise, exactly like granting an envelope — deciding how much a fleet may commit
+ * unattended in aggregate is the same class of decision as deciding it may act at all.
+ */
+export function setActBudget(ctx: EngineContext, input: { cumulativeBudgetMinor: number; note: string }): ActBudget {
+  authorise(ctx, 'ENTERPRISE_STRUCTURE', 'G');
+  if (!Number.isInteger(input.cumulativeBudgetMinor) || input.cumulativeBudgetMinor < 0) {
+    throw new DomainError('ACT_BUDGET_INVALID', 'A cumulative budget is a whole number of minor units, zero or more.');
+  }
+  if (input.note.trim().length < 8) {
+    throw new DomainError('ACT_BUDGET_REASON_REQUIRED', 'Say why this project caps the aggregate value of unattended acts where it does.');
+  }
+  const existing = ctx.ledger.get({ refType: 'AgentActBudget', refId: ctx.projectId });
+  const state: ActBudget = {
+    projectId: ctx.projectId,
+    cumulativeBudgetMinor: input.cumulativeBudgetMinor,
+    setBy: ctx.auth.actorId,
+    setAt: new Date().toISOString(),
+    note: input.note.trim(),
+  };
+  write(ctx, {
+    eventType: existing ? 'AGENT_ACT_BUDGET_CHANGED' : 'AGENT_ACT_BUDGET_SET',
+    entity: { refType: 'AgentActBudget', refId: ctx.projectId },
+    nextState: state as unknown as Record<string, unknown>,
+  });
+  return state;
+}
+
+/** The project's cumulative autonomous-act budget, or undefined when none is set. */
+export function actBudget(ctx: EngineContext): ActBudget | undefined {
+  const rec = ctx.ledger.get({ refType: 'AgentActBudget', refId: ctx.projectId });
+  return rec && rec.tenantId === ctx.tenantId ? (rec.state as unknown as ActBudget) : undefined;
+}
+
+/**
+ * The total value of unattended acts already executed in this project, across every
+ * envelope — the running total the budget is checked against. Only acts carried out under
+ * an envelope (an `envelopeId` on the record) count: an attended, human-approved execution
+ * is not an unattended commitment and is not what this budget governs.
+ */
+export function projectAutonomousSpend(ctx: EngineContext): number {
+  return ctx.ledger
+    .list(ctx.projectId, 'AgentProposal')
+    .map((r) => r.state as { status?: string; envelopeId?: string; command?: { valueMinor?: number } })
+    .filter((p) => p.status === 'EXECUTED' && p.envelopeId !== undefined && typeof p.command?.valueMinor === 'number')
+    .reduce((sum, p) => sum + (p.command!.valueMinor ?? 0), 0);
+}
+
+/**
  * Refuse a command the event catalogue has closed to machines.
  *
  * The catalogue is the boundary and `commit()` is where it bites — an AI actor
@@ -415,6 +484,22 @@ export function mayActUnattended(
       permitted: false,
       because: `This act is worth ${value} minor units and the grant stops at ${envelope.valueCeilingMinor}.`,
     };
+  }
+
+  // The aggregate ceiling, across every envelope in the project. The per-act check above
+  // cannot see the running total; this does, so a fleet cannot inch past a project's
+  // cumulative budget one in-ceiling act at a time (spec §1 A2).
+  const budget = actBudget(ctx);
+  if (budget) {
+    const spent = projectAutonomousSpend(ctx);
+    if (spent + value > budget.cumulativeBudgetMinor) {
+      return {
+        permitted: false,
+        because:
+          `Unattended acts in this project total ${spent} minor units; this act of ${value} would pass the project's ` +
+          `cumulative budget of ${budget.cumulativeBudgetMinor}. It falls back to a proposal for a person to decide.`,
+      };
+    }
   }
 
   try {

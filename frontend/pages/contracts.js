@@ -34,13 +34,17 @@ export async function contracts(root) {
   // Contractual correspondence, and the matrix that governs it. The matrix is
   // fetched rather than restated here: who a letter must be served on is a rule,
   // and the interface holds no rule the API does not publish.
-  const [letters, matrix, commitments] = await Promise.all([
+  const [letters, matrix, commitments, dispatches] = await Promise.all([
     api.get(`/v1/projects/${projectId}/correspondence/position`).catch(() => null),
     api.get('/v1/correspondence/matrix').catch(() => ({ types: [] })),
     // The dates the letters contain, which the obligation calendar does not
     // hold: the calendar is what the contract says, and these are what the
     // parties said afterwards.
     api.read(`/v1/projects/${projectId}/commitments`, 'CONTRACTS_CLAIMS', 'LEGAL_L4').catch(() => null),
+    // The transmission record of outbound notices — whether each actually reached
+    // its recipient, and which are stuck at an unknown outcome that must be
+    // reconciled (never blindly retried) before it is sent again.
+    api.get(`/v1/projects/${projectId}/dispatches`).catch(() => ({ dispatches: [] })),
   ]);
   const evidenceHeld = await api
     .get(`/v1/projects/${projectId}/evidence`)
@@ -249,6 +253,33 @@ export async function contracts(root) {
                   entry.clause ? `${entry.clause.suite} ${entry.clause.clause}` : '—',
                 ]),
                 empty: 'Every letter has been answered',
+              })}
+            </div>`
+      }
+
+      ${
+        (dispatches?.dispatches ?? []).length === 0
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <div style="padding:15px 17px 0">
+                <h2>Outbound dispatches</h2>
+                <p class="metric-sub" style="margin-bottom:12px">
+                  Whether a served notice actually reached its recipient. A send that timed out sits at an
+                  <b>unknown outcome</b> and is never blindly retried — it is reconciled against a verified receipt (it
+                  arrived) or confirmed not delivered (sent afresh) first, so a notice is never served twice by accident.
+                </p>
+              </div>
+              ${table({
+                headers: ['Key', 'Kind', 'Recipient', 'State', 'Attempts', 'Receipt'],
+                rows: (dispatches.dispatches ?? []).map((d) => [
+                  d.dispatchKey,
+                  d.kind,
+                  d.recipient,
+                  badge(d.state.replace(/_/g, ' '), d.state === 'RECEIPT_VERIFIED' ? 'ok' : d.state === 'UNKNOWN_OUTCOME' ? 'warn' : d.state === 'REJECTED' ? 'bad' : 'neutral'),
+                  String(d.attempts),
+                  d.receiptRef ?? '—',
+                ]),
+                empty: 'No outbound dispatches recorded.',
               })}
             </div>`
       }

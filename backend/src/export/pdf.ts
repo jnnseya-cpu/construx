@@ -79,6 +79,19 @@ const WIN_ANSI: Record<string, number> = {
   '°': 0xb0,
   '©': 0xa9,
   '®': 0xae,
+  // Unicode punctuation a language model routinely emits that WinAnsi has no
+  // code for — without these they printed as a literal "?" ("sub‑criterion"
+  // became "sub?criterion"), which reads as a text error in a document going to
+  // a buyer. Mapped to the nearest glyph the font does carry.
+  '‐': 0x2d, // hyphen → '-'
+  '‑': 0x2d, // non-breaking hyphen → '-'
+  '‒': 0x96, // figure dash → en dash
+  '―': 0x97, // horizontal bar → em dash
+  '−': 0x2d, // minus sign → '-'
+  ' ': 0x20, // non-breaking space → space
+  ' ': 0x20, // narrow no-break space → space
+  ' ': 0x20, // figure space → space
+  ' ': 0x20, // thin space → space
 };
 
 /** One byte per character, in the encoding the fonts are declared with. */
@@ -439,13 +452,21 @@ function renderBlock(
     case 'KEY_VALUES': {
       const labelWidth = 170;
       for (const row of block.rows) {
+        // Both columns wrap within their own width, so a label longer than the
+        // column (a quotation's "Not included — …") wraps down its own side
+        // instead of overrunning into the value and printing one on top of the
+        // other. The row is as tall as the taller of the two columns.
+        const labelLines = wrap(row.label, 'Helvetica', 10, labelWidth - 10);
         const valueLines = wrap(row.value, 'Helvetica', 10, CONTENT_WIDTH - labelWidth - 10);
-        sheet.reserve(valueLines.length * 13 + 4);
-        sheet.text(row.label, { size: 10, colour: [0.42, 0.42, 0.45] });
-        valueLines.forEach((line, index) => {
-          if (index > 0) sheet.advance(13);
-          sheet.text(line, { size: 10, x: MARGIN.left + labelWidth });
-        });
+        const height = Math.max(labelLines.length, valueLines.length);
+        sheet.reserve(height * 13 + 4);
+        for (let line = 0; line < height; line += 1) {
+          if (line > 0) sheet.advance(13);
+          const labelLine = labelLines[line];
+          const valueLine = valueLines[line];
+          if (labelLine) sheet.text(labelLine, { size: 10, colour: [0.42, 0.42, 0.45] });
+          if (valueLine) sheet.text(valueLine, { size: 10, x: MARGIN.left + labelWidth });
+        }
         sheet.advance(15);
       }
       sheet.advance(6);
@@ -479,6 +500,11 @@ function renderBlock(
 
     case 'DRAWING': {
       renderDrawing(sheet, block, accent);
+      return;
+    }
+
+    case 'GANTT': {
+      renderGantt(sheet, block, accent);
       return;
     }
 
@@ -733,6 +759,112 @@ function niceBarLength(widthMetres: number): number {
   return magnitude * 10;
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * A programme as a bar chart: the activity on the left, a bar on a timeline of
+ * weeks to the right, the critical path in the document's accent colour.
+ *
+ * Every label wraps rather than being cut — a bar chart whose activity names end
+ * in "…" is a chart nobody can check against the method statement. The week
+ * header is repeated after a page break, as a table's is.
+ */
+function renderGantt(sheet: Sheet, block: Extract<DocumentBlock, { kind: 'GANTT' }>, accent: [number, number, number]): void {
+  if (block.rows.length === 0) return;
+  const LABEL = 175;
+  const left = MARGIN.left + LABEL;
+  const width = CONTENT_WIDTH - LABEL;
+  const day = (iso: string): number => Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / 86_400_000;
+  const from = day(block.from);
+  const span = Math.max(1, day(block.to) - from + 1);
+  const perDay = width / span;
+  const xOf = (iso: string): number => left + Math.min(span, Math.max(0, day(iso) - from)) * perDay;
+  const GREY: [number, number, number] = [0.42, 0.42, 0.45];
+  const NONCRITICAL: [number, number, number] = [0.36, 0.42, 0.48];
+  const RISK: [number, number, number] = [0.72, 0.72, 0.75];
+  const GRID: [number, number, number] = [0.9, 0.9, 0.92];
+
+  // The Mondays on the timeline, labelled as often as the width allows.
+  const start = new Date(block.from.slice(0, 10) + 'T00:00:00Z');
+  const firstMonday = (8 - start.getUTCDay()) % 7;
+  const mondays: number[] = [];
+  for (let offset = firstMonday; offset < span; offset += 7) mondays.push(offset);
+  const every = Math.max(1, Math.ceil((mondays.length * 24) / width));
+  const labelOf = (offset: number): string => {
+    const at = new Date((from + offset) * 86_400_000);
+    return `${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]}`;
+  };
+
+  sheet.reserve(40);
+  sheet.advance(8);
+  sheet.text(block.caption, { font: 'Helvetica-Bold', size: 10 });
+  sheet.advance(16);
+
+  const drawHeader = (): void => {
+    sheet.reserve(18);
+    sheet.fill(MARGIN.left, sheet.y - 5, CONTENT_WIDTH, 15, [0.95, 0.95, 0.96]);
+    sheet.text('Activity', { font: 'Helvetica-Bold', size: 7.5, x: MARGIN.left + 4, colour: [0.25, 0.25, 0.28] });
+    mondays.forEach((offset, index) => {
+      if (index % every === 0) sheet.text(labelOf(offset), { size: 6.5, x: left + offset * perDay + 1, colour: GREY });
+    });
+    sheet.advance(14);
+  };
+  drawHeader();
+
+  for (const row of block.rows) {
+    const lines = wrap(row.label, 'Helvetica', 7.5, LABEL - 8);
+    const height = lines.length * 9 + 5;
+    const before = sheet.y;
+    sheet.reserve(height);
+    if (sheet.y > before) drawHeader();
+
+    // Week lines first, so the bar sits over them.
+    const top = sheet.y + 8;
+    const bottom = sheet.y - (lines.length - 1) * 9 - 4;
+    for (const offset of mondays) sheet.fill(left + offset * perDay, bottom, 0.3, top - bottom, GRID);
+
+    lines.forEach((line, index) => {
+      sheet.advance(index === 0 ? 0 : 9);
+      sheet.text(line, { size: 7.5, x: MARGIN.left + 4, colour: row.critical ? [0.1, 0.1, 0.1] : [0.2, 0.2, 0.22] });
+    });
+    sheet.advance(-(lines.length - 1) * 9);
+
+    // The allowance is shown as an allowance even though it sits on the critical
+    // path — that is where an allowance belongs, and drawing it as critical work
+    // would hide the one bar a buyer asked to see.
+    const colour = row.riskAllowance ? RISK : row.critical ? accent : NONCRITICAL;
+    if (row.milestone) {
+      const x = xOf(row.start);
+      sheet.fill(x - 3, sheet.y - 1, 6, 6, colour);
+      sheet.text(labelOf(day(row.start) - from), { size: 6.5, x: x + 5, colour: GREY });
+    } else {
+      const x0 = xOf(row.start);
+      const x1 = Math.max(x0 + 1.5, xOf(row.finish) + perDay);
+      sheet.fill(x0, sheet.y - 1, Math.min(x1, left + width) - x0, 6, colour);
+    }
+
+    sheet.advance(height);
+    sheet.rule([0.93, 0.93, 0.94]);
+  }
+
+  // The key, because a colour nobody explained is decoration.
+  sheet.reserve(20);
+  sheet.advance(12);
+  let x = MARGIN.left;
+  for (const [label, colour] of [
+    ['Critical path', accent],
+    ['Other activity', NONCRITICAL],
+    ['Risk allowance', RISK],
+  ] as Array<[string, [number, number, number]]>) {
+    sheet.fill(x, sheet.y - 1, 14, 6, colour);
+    sheet.text(label, { size: 7.5, x: x + 18, colour: GREY });
+    x += 18 + widthOf(label, 'Helvetica', 7.5) + 16;
+  }
+  sheet.fill(x + 4, sheet.y - 1, 6, 6, NONCRITICAL);
+  sheet.text('Milestone', { size: 7.5, x: x + 14, colour: GREY });
+  sheet.advance(14);
+}
+
 function renderTable(sheet: Sheet, block: Extract<DocumentBlock, { kind: 'TABLE' }>, accent: [number, number, number]): void {
   const columns = block.headers.length;
   if (columns === 0) return;
@@ -965,26 +1097,57 @@ export function renderPdf(document: ExportDocument, resolveImage?: ImageResolver
    * eleven.
    */
   const drawCover = (): void => {
-    // A full-bleed band of the client's colour across the top, and the image
-    // inside it where there is one. The band is what makes the page read as
-    // branded when there is no image at all.
-    const BAND = 260;
-    sheet.fill(0, A4.height - BAND, A4.width, BAND, accent);
-
     if (cover) {
-      // Cover the band without distorting: scale to whichever axis needs more,
-      // and let the overflow fall outside the band rather than squashing a
-      // photograph of somebody's building into a different shape.
+      // A real cover image: a full-bleed band carrying it across the top of the
+      // page, the client's colour behind it for the edges the image does not
+      // reach. Scale to whichever axis needs more and let the overflow fall off
+      // the page rather than squashing a photograph of somebody's building into
+      // a different shape.
+      const BAND = 260;
+      sheet.fill(0, A4.height - BAND, A4.width, BAND, accent);
       const scale = Math.max(A4.width / cover.image.width, BAND / cover.image.height);
       const width = cover.image.width * scale;
       const height = cover.image.height * scale;
       sheet.cover(cover.name, width, height, (A4.width - width) / 2, A4.height - BAND - (height - BAND) / 2);
+      sheet.moveTo(A4.height - BAND - 70);
+      sheet.text(document.branding.clientName.toUpperCase(), { font: 'Helvetica-Bold', size: 10, colour: accent });
+      sheet.advance(34);
+    } else {
+      // No cover image. A slab of colour across the top third used to stand in
+      // for one, and on a document with no logo it read as an unfinished
+      // template rather than as something issued. A masthead does the work
+      // instead: a slim brand stripe at the very top, then the issuing party's
+      // mark where one is set and its name set as a wordmark where one is not —
+      // which is what letterhead does, and reads as deliberate on any colour.
+      const STRIPE = 6;
+      sheet.fill(0, A4.height - STRIPE, A4.width, STRIPE, accent);
+
+      sheet.moveTo(A4.height - MARGIN.top - 20);
+      if (logo) {
+        // The one place the mark is the subject rather than a corner
+        // decoration, so it is drawn larger than the running header's and at
+        // the left margin where the eye starts.
+        const COVER_LOGO_HEIGHT = 40;
+        const coverLogoWidth = (logo.width / logo.height) * COVER_LOGO_HEIGHT;
+        sheet.cover('Logo', coverLogoWidth, COVER_LOGO_HEIGHT, MARGIN.left, sheet.y - COVER_LOGO_HEIGHT + 28);
+      } else {
+        sheet.text(documentOrigin(document.branding).toUpperCase(), { font: 'Helvetica-Bold', size: 20, colour: accent });
+      }
+      sheet.advance(22);
+      sheet.rule([0.84, 0.84, 0.87]);
+      sheet.advance(64);
     }
 
-    sheet.moveTo(A4.height - BAND - 70);
-    sheet.text(document.branding.clientName.toUpperCase(), { font: 'Helvetica-Bold', size: 10, colour: accent });
-    sheet.advance(34);
-    sheet.text(document.title, { font: 'Helvetica-Bold', size: 24 });
+    // Wrapped, not a single line. A long title — "Quotation — South Holland
+    // District Council, Single-storey extension & adaptations — 96 Railway Lane
+    // South" — drawn as one line runs straight off the right edge of the page
+    // and the reader never sees the half that matters. It wraps to the content
+    // width and the cursor follows it down.
+    const titleLines = wrap(document.title, 'Helvetica-Bold', 24, CONTENT_WIDTH);
+    titleLines.forEach((line, index) => {
+      if (index > 0) sheet.advance(28);
+      sheet.text(line, { font: 'Helvetica-Bold', size: 24 });
+    });
     if (document.subtitle) {
       sheet.advance(20);
       sheet.text(document.subtitle, { size: 12, colour: [0.35, 0.35, 0.38] });
@@ -1000,8 +1163,8 @@ export function renderPdf(document: ExportDocument, resolveImage?: ImageResolver
       // prepared for. Omitted rather than guessed when it is not set.
       ...(document.branding.issuingEntity ? ([['Issued by', document.branding.issuingEntity]] as Array<[string, string]>) : []),
       ['Audience', document.audience],
-      ['Generated', document.generatedAt.slice(0, 16).replace('T', ' ')],
-      ['Generated by', document.generatedBy],
+      ['Produced', document.generatedAt.slice(0, 16).replace('T', ' ')],
+      ['Produced by', document.generatedByName ?? document.generatedBy],
     ];
     for (const [label, value] of facts) {
       sheet.text(label, { size: 9, colour: [0.45, 0.45, 0.48] });

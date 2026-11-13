@@ -143,7 +143,17 @@ const NAMED_CERTIFICATES: Array<{ label: string; pattern: RegExp }> = [
   { label: 'ISO 50001', pattern: /iso[\s-]?50001/i },
   { label: 'CHAS', pattern: /\bchas\b/i },
   { label: 'SafeContractor', pattern: /safe\s?contractor/i },
-  { label: 'Constructionline', pattern: /constructionline/i },
+  // Constructionline is tiered, and the tier is the whole point: Gold is the
+  // full prequalification a highways framework demands, Silver is not. A
+  // tier-blind match marked a "Constructionline Gold" requirement satisfied by
+  // a held Silver — a false pass on a mandatory bar. So the tiers are distinct,
+  // and the plain entry excludes them so "Constructionline membership" with no
+  // tier named is not answered by a Gold the company does not hold, or the
+  // reverse. Gold listed before the plain entry so it wins where both could read.
+  { label: 'Constructionline Gold', pattern: /constructionline[\s-]*(?:level[\s-]*3[\s-]*)?gold/i },
+  { label: 'Constructionline Silver', pattern: /constructionline[\s-]*(?:level[\s-]*2[\s-]*)?silver/i },
+  { label: 'Constructionline Bronze', pattern: /constructionline[\s-]*(?:level[\s-]*1[\s-]*)?bronze/i },
+  { label: 'Constructionline', pattern: /constructionline(?![\s-]*(?:level[\s-]*\d[\s-]*)?(?:gold|silver|bronze))/i },
   { label: 'SMAS Worksafe', pattern: /\bsmas\b/i },
   { label: 'Acclaim', pattern: /\bacclaim\b/i },
   { label: 'Achilles', pattern: /\bachilles\b|\buvdb\b/i },
@@ -163,6 +173,63 @@ const NAMES_A_CERTIFICATE = new RegExp(NAMED_CERTIFICATES.map((cert) => `(?:${ce
 function certificatesNamedIn(line: { requirement: string; evidenceRequired: string }): Array<{ label: string; pattern: RegExp }> {
   const text = `${line.requirement} ${line.evidenceRequired}`;
   return NAMED_CERTIFICATES.filter((cert) => cert.pattern.test(text));
+}
+
+/**
+ * A compliance undertaking: a requirement answered by a statement, not a
+ * document or a scored answer.
+ *
+ * "Comply with CDM 2015", "the tender remains open 90 days", "submit via
+ * In-Tend" — there is no certificate to file and no mark to win, only a promise
+ * to make. The platform bounced these back as "nothing on file — file the
+ * document", which is work handed to a person for a thing no document answers.
+ * The agent can draft the confirmation; the person confirms it is true.
+ *
+ * The test is deliberately conservative: a line is an undertaking only when it
+ * names no document or credential to evidence (those are gates), carries no
+ * weighting (those are scored questions answered in the submission), and reads
+ * as an obligation to comply. A line that fails any of the three is left exactly
+ * as it was — the safe direction, because a wrongly-drafted confirmation against
+ * a line that actually needed a certificate would hide a real gap.
+ */
+const UNDERTAKING_EVIDENCE =
+  /\b(insurance|certificate|certification|accreditation|accredited|pre-?qualif|polic(?:y|ies)|dbs|evidence of|experience|reference|case stud|track record|turnover|accounts|financial standing|cv|registered with)\b/i;
+const UNDERTAKING_OBLIGATION =
+  /\b(confirm|comply|complies|compliance|adhere|meet|meets|undertake|undertaking|nominate|appoint|remain open|maintain|ensure|sent via|send[^.]*via|submit|provide[^.]*(?:notice|minimum))\b/i;
+
+function draftUndertaking(obligation: string): string {
+  const clean = String(obligation ?? '').replace(/\s+/g, ' ').trim();
+  return `We confirm that, if awarded this contract, we will meet this requirement in full: “${clean}”.`;
+}
+
+/**
+ * Classify one requirement, and where it is an undertaking, draft the
+ * confirmation. A pure function so the matrix read, the confirm command and the
+ * tests all decide it the same way.
+ */
+export function undertakingFor(requirement: {
+  requirement: string;
+  evidenceRequired: string;
+  weightingPercent?: number;
+}): { isUndertaking: boolean; statement: string } {
+  if (requirement.weightingPercent !== undefined) return { isUndertaking: false, statement: '' };
+  const text = `${requirement.requirement} ${requirement.evidenceRequired}`;
+  if (UNDERTAKING_EVIDENCE.test(text)) return { isUndertaking: false, statement: '' };
+  if (!UNDERTAKING_OBLIGATION.test(text)) return { isUndertaking: false, statement: '' };
+  return { isUndertaking: true, statement: draftUndertaking(requirement.evidenceRequired?.trim() || requirement.requirement) };
+}
+
+/** One confirmed undertaking, held on the analysis record. */
+export type UndertakingGiven = {
+  reference: string;
+  requirement: string;
+  statement: string;
+  confirmedBy: string;
+  confirmedAt: string;
+};
+
+function undertakingsOf(record: EntityRecord): UndertakingGiven[] {
+  return ((record.state as Record<string, unknown>).undertakings as UndertakingGiven[] | undefined) ?? [];
 }
 
 /**
@@ -197,8 +264,29 @@ const PROBES: EvidenceProbe[] = [
     // named. A named one is caught by the probe above; this answers the rest
     // from the whole list, which is the right answer to a requirement that asks
     // for any accreditation rather than a particular one.
+    //
+    // It must not fire where the requirement named a specific scheme the probe
+    // above could not satisfy: "Constructionline Gold" when only Silver is held
+    // is a gap, and answering it from the whole accreditation list turns that
+    // gap into a false pass. If a certificate is named, this line is not the
+    // generic case and is left to the named probe's verdict — which, unmatched,
+    // falls to a gap that prompts the check rather than hiding it.
     match: /accreditation|accredited|pre-?qualif/i,
-    find: (p) => (p.accreditations.length > 0 ? `Held: ${p.accreditations.join(', ')}` : null),
+    find: (p, requirement) =>
+      certificatesNamedIn(requirement).length > 0
+        ? null
+        : p.accreditations.length > 0
+          ? `Held: ${p.accreditations.join(', ')}`
+          : null,
+  },
+  {
+    // Enhanced DBS for personnel entering occupied homes — a mandatory
+    // requirement on social-housing and adaptation work. Satisfied by holding
+    // the checks, so it is evidenced here and left out of the drafting queue,
+    // never written as a method statement. Absent (an older profile, or a
+    // business that does not hold them) reads as a gap, not a pass.
+    match: /\bdbs\b|disclosure and barring|enhanced disclosure|basic disclosure|barring service/i,
+    find: (p) => (p.dbs?.held ? `Enhanced DBS checks confirmed in place${p.dbs.detail ? ` — ${p.dbs.detail}` : ''}` : null),
   },
   {
     match: /turnover|accounts|financial standing/i,
@@ -234,6 +322,28 @@ export type MatrixLine = {
   /** Carried from the requirement, so the pack that answers it inherits it. */
   responseLimit?: ResponseLimit;
 };
+
+/**
+ * The status of one requirement against the company's current facts.
+ *
+ * Shared by `analyseITT` (which stores it on the day) and `complianceMatrix`
+ * (which re-derives it on every read), so the two rules cannot drift — and, the
+ * reason this exists, so a line reflects evidence recorded *after* the analysis.
+ * The stored status is the state on the day the ITT was read; the read status is
+ * the state now. Recording an insurance or an accreditation therefore clears its
+ * gap the moment it is saved, instead of staying a gap until somebody re-reads
+ * the whole invitation. Reported on SHDC 000189: four insurances recorded, every
+ * insurance line still "Gap — nothing on file", because the matrix was showing
+ * the status frozen at the 30 Oct analysis.
+ */
+function statusAgainstProfile(
+  profile: CompanyProfile,
+  req: { requirement: string; evidenceRequired: string },
+): { status: MatrixStatus; evidenceHeld?: string } {
+  const probe = PROBES.find((p) => p.match.test(req.requirement) || p.match.test(req.evidenceRequired));
+  const held = probe?.find(profile, req as ITTRequirement) ?? null;
+  return held ? { status: 'SATISFIED', evidenceHeld: held } : { status: probe ? 'GAP' : 'UNKNOWN' };
+}
 
 /**
  * Who owns each kind of requirement.
@@ -325,7 +435,7 @@ export type ITTAnalysis = {
   /** Mandatory requirements with no evidence. These end the bid. */
   mandatoryGaps: MatrixLine[];
   /** How the evaluation is weighted, and whether it adds up. */
-  weightings: { stated: number; declared: Array<{ category: RequirementCategory; percent: number }>; complete: boolean };
+  weightings: { stated: number; declared: Array<{ category: RequirementCategory; percent: number }>; complete: boolean; status: WeightingStatus };
   terms: TermAssessment[];
   /** Terms that are a bar rather than a negotiation. */
   bars: string[];
@@ -365,86 +475,116 @@ function declaredWeightings(
 }
 
 /**
+ * Whether the declared weightings reconcile to a single 100% scheme — read
+ * honestly, because the matrix cannot always tell a top-level weight from a
+ * nested one.
+ *
+ * Weightings are read per requirement line and grouped by category. That cannot
+ * by itself separate a top-level weight ("Quality 30%") from a sub-criterion
+ * weight that is a percentage *of* that block ("approach 30%, of the quality
+ * mark"). A properly nested scheme — a 30% quality block split into seven
+ * sub-criteria that themselves sum to 100% — therefore flattens to well over
+ * 100%. That is not a buyer error, and raising it as one ("your weightings total
+ * 180%") on a well-specified tender made the reader look unable to read, on a
+ * bid where understanding the tender carries marks.
+ *
+ * So the rule is read by direction: over 100% is `NESTED`, which carries no
+ * concern because we cannot prove the top-level scheme is wrong; under 100% is a
+ * genuine `SHORT`fall — part of the scheme is undisclosed — which is the one
+ * worth putting to the buyer. Exactly 100% is `COMPLETE`; nothing stated is
+ * `NONE`.
+ */
+export type WeightingStatus = 'COMPLETE' | 'NESTED' | 'SHORT' | 'NONE';
+
+function weightingStatus(stated: number): WeightingStatus {
+  if (stated <= 0) return 'NONE';
+  if (stated === 100) return 'COMPLETE';
+  if (stated > 100) return 'NESTED';
+  return 'SHORT';
+}
+
+/**
+ * The one weighting concern worth sending to the buyer: a genuine shortfall.
+ * The prefix is stable so a reader can recognise and replace a weightings
+ * clarification an older analysis was stored with.
+ */
+const WEIGHTING_CLARIFICATION_PREFIX = 'The stated evaluation weightings total';
+
+function weightingClarification(stated: number): string | undefined {
+  if (weightingStatus(stated) !== 'SHORT') return undefined;
+  return (
+    `${WEIGHTING_CLARIFICATION_PREFIX} ${stated}%, under 100% — part of how the bid is marked has not been ` +
+    'disclosed. Ask the buyer to confirm the full breakdown before pricing.'
+  );
+}
+
+/** A stored gap-as-clarification line, which is no longer raised to the buyer. */
+const GAP_CLARIFICATION_RE = / — nothing on file to satisfy this\.?$/i;
+
+/**
+ * Reconcile the clarifications a record was stored with to the current rules, so
+ * an analysis written under older behaviour stops surfacing questions the reader
+ * no longer stands behind, without needing a re-analysis. Two corrections:
+ * drop every mandatory-gap line (a gap is the bidder's to close, not a buyer
+ * question), and replace any weightings line with the one the current direction
+ * rule produces (or none).
+ */
+function reconcileStoredClarifications(stored: string[], stated: number): string[] {
+  const kept = stored.filter(
+    (c) => !c.startsWith(WEIGHTING_CLARIFICATION_PREFIX) && !GAP_CLARIFICATION_RE.test(c),
+  );
+  const current = weightingClarification(stated);
+  return current ? [...kept, current] : kept;
+}
+
+/**
  * Analyse an invitation to tender.
  *
  * Reads the company profile so every judgement is against what this business
  * actually is — the same rule the radar follows. A term is not severe in the
  * abstract; it is severe relative to a margin, a PI limit or a balance sheet.
  */
-export function analyseITT(
-  ctx: EngineContext,
-  input: {
-    reference: string;
-    clientName: string;
-    returnBy: string;
-    /** Value the contractor expects to price, for exposure arithmetic. */
-    estimatedValueMinor: number;
-    durationWeeks: number;
-    requirements: ITTRequirement[];
-    terms: CommercialTerms;
-    /** Expected margin percentage, so exposure can be set against it. */
-    targetMarginPercent?: number;
-  },
-): ITTAnalysis {
-  authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
-
-  if (input.requirements.length === 0) {
-    throw new DomainError('ITT_EMPTY', 'An invitation with no requirements has not been read properly');
-  }
-
-  const profile = companyProfile(ctx);
-  const marginMinor = Math.round(input.estimatedValueMinor * ((input.targetMarginPercent ?? profile.targetMarginPercent.min) / 100));
-
-  // --- The matrix -----------------------------------------------------------
-  const matrix: MatrixLine[] = input.requirements.map((requirement) => {
-    const probe = PROBES.find((p) => p.match.test(requirement.requirement) || p.match.test(requirement.evidenceRequired));
-    const held = probe?.find(profile, requirement) ?? null;
-
-    return {
-      reference: requirement.reference,
-      category: requirement.category,
-      requirement: requirement.requirement,
-      mandatory: requirement.mandatory,
-      weightingPercent: requirement.weightingPercent,
-      owner: OWNER_BY_CATEGORY[requirement.category],
-      evidenceRequired: requirement.evidenceRequired,
-      evidenceHeld: held ?? undefined,
-      // A requirement the platform cannot probe is UNKNOWN, not a gap. Marking
-      // it a gap would bury the real gaps under everything nobody automated.
-      status: held ? 'SATISFIED' : probe ? 'GAP' : 'UNKNOWN',
-      dueBy: requirement.dueBy,
-      responseLimit: requirement.responseLimit,
-    };
-  });
-
-  const mandatoryGaps = matrix.filter((line) => line.mandatory && line.status === 'GAP');
-
-  // --- Weightings -----------------------------------------------------------
-  const declared = declaredWeightings(matrix);
-  const statedTotal = declared.reduce((sum, entry) => sum + entry.percent, 0);
-
-  // --- Commercial terms -----------------------------------------------------
+/**
+ * The commercial-term risk, sized against a contract value and a programme.
+ *
+ * Factored out of analyseITT so one rule sizes the terms in both places they are
+ * sized: on the day, against the value entered at confirm (if any), and on read,
+ * against the take-off estimate and programme once they exist. Where no value is
+ * known the terms are still assessed — their structural severity holds (an
+ * uncapped damages clause is severe whatever the job is worth) — and only the
+ * cash and capacity figures wait, omitted rather than computed against a zero.
+ */
+function assessCommercialTerms(input: {
+  terms: CommercialTerms;
+  value?: number;
+  duration?: number;
+  marginMinor?: number;
+  profile: CompanyProfile;
+}): { terms: TermAssessment[]; bars: string[]; clarifications: string[] } {
+  const { terms: source, value, duration, marginMinor, profile } = input;
   const terms: TermAssessment[] = [];
   const bars: string[] = [];
   const clarifications: string[] = [];
 
-  const { liquidatedDamages: lads } = input.terms;
+  const lads = source.liquidatedDamages;
   if (lads) {
-    // The honest exposure is the cap where there is one, and the whole
-    // programme where there is not — because uncapped means uncapped.
-    const cappedMinor = lads.capPercent !== undefined ? Math.round(input.estimatedValueMinor * (lads.capPercent / 100)) : undefined;
-    const uncappedOverRun = lads.perWeekMinor * input.durationWeeks;
+    const cappedMinor = lads.capPercent !== undefined && value !== undefined ? Math.round(value * (lads.capPercent / 100)) : undefined;
+    const uncappedOverRun = duration !== undefined ? lads.perWeekMinor * duration : undefined;
     const exposure = cappedMinor ?? uncappedOverRun;
+    const vsMargin = (figure: number): string =>
+      marginMinor !== undefined && marginMinor > 0 ? `, which is ${(figure / marginMinor).toFixed(1)}× the expected margin` : '';
 
     terms.push({
       term: 'Liquidated damages',
       stated: `${gbp(lads.perWeekMinor)} per week${lads.capPercent !== undefined ? `, capped at ${lads.capPercent}%` : ', uncapped'}`,
       assessment:
         lads.capPercent === undefined
-          ? `Uncapped. Ten weeks late is ${gbp(lads.perWeekMinor * 10)}, which is ${(marginMinor > 0 ? (lads.perWeekMinor * 10) / marginMinor : 0).toFixed(1)}× the expected margin. An uncapped damages clause on a programme the contractor does not fully control is the single most common way a profitable job becomes a loss.`
-          : `Capped at ${gbp(cappedMinor!)}, which is ${(marginMinor > 0 ? cappedMinor! / marginMinor : 0).toFixed(1)}× the expected margin of ${gbp(marginMinor)}.`,
-      severity: lads.capPercent === undefined ? 'SEVERE' : cappedMinor! > marginMinor ? 'MATERIAL' : 'ROUTINE',
-      exposureMinor: exposure,
+          ? `Uncapped. Ten weeks late is ${gbp(lads.perWeekMinor * 10)}${vsMargin(lads.perWeekMinor * 10)}. An uncapped damages clause on a programme the contractor does not fully control is the single most common way a profitable job becomes a loss.`
+          : cappedMinor !== undefined
+            ? `Capped at ${gbp(cappedMinor)}${marginMinor !== undefined ? `${vsMargin(cappedMinor)} of ${gbp(marginMinor)}` : ''}.`
+            : `Capped at ${lads.capPercent}% of the contract value — the cash figure is sized once a contract value is set.`,
+      severity: lads.capPercent === undefined ? 'SEVERE' : cappedMinor !== undefined && marginMinor !== undefined && cappedMinor > marginMinor ? 'MATERIAL' : 'ROUTINE',
+      ...(exposure !== undefined ? { exposureMinor: exposure } : {}),
       exposureKind: 'CASH',
     });
     if (lads.capPercent === undefined) {
@@ -452,8 +592,7 @@ export function analyseITT(
     }
   }
 
-  if (input.terms.designLiability === 'FITNESS_FOR_PURPOSE') {
-    // This is the one that catches people. It is not a pricing question.
+  if (source.designLiability === 'FITNESS_FOR_PURPOSE') {
     const pi = profile.insurances.find((i) => /professional indemnity/i.test(i.type));
     terms.push({
       term: 'Design liability',
@@ -464,7 +603,7 @@ export function analyseITT(
     clarifications.push(
       'Will the buyer amend the design obligation to reasonable skill and care? Fitness for purpose is uninsurable under standard professional indemnity cover.',
     );
-  } else if (input.terms.designLiability === 'REASONABLE_SKILL_AND_CARE') {
+  } else if (source.designLiability === 'REASONABLE_SKILL_AND_CARE') {
     terms.push({
       term: 'Design liability',
       stated: 'Reasonable skill and care',
@@ -473,8 +612,7 @@ export function analyseITT(
     });
   }
 
-  if (input.terms.parentCompanyGuaranteeRequired) {
-    // An SME with no parent cannot provide one at any price.
+  if (source.parentCompanyGuaranteeRequired) {
     terms.push({
       term: 'Parent company guarantee',
       stated: 'Required',
@@ -486,43 +624,37 @@ export function analyseITT(
     clarifications.push('Will the buyer accept a performance bond in place of a parent company guarantee, and at what percentage?');
   }
 
-  if (input.terms.performanceBondPercent !== undefined) {
-    const bondMinor = Math.round(input.estimatedValueMinor * (input.terms.performanceBondPercent / 100));
+  if (source.performanceBondPercent !== undefined) {
+    const bondMinor = value === undefined ? undefined : Math.round(value * (source.performanceBondPercent / 100));
     terms.push({
       term: 'Performance bond',
-      stated: `${input.terms.performanceBondPercent}% of contract value`,
-      assessment: `${gbp(bondMinor)} of bonding facility committed for the contract period and usually beyond it. Bonding capacity is finite and shared across every live job, so this is capacity taken from the next bid as well as this one.`,
-      severity: bondMinor > profile.netAssetsMinor * 0.5 ? 'SEVERE' : 'MATERIAL',
-      exposureMinor: bondMinor,
-      // Facility committed, not money spent.
+      stated: `${source.performanceBondPercent}% of contract value`,
+      assessment:
+        bondMinor !== undefined
+          ? `${gbp(bondMinor)} of bonding facility committed for the contract period and usually beyond it. Bonding capacity is finite and shared across every live job, so this is capacity taken from the next bid as well as this one.`
+          : `A bond of ${source.performanceBondPercent}% of the contract value — the facility committed is sized once a contract value is set. Bonding capacity is finite and shared across every live job.`,
+      severity: bondMinor !== undefined && bondMinor > profile.netAssetsMinor * 0.5 ? 'SEVERE' : 'MATERIAL',
+      ...(bondMinor !== undefined ? { exposureMinor: bondMinor } : {}),
       exposureKind: 'CAPACITY',
     });
   }
 
-  if (input.terms.retentionPercent !== undefined) {
-    const retentionMinor = Math.round(input.estimatedValueMinor * (input.terms.retentionPercent / 100));
+  if (source.retentionPercent !== undefined) {
+    const retentionMinor = value === undefined ? undefined : Math.round(value * (source.retentionPercent / 100));
     terms.push({
       term: 'Retention',
-      stated: `${input.terms.retentionPercent}%`,
-      assessment: `${gbp(retentionMinor)} withheld, typically half released at completion and half after the defects period. This is cash the business funds, not a discount, and the second half is often years away.`,
-      severity: retentionMinor > marginMinor ? 'MATERIAL' : 'ROUTINE',
-      exposureMinor: retentionMinor,
+      stated: `${source.retentionPercent}%`,
+      assessment:
+        retentionMinor !== undefined
+          ? `${gbp(retentionMinor)} withheld, typically half released at completion and half after the defects period. This is cash the business funds, not a discount, and the second half is often years away.`
+          : `${source.retentionPercent}% withheld — the cash figure is sized once a contract value is set. This is cash the business funds, not a discount, and the second half is often years away.`,
+      severity: retentionMinor !== undefined && marginMinor !== undefined && retentionMinor > marginMinor ? 'MATERIAL' : 'ROUTINE',
+      ...(retentionMinor !== undefined ? { exposureMinor: retentionMinor } : {}),
       exposureKind: 'CASH',
     });
   }
 
-  if (input.terms.paymentConditionalOnThirdParty) {
-    // Section 113 of the Housing Grants, Construction and Regeneration Act
-    // 1996. A clause making payment conditional on the payer receiving payment
-    // from a third party is ineffective — with one exception, which is that
-    // third party's insolvency.
-    //
-    // This is stated as a *term assessment* rather than a bar, and deliberately.
-    // The clause does not stop the bid and does not need negotiating out to
-    // make the job safe: it is already void. What it does is tell the bidder
-    // something about the buyer, and stop them pricing a cash risk they do not
-    // carry — which is the expensive mistake, because the money is priced in
-    // and the competitor who read the Act does not price it.
+  if (source.paymentConditionalOnThirdParty) {
     terms.push({
       term: 'Payment conditional on the buyer being paid',
       stated: 'Pay when paid',
@@ -539,38 +671,127 @@ export function analyseITT(
     );
   }
 
-  if (input.terms.paymentDays !== undefined) {
+  if (source.paymentDays !== undefined) {
     terms.push({
       term: 'Payment terms',
-      stated: `${input.terms.paymentDays} days`,
+      stated: `${source.paymentDays} days`,
       assessment:
-        input.terms.paymentDays > 45
-          ? `${input.terms.paymentDays} days is materially longer than the 30 days most subcontractors expect. The difference is funded by this business, and the cash model should be run before the price is committed.`
-          : `${input.terms.paymentDays} days. Run the cash model against subcontract terms before committing to it.`,
-      severity: input.terms.paymentDays > 45 ? 'MATERIAL' : 'ROUTINE',
+        source.paymentDays > 45
+          ? `${source.paymentDays} days is materially longer than the 30 days most subcontractors expect. The difference is funded by this business, and the cash model should be run before the price is committed.`
+          : `${source.paymentDays} days. Run the cash model against subcontract terms before committing to it.`,
+      severity: source.paymentDays > 45 ? 'MATERIAL' : 'ROUTINE',
     });
   }
 
-  if (input.terms.sectionalCompletions !== undefined && input.terms.sectionalCompletions > 0) {
+  if (source.sectionalCompletions !== undefined && source.sectionalCompletions > 0) {
     terms.push({
       term: 'Sectional completion',
-      stated: `${input.terms.sectionalCompletions} section${input.terms.sectionalCompletions === 1 ? '' : 's'}`,
-      assessment: `Each section carries its own completion date and, usually, its own damages. ${input.terms.sectionalCompletions} sections means ${input.terms.sectionalCompletions} separate chances to be late rather than one.`,
+      stated: `${source.sectionalCompletions} section${source.sectionalCompletions === 1 ? '' : 's'}`,
+      assessment: `Each section carries its own completion date and, usually, its own damages. ${source.sectionalCompletions} sections means ${source.sectionalCompletions} separate chances to be late rather than one.`,
       severity: 'MATERIAL',
     });
   }
 
-  for (const other of input.terms.other ?? []) {
+  for (const other of source.other ?? []) {
     terms.push({ term: 'Stated in the invitation', stated: other, assessment: 'Carried verbatim; not assessed by the platform.', severity: 'ROUTINE' });
   }
 
+  return { terms, bars, clarifications };
+}
+
+export function analyseITT(
+  ctx: EngineContext,
+  input: {
+    reference: string;
+    clientName: string;
+    returnBy: string;
+    /**
+     * Value the contractor expects to price, for exposure arithmetic — OPTIONAL.
+     *
+     * The matrix (requirements, weightings, ownership, evidence) needs none of
+     * this; only the commercial-term exposures do. An estimator cannot honestly
+     * give a contract value before the take-off, so forcing it at confirm was
+     * friction that bought nothing on a tender whose ITT states no damages,
+     * retention or bond — which is most of them. Left out, the terms are still
+     * read and carried, and the cash/capacity figures are sized later, once a
+     * value exists (the take-off estimate, or a value entered by hand).
+     */
+    estimatedValueMinor?: number;
+    durationWeeks?: number;
+    requirements: ITTRequirement[];
+    terms: CommercialTerms;
+    /** Expected margin percentage, so exposure can be set against it. */
+    targetMarginPercent?: number;
+  },
+): ITTAnalysis {
+  authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  if (input.requirements.length === 0) {
+    throw new DomainError('ITT_EMPTY', 'An invitation with no requirements has not been read properly');
+  }
+
+  const profile = companyProfile(ctx);
+  // Undefined when no value was given — every exposure below is then carried as
+  // "sized once a value is set" rather than computed against a zero that would
+  // read as "no risk".
+  const value = input.estimatedValueMinor;
+  const duration = input.durationWeeks;
+  const marginMinor =
+    value === undefined ? undefined : Math.round(value * ((input.targetMarginPercent ?? profile.targetMarginPercent.min) / 100));
+
+  // --- The matrix -----------------------------------------------------------
+  // A one-director business has one person wearing every hat, so the role-per-
+  // category suggestion reads as work going to people who do not exist. With the
+  // flag set, every line's owner defaults to OWNER instead.
+  const ownerFor = (category: RequirementCategory): Role =>
+    profile.singleOwnerBids ? 'OWNER' : OWNER_BY_CATEGORY[category];
+  const matrix: MatrixLine[] = input.requirements.map((requirement) => {
+    // A requirement the platform cannot probe is UNKNOWN, not a gap. Marking it
+    // a gap would bury the real gaps under everything nobody automated.
+    const probed = statusAgainstProfile(profile, requirement);
+
+    return {
+      reference: requirement.reference,
+      category: requirement.category,
+      requirement: requirement.requirement,
+      mandatory: requirement.mandatory,
+      weightingPercent: requirement.weightingPercent,
+      owner: ownerFor(requirement.category),
+      evidenceRequired: requirement.evidenceRequired,
+      evidenceHeld: probed.evidenceHeld,
+      status: probed.status,
+      dueBy: requirement.dueBy,
+      responseLimit: requirement.responseLimit,
+    };
+  });
+
+  const mandatoryGaps = matrix.filter((line) => line.mandatory && line.status === 'GAP');
+
+  // --- Weightings -----------------------------------------------------------
+  const declared = declaredWeightings(matrix);
+  const statedTotal = declared.reduce((sum, entry) => sum + entry.percent, 0);
+
+  // --- Commercial terms -----------------------------------------------------
+  // Sized against the value entered at confirm, if any. Where none was given
+  // the terms are still assessed and the cash figures wait — complianceMatrix
+  // sizes them later against the take-off estimate and the programme.
+  const assessed = assessCommercialTerms({ terms: input.terms, value, duration, marginMinor, profile });
+  const terms = assessed.terms;
+  const bars = assessed.bars;
+  const clarifications = [...assessed.clarifications];
+
   // --- Submission readiness -------------------------------------------------
-  for (const gap of mandatoryGaps) {
-    clarifications.push(`${gap.reference}: ${gap.evidenceRequired} — nothing on file to satisfy this.`);
-  }
-  if (statedTotal > 0 && statedTotal !== 100) {
-    clarifications.push(`The stated evaluation weightings total ${statedTotal}%, not 100%. Ask the buyer to confirm the full breakdown before pricing.`);
-  }
+  // A mandatory requirement nothing on file satisfies is NOT a question for the
+  // buyer — it is the bidder's own gap to close (obtain the accreditation, write
+  // the response, file the document), and it is already surfaced that way on the
+  // matrix ("add these to your library", "file a document & assert a claim", the
+  // compliance undertakings). Asking the buyer to "confirm the requirement" that
+  // we become CHAS-accredited reads as a firm that can neither read the tender
+  // nor hold a basic accreditation. So gaps never become buyer clarifications;
+  // only genuine buyer questions — risky commercial terms and a real weighting
+  // shortfall — do.
+  const weightingQuestion = weightingClarification(statedTotal);
+  if (weightingQuestion) clarifications.push(weightingQuestion);
 
   const analysisId = ulid();
   const readyToPrice = mandatoryGaps.length === 0 && bars.length === 0;
@@ -602,11 +823,16 @@ export function analyseITT(
       reference: input.reference,
       clientName: input.clientName,
       returnBy: input.returnBy,
-      estimatedValueMinor: input.estimatedValueMinor,
-      durationWeeks: input.durationWeeks,
+      // Stored only when given, so an analysis run before the take-off carries no
+      // value at all rather than a zero that later reads as "priced at nothing".
+      ...(value === undefined ? {} : { estimatedValueMinor: value }),
+      ...(duration === undefined ? {} : { durationWeeks: duration }),
+      // The raw terms, so the read can re-size the exposures against the take-off
+      // estimate and programme when the analysis itself carries no value.
+      commercialTerms: input.terms,
       matrix,
       mandatoryGaps: mandatoryGaps.map((g) => g.reference),
-      weightings: { stated: statedTotal, complete: statedTotal === 100 },
+      weightings: { stated: statedTotal, complete: statedTotal === 100, status: weightingStatus(statedTotal) },
       terms: orderedTerms,
       bars,
       quantifiedExposureMinor,
@@ -625,7 +851,7 @@ export function analyseITT(
     returnBy: input.returnBy,
     matrix,
     mandatoryGaps,
-    weightings: { stated: statedTotal, declared, complete: statedTotal === 100 },
+    weightings: { stated: statedTotal, declared, complete: statedTotal === 100, status: weightingStatus(statedTotal) },
     terms: orderedTerms,
     bars,
     quantifiedExposureMinor,
@@ -633,6 +859,101 @@ export function analyseITT(
     clarifications,
     readyToPrice,
   };
+}
+
+// --- Merging readings into one matrix per tender -----------------------------
+
+/**
+ * Recover the requirements a stored matrix was built from.
+ *
+ * `analyseITT` takes `ITTRequirement[]` and produces `MatrixLine[]`, keeping
+ * every field the requirement carried and adding the owner, the held evidence
+ * and the status it derived against the company profile. To merge a second
+ * reading into the matrix already on a tender, the first reading's requirements
+ * are recovered from its lines — dropping the derived fields, which the re-run
+ * re-derives — and combined with the new ones.
+ */
+export function requirementsFromMatrix(matrix: MatrixLine[]): ITTRequirement[] {
+  return matrix.map((line) => ({
+    reference: line.reference,
+    category: line.category,
+    requirement: line.requirement,
+    mandatory: line.mandatory,
+    ...(line.weightingPercent !== undefined ? { weightingPercent: line.weightingPercent } : {}),
+    evidenceRequired: line.evidenceRequired,
+    ...(line.dueBy !== undefined ? { dueBy: line.dueBy } : {}),
+    ...(line.responseLimit !== undefined ? { responseLimit: line.responseLimit } : {}),
+  }));
+}
+
+/**
+ * Combine the requirements already on a tender with those a new reading found.
+ *
+ * One tender, one matrix: reading its ITT, then its questionnaire, then its
+ * social-value appendix adds each document's requirements to the one matrix
+ * rather than minting a third analysis — which is how a tender ended with a
+ * dozen fragments nobody could price from. Keyed by the requirement's reference,
+ * because that is the identity a submission answers against: a reference read
+ * again (a re-read, a correction) updates the line rather than duplicating it,
+ * so the newer reading wins. Order is preserved — the tender's existing
+ * requirements first, in the order they were read, then the genuinely new ones.
+ */
+export function mergeRequirements(prior: ITTRequirement[], next: ITTRequirement[]): ITTRequirement[] {
+  const byReference = new Map<string, ITTRequirement>();
+  for (const requirement of prior) byReference.set(requirement.reference, requirement);
+  for (const requirement of next) {
+    const earlier = byReference.get(requirement.reference);
+    // The newer reading wins on what it states, and does not erase what it is
+    // silent on. A tender puts a question's weighting in one document and its
+    // word limit in another; the reading of the second used to replace the
+    // line wholesale and wipe the weighting the first had found.
+    byReference.set(
+      requirement.reference,
+      earlier
+        ? {
+            ...requirement,
+            ...(requirement.weightingPercent === undefined && earlier.weightingPercent !== undefined
+              ? { weightingPercent: earlier.weightingPercent }
+              : {}),
+            ...(requirement.responseLimit === undefined && earlier.responseLimit !== undefined
+              ? { responseLimit: earlier.responseLimit }
+              : {}),
+            ...(requirement.dueBy === undefined && earlier.dueBy !== undefined ? { dueBy: earlier.dueBy } : {}),
+          }
+        : requirement,
+    );
+  }
+  return [...byReference.values()];
+}
+
+/** Whether a reading stated commercial terms of its own, or left them to another document. */
+export function commercialTermsStated(terms: CommercialTerms): boolean {
+  return (
+    (terms.contractForm !== '' && terms.contractForm !== 'Not stated in the invitation') ||
+    terms.liquidatedDamages !== undefined ||
+    terms.performanceBondPercent !== undefined ||
+    terms.parentCompanyGuaranteeRequired !== undefined ||
+    terms.retentionPercent !== undefined ||
+    terms.paymentDays !== undefined ||
+    terms.designLiability !== undefined ||
+    terms.sectionalCompletions !== undefined ||
+    terms.paymentConditionalOnThirdParty !== undefined ||
+    (terms.other !== undefined && terms.other.length > 0)
+  );
+}
+
+/**
+ * The commercial terms to carry when a second reading is merged in.
+ *
+ * The contract terms are stated once — in the ITT or the conditions of contract
+ * — and an appendix read afterwards states none. Overwriting the tender's terms
+ * with that appendix's empty set would lose the damages, the retention and the
+ * bond the matrix is priced against. So a reading that states terms replaces
+ * them; a reading that states none keeps what the tender already held.
+ */
+export function mergeCommercialTerms(prior: CommercialTerms | undefined, next: CommercialTerms): CommercialTerms {
+  if (!prior) return next;
+  return commercialTermsStated(next) ? next : prior;
 }
 
 // --- Reading one back --------------------------------------------------------
@@ -655,9 +976,21 @@ export function analyseITT(
 
 /** What the stored record carries beyond the analysis itself. */
 export type StoredITTAnalysis = ITTAnalysis & {
-  /** The value and duration the exposure figures were computed against. */
-  estimatedValueMinor: number;
-  durationWeeks: number;
+  /**
+   * The value and duration the exposure figures were computed against — absent
+   * when the analysis was confirmed before the job was priced. A reader shows
+   * "not yet sized" rather than £0. On read these are the effective figures: the
+   * ones entered, or the ones derived from the take-off estimate.
+   */
+  estimatedValueMinor?: number;
+  durationWeeks?: number;
+  /**
+   * Where the value the terms were sized against came from, set on read:
+   * ENTERED at confirm, ESTIMATE from the take-off, or NONE (not yet sized).
+   */
+  sizedFrom?: 'ENTERED' | 'ESTIMATE' | 'NONE';
+  /** The raw commercial terms, kept so the read can re-size them. */
+  commercialTerms?: CommercialTerms;
   analysedAt: string;
   analysedBy: string;
   /** The project the analysis was run on, which is the tender's own project. */
@@ -679,6 +1012,16 @@ export type ITTAnalysisSummary = {
   readyToPrice: boolean;
   analysedAt: string;
   projectId: string;
+  /**
+   * The tender this matrix is the *current* one for. A reading merges into the
+   * matrix on the tender and writes a fresh analysis each time, so a tender that
+   * has been read three times leaves two superseded analyses behind the one its
+   * invitation now points at. `bound` is true only for that current one; the
+   * rest are history, not a dozen separate tenders.
+   */
+  bound: boolean;
+  /** The invitation currently pointing at this matrix, when `bound`. */
+  invitationId?: string;
 };
 
 /**
@@ -706,7 +1049,7 @@ function readAnalysis(record: EntityRecord): StoredITTAnalysis {
     // Derived from the matrix by the same rule `analyseITT` applies, so a line
     // that is a mandatory gap on the day is a mandatory gap on the read.
     mandatoryGaps: matrix.filter((line) => line.mandatory && line.status === 'GAP'),
-    weightings: { stated, declared, complete: stated === 100 },
+    weightings: { stated, declared, complete: stated === 100, status: weightingStatus(stated) },
     terms: (state.terms as TermAssessment[] | undefined) ?? [],
     bars: (state.bars as string[] | undefined) ?? [],
     quantifiedExposureMinor: Number(state.quantifiedExposureMinor ?? 0),
@@ -721,10 +1064,19 @@ function readAnalysis(record: EntityRecord): StoredITTAnalysis {
             0,
           )
         : Number(state.committedCapacityMinor),
-    clarifications: (state.clarifications as string[] | undefined) ?? [],
+    // Reconciled on read: an analysis stored under the old flatten-and-complain
+    // rule drops its spurious weightings clarification here, so a re-read clears
+    // it without a re-analysis.
+    clarifications: reconcileStoredClarifications((state.clarifications as string[] | undefined) ?? [], stated),
     readyToPrice: Boolean(state.readyToPrice),
-    estimatedValueMinor: Number(state.estimatedValueMinor ?? 0),
-    durationWeeks: Number(state.durationWeeks ?? 0),
+    // Undefined — not zero — when the analysis was confirmed before a value was
+    // known, so a reader can say "not yet sized" instead of "£0".
+    ...(state.estimatedValueMinor === undefined ? {} : { estimatedValueMinor: Number(state.estimatedValueMinor) }),
+    ...(state.durationWeeks === undefined ? {} : { durationWeeks: Number(state.durationWeeks) }),
+    ...(state.commercialTerms ? { commercialTerms: state.commercialTerms as CommercialTerms } : {}),
+    // The default; complianceMatrix overrides it to ESTIMATE when it sizes the
+    // terms from the take-off.
+    sizedFrom: state.estimatedValueMinor === undefined ? 'NONE' : 'ENTERED',
     analysedAt: String(state.analysedAt ?? ''),
     analysedBy: String(state.analysedBy ?? ''),
     projectId: record.projectId,
@@ -737,6 +1089,16 @@ const SEVERITY_RANK: Record<TermAssessment['severity'], number> = { BAR: 0, SEVE
 export function analysisBoard(ctx: EngineContext): { analyses: ITTAnalysisSummary[]; summary: string } {
   authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
 
+  // Which matrix each tender currently points at. A tender read more than once
+  // leaves the earlier analyses behind the one its invitation now binds; those
+  // earlier ones are superseded, not separate tenders, and only this map tells
+  // them apart from the live one.
+  const boundTo = new Map<string, string>();
+  for (const invitation of ctx.ledger.listByTenant(ctx.tenantId, 'TenderInvitation')) {
+    const id = invitation.state.analysisId as string | undefined;
+    if (id) boundTo.set(id, invitation.refId);
+  }
+
   // Analyses are written against the tender's own project rather than the
   // governance scope, so this crosses projects within the tenancy — which is
   // what a bid manager holding four live tenders is asking for.
@@ -745,6 +1107,7 @@ export function analysisBoard(ctx: EngineContext): { analyses: ITTAnalysisSummar
     .map((record) => readAnalysis(record))
     .map((analysis): ITTAnalysisSummary => {
       const worst = [...analysis.terms].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])[0];
+      const invitationId = boundTo.get(analysis.analysisId);
       return {
         analysisId: analysis.analysisId,
         reference: analysis.reference,
@@ -759,15 +1122,24 @@ export function analysisBoard(ctx: EngineContext): { analyses: ITTAnalysisSummar
         readyToPrice: analysis.readyToPrice,
         analysedAt: analysis.analysedAt,
         projectId: analysis.projectId,
+        bound: invitationId !== undefined,
+        ...(invitationId ? { invitationId } : {}),
       };
     })
     .sort((a, b) => b.analysedAt.localeCompare(a.analysedAt));
 
-  const blocked = analyses.filter((a) => !a.readyToPrice).length;
+  // Count the matrices a bid manager actually has — one per tender — not every
+  // intermediate reading left in the ledger. The superseded ones are still
+  // returned (a matrix read onto the wrong tender has to be retrievable), but
+  // they are not what "on file" means.
+  const live = analyses.filter((a) => a.bound);
+  const blocked = live.filter((a) => !a.readyToPrice).length;
   const summary =
-    analyses.length === 0
-      ? 'No invitation has been analysed yet. Record an ITT and run the analysis to build a compliance matrix.'
-      : `${analyses.length} compliance matri${analyses.length === 1 ? 'x' : 'ces'} on file` +
+    live.length === 0
+      ? analyses.length === 0
+        ? 'No invitation has been analysed yet. Record an ITT and run the analysis to build a compliance matrix.'
+        : 'No compliance matrix is bound to a live tender. Earlier readings are held below and can be retrieved.'
+      : `${live.length} compliance matri${live.length === 1 ? 'x' : 'ces'} on file` +
         `${blocked > 0 ? `, ${blocked} not ready to price` : ', all ready to price'}.`;
 
   return { analyses, summary };
@@ -781,7 +1153,123 @@ export function complianceMatrix(ctx: EngineContext, analysisId: string): Stored
   if (!record || record.tenantId !== ctx.tenantId) {
     throw new DomainError('ITT_ANALYSIS_NOT_FOUND', `No compliance matrix ${analysisId}`, 404);
   }
-  return readAnalysis(record);
+  const stored = readAnalysis(record);
+
+  // The status column is re-derived against the company's CURRENT facts, not
+  // read back frozen. The requirements, weightings and exposures are the
+  // analysis as of the day it was run; whether a requirement is satisfied is a
+  // fact about what the company holds *now*, and it changes as insurances,
+  // accreditations and references are recorded. Re-deriving on read is what makes
+  // "record your insurances" clear the insurance gaps immediately, rather than
+  // leaving them a gap until the invitation is read again. The same shared rule
+  // `analyseITT` used, so the day's status and today's status are computed the
+  // same way.
+  const profile = companyProfile(ctx);
+  const matrix = stored.matrix.map((line) => {
+    const probed = statusAgainstProfile(profile, line);
+    // Only set evidenceHeld when the probe now finds something — never write an
+    // explicit `undefined`, so a line the probe does not answer keeps exactly the
+    // shape the record stored (the JSON has no such key), and a read with an
+    // unchanged profile is byte-for-byte what was written.
+    const next: MatrixLine = { ...line, status: probed.status };
+    if (probed.evidenceHeld !== undefined) next.evidenceHeld = probed.evidenceHeld;
+    // A one-director business sees every line owned by the owner, whatever the
+    // stored role-per-category suggestion was. Applied on read so it is retroactive
+    // and reversible — the ledger keeps what was computed, the view reflects the
+    // business's current policy — the same way the status column is re-derived.
+    if (profile.singleOwnerBids) next.owner = 'OWNER';
+    return next;
+  });
+
+  const base = {
+    ...stored,
+    matrix,
+    mandatoryGaps: matrix.filter((line) => line.mandatory && line.status === 'GAP'),
+  };
+
+  // Where the analysis was confirmed with no contract value, the commercial-term
+  // risk was carried but not sized. Rather than leave the estimator to type a
+  // value, the platform sizes it from its own work: the latest complete take-off
+  // estimate on this project gives the contract value and the programme gives the
+  // duration. The terms re-size against those figures, labelled ESTIMATE, and
+  // update as the estimate firms up. Nothing is invented — if there is no
+  // complete estimate yet, the terms stay unsized (NONE) and say so.
+  if (stored.estimatedValueMinor === undefined && stored.commercialTerms) {
+    const estimates = ctx.ledger.list(ctx.projectId, 'Estimate').map((entry) => entry.state);
+    const complete = estimates.filter((estimate) => ((estimate.omissions as unknown[] | undefined) ?? []).length === 0);
+    const latest = complete.at(-1);
+    const derivedValue = latest?.totalMinor === undefined ? undefined : Number(latest.totalMinor);
+    const derivedDuration = latest?.durationWeeks === undefined ? undefined : Number(latest.durationWeeks);
+
+    if (derivedValue !== undefined) {
+      const marginMinor = Math.round(derivedValue * (profile.targetMarginPercent.min / 100));
+      const resized = assessCommercialTerms({
+        terms: stored.commercialTerms,
+        value: derivedValue,
+        duration: derivedDuration,
+        marginMinor,
+        profile,
+      });
+      const SEVERITY_ORDER = { BAR: 0, SEVERE: 1, MATERIAL: 2, ROUTINE: 3 } as const;
+      const terms = [...resized.terms].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+      const sumOf = (kind: 'CASH' | 'CAPACITY'): number =>
+        terms.reduce((total, term) => total + (term.exposureKind === kind ? (term.exposureMinor ?? 0) : 0), 0);
+      return {
+        ...base,
+        terms,
+        quantifiedExposureMinor: sumOf('CASH'),
+        committedCapacityMinor: sumOf('CAPACITY'),
+        estimatedValueMinor: derivedValue,
+        ...(derivedDuration === undefined ? {} : { durationWeeks: derivedDuration }),
+        sizedFrom: 'ESTIMATE',
+      };
+    }
+  }
+
+  return base;
+}
+
+/**
+ * A question the analysis raised, in the structured form the clarification
+ * register needs — so the AI's own questions can be put to the client in one
+ * act, rather than retyped into a delimited box by a person who has no way to
+ * know the format.
+ */
+export type TenderClarificationDraft = {
+  side: 'CLIENT';
+  subject: string;
+  question: string;
+  links: { scopeItem?: string; document?: string };
+};
+
+const truncate = (text: string, n = 80): string => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
+
+/**
+ * Turn the "Questions for the buyer" an analysis produced into raisable
+ * clarifications. It invents nothing, and — crucially — it does not turn the
+ * bidder's own gaps into buyer questions. A mandatory requirement nothing on
+ * file satisfies is the bidder's to close (obtain the accreditation, write the
+ * response, file the document); asking the buyer to "confirm the requirement"
+ * that we hold CHAS or Constructionline Gold reads as a firm that can neither
+ * read the tender nor meet it. So only the analysis's genuine buyer questions —
+ * the commercial-term questions and a real weighting shortfall — become drafts,
+ * carried verbatim and linked to the invitation so the answer is findable.
+ */
+export function tenderClarificationDrafts(analysis: StoredITTAnalysis): TenderClarificationDraft[] {
+  const drafts: TenderClarificationDraft[] = [];
+  const seen = new Set<string>();
+
+  for (const clarification of analysis.clarifications) {
+    // Defensive against analyses stored before gaps were kept off the buyer
+    // list: a gap line is never raised to the buyer.
+    if (GAP_CLARIFICATION_RE.test(clarification)) continue;
+    if (seen.has(clarification)) continue;
+    seen.add(clarification);
+    const subject = clarification.includes(':') ? truncate(clarification.slice(0, clarification.indexOf(':'))) : truncate(clarification);
+    drafts.push({ side: 'CLIENT', subject, question: clarification, links: { document: `${analysis.reference || 'Invitation'}` } });
+  }
+
+  return drafts;
 }
 
 // --- Matching held evidence to the requirements -------------------------------
@@ -829,22 +1317,63 @@ export type RequirementCoverage = {
   category: RequirementCategory;
   evidenceRequired: string;
   mandatory: boolean;
+  /** The mark at stake where the requirement is scored rather than pass/fail. */
+  weightingPercent?: number;
   /** The stored matrix status, from the company-profile probes. */
   matrixStatus: MatrixStatus;
   /** Claims the business has explicitly linked to this requirement. */
   linked: EvidenceMatch[];
   /** Held claims that could cover it but are not linked yet. */
   suggested: EvidenceMatch[];
+  /** Where the requirement is a compliance undertaking, the drafted confirmation. */
+  undertaking?: string;
   /**
    * What to do about this line:
-   *  COVERED           — a current, approved linked claim answers it
+   *  COVERED           — a current, approved linked claim answers it (or an undertaking confirmed)
    *  PROFILE           — proven from the company profile, no document needed here
    *  ATTENTION         — a linked claim is pending or has lapsed
    *  LINK_SUGGESTED    — nothing linked, but held evidence could be
+   *  UNDERTAKING       — a compliance statement to confirm, drafted and awaiting confirmation
    *  MISSING           — the buyer asked for evidence and nothing held answers it
    *  NO_EVIDENCE_ASKED — the requirement names no evidence to hold
    */
-  disposition: 'COVERED' | 'PROFILE' | 'ATTENTION' | 'LINK_SUGGESTED' | 'MISSING' | 'NO_EVIDENCE_ASKED';
+  disposition: 'COVERED' | 'PROFILE' | 'ATTENTION' | 'LINK_SUGGESTED' | 'UNDERTAKING' | 'MISSING' | 'NO_EVIDENCE_ASKED';
+};
+
+/**
+ * One document to attach when submitting to the client portal.
+ *
+ * De-duplicated across the matrix: a single certificate that answers three
+ * requirements is one line here, carrying all three references — the submission
+ * is a set of files, not a file per requirement.
+ */
+export type AttachItem = {
+  claimId: string;
+  reference: string;
+  kind: ClaimKind;
+  claim: string;
+  standing: ClaimStanding;
+  expiresAt?: string;
+  /** Every requirement this document answers, linked or proposed. */
+  covers: string[];
+  /** Of `covers`, the references already linked to this claim. */
+  linkedRefs: string[];
+  /** Of `covers`, the references only proposed — confirm the match before relying on it. */
+  suggestedRefs: string[];
+};
+
+/**
+ * One requirement to resolve in the library before the bid can be submitted.
+ * `MISSING` — nothing on file answers it; `LAPSED` — the only evidence has
+ * expired or was rejected, so a current one must be obtained.
+ */
+export type ObtainItem = {
+  reference: string;
+  requirement: string;
+  category: RequirementCategory;
+  evidenceRequired: string;
+  mandatory: boolean;
+  reason: 'MISSING' | 'LAPSED';
 };
 
 export type EvidenceCoverage = {
@@ -859,8 +1388,32 @@ export type EvidenceCoverage = {
   missing: number;
   /** Linked claims that are pending or lapsed. */
   attention: number;
+  /**
+   * The two action lists the register and matrix together imply — a projection
+   * of `requirements`, inventing nothing.
+   *  toAttach — distinct documents to upload to the portal, deduped.
+   *  toObtain — requirements nothing current answers, mandatory first.
+   */
+  toAttach: AttachItem[];
+  toObtain: ObtainItem[];
+  /**
+   * Compliance undertakings — the lines answered by a statement rather than a
+   * document. Each carries the drafted confirmation and whether it is confirmed.
+   */
+  undertakings: Array<{ reference: string; requirement: string; statement: string; confirmed: boolean }>;
   summary: string;
 };
+
+/**
+ * The references whose requirement the bidder has already answered with a
+ * confirmed compliance undertaking — a statement ("We confirm that, if awarded …")
+ * the person has declared true. It answers the requirement in prose exactly as a
+ * drafted section does, so the red team must not report such a reference as
+ * "evidence nothing answers".
+ */
+export function confirmedUndertakingReferences(ctx: EngineContext, analysisId: string): string[] {
+  return undertakingsOf(requireAnalysis(ctx, analysisId)).map((u) => u.reference);
+}
 
 /**
  * Read the evidence register against a compliance matrix and say, per
@@ -873,8 +1426,12 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
   const day = asAt ?? new Date().toISOString().slice(0, 10);
   const register = evidenceRegister(ctx, day);
   const current = register.claims.filter((claim) => claim.standing !== 'REJECTED' && claim.standing !== 'EXPIRED');
+  // Compliance undertakings confirmed on this analysis, read the same way the
+  // waiver register reads waivers — off the analysis record's own state.
+  const confirmedUndertakings = new Set(undertakingsOf(requireAnalysis(ctx, analysisId)).map((u) => u.reference));
 
   const requirements: RequirementCoverage[] = analysis.matrix.map((line) => {
+    const undertaking = undertakingFor(line);
     const linked: EvidenceMatch[] = register.claims
       .filter((claim) => claim.covers.includes(line.reference))
       .map((claim) => ({
@@ -915,6 +1472,11 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
 
     const hasCurrentLink = linked.some((entry) => entry.standing === 'APPROVED');
     const hasStaleLink = linked.length > 0 && !hasCurrentLink;
+    // An undertaking is answered by a confirmed statement, not a document: a
+    // confirmed one is covered, an unconfirmed one is a drafted statement
+    // awaiting confirmation — ahead of the profile/claim dispositions, which do
+    // not apply to it. A held claim or profile match still wins first, so an
+    // undertaking line that somehow also has evidence is not hidden.
     const disposition: RequirementCoverage['disposition'] = !line.evidenceRequired
       ? 'NO_EVIDENCE_ASKED'
       : hasCurrentLink
@@ -923,9 +1485,13 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
           ? 'ATTENTION'
           : line.status === 'SATISFIED'
             ? 'PROFILE'
-            : suggested.length > 0
-              ? 'LINK_SUGGESTED'
-              : 'MISSING';
+            : undertaking.isUndertaking
+              ? confirmedUndertakings.has(line.reference)
+                ? 'COVERED'
+                : 'UNDERTAKING'
+              : suggested.length > 0
+                ? 'LINK_SUGGESTED'
+                : 'MISSING';
 
     return {
       reference: line.reference,
@@ -933,9 +1499,11 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
       category: line.category,
       evidenceRequired: line.evidenceRequired,
       mandatory: line.mandatory,
+      weightingPercent: line.weightingPercent,
       matrixStatus: line.status,
       linked,
       suggested,
+      ...(undertaking.isUndertaking ? { undertaking: undertaking.statement } : {}),
       disposition,
     };
   });
@@ -945,14 +1513,172 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
   const missing = requirements.filter((r) => r.disposition === 'MISSING').length;
   const attention = requirements.filter((r) => r.disposition === 'ATTENTION').length;
 
+  // The two action lists, derived from the requirements above. A document is
+  // attachable when it exists on the register and is not spent — APPROVED
+  // (ready) or PENDING (filed, still to verify); an EXPIRED or REJECTED claim is
+  // not something to send. A requirement nothing attachable answers is one to
+  // resolve in the library first. A PROFILE line needs no document here.
+  const attach = new Map<string, AttachItem>();
+  const toObtain: ObtainItem[] = [];
+  for (const r of requirements) {
+    // An undertaking is confirmed with a statement, not a document, so it sits
+    // in neither list — it belongs to the undertakings section below.
+    if (!r.evidenceRequired || r.disposition === 'PROFILE' || r.disposition === 'UNDERTAKING') continue;
+    const answering = [...r.linked, ...r.suggested];
+    const attachable = answering.filter((c) => c.standing === 'APPROVED' || c.standing === 'PENDING');
+    for (const c of attachable) {
+      let item = attach.get(c.claimId);
+      if (!item) {
+        item = {
+          claimId: c.claimId,
+          reference: c.reference,
+          kind: c.kind,
+          claim: c.claim,
+          standing: c.standing,
+          expiresAt: c.expiresAt,
+          covers: [],
+          linkedRefs: [],
+          suggestedRefs: [],
+        };
+        attach.set(c.claimId, item);
+      }
+      if (!item.covers.includes(r.reference)) item.covers.push(r.reference);
+      const linkedHere = r.linked.some((l) => l.claimId === c.claimId);
+      if (linkedHere) {
+        if (!item.linkedRefs.includes(r.reference)) item.linkedRefs.push(r.reference);
+      } else if (!item.suggestedRefs.includes(r.reference)) {
+        item.suggestedRefs.push(r.reference);
+      }
+    }
+    // "Add to the library" is for the pass/fail evidence gates a document
+    // answers — insurances, accreditations, DBS, policies, references. A scored
+    // question (a weighting at stake) is answered in the submission itself, not
+    // filed as library evidence, and a SUBMISSION-category line is a process
+    // instruction to follow, not a document to obtain. Both are excluded so the
+    // list is the evidence to go and get, not the questions to go and answer.
+    const isEvidenceGate = r.category !== 'SUBMISSION' && r.weightingPercent === undefined;
+    if (attachable.length === 0 && isEvidenceGate) {
+      // Nothing usable answers it: either nothing was ever held (MISSING) or
+      // what was held is expired/rejected and must be replaced (LAPSED).
+      toObtain.push({
+        reference: r.reference,
+        requirement: r.requirement,
+        category: r.category,
+        evidenceRequired: r.evidenceRequired,
+        mandatory: r.mandatory,
+        reason: answering.length === 0 ? 'MISSING' : 'LAPSED',
+      });
+    }
+  }
+  const toAttach = [...attach.values()].sort((a, b) => a.reference.localeCompare(b.reference));
+  // Mandatory first — those end the bid if still open on the day — then by ref.
+  toObtain.sort((a, b) => (a.mandatory === b.mandatory ? a.reference.localeCompare(b.reference) : a.mandatory ? -1 : 1));
+
+  // The compliance undertakings — drafted by the platform, confirmed by a person.
+  const undertakings = requirements
+    .filter((r) => r.undertaking)
+    .map((r) => ({
+      reference: r.reference,
+      requirement: r.requirement,
+      statement: r.undertaking!,
+      confirmed: confirmedUndertakings.has(r.reference),
+    }));
+  const undertakingsPending = undertakings.filter((u) => !u.confirmed).length;
+
   const summary =
     `${covered} of ${requirements.length} requirement(s) covered` +
     (linkSuggested > 0 ? `, ${linkSuggested} with held evidence to link` : '') +
     (attention > 0 ? `, ${attention} with evidence pending or lapsed` : '') +
+    (undertakingsPending > 0 ? `, ${undertakingsPending} undertaking(s) to confirm` : '') +
     (missing > 0 ? `, ${missing} with nothing on file` : '') +
     '.';
 
-  return { analysisId, reference: analysis.reference, asAt: day, requirements, covered, linkSuggested, missing, attention, summary };
+  return {
+    analysisId,
+    reference: analysis.reference,
+    asAt: day,
+    requirements,
+    covered,
+    linkSuggested,
+    missing,
+    attention,
+    toAttach,
+    toObtain,
+    undertakings,
+    summary,
+  };
+}
+
+/**
+ * Confirm the compliance undertakings on an analysis — the lines answered by a
+ * statement, not a document.
+ *
+ * The agent drafts each confirmation (`undertakingFor`); this records that a
+ * person has confirmed it is true, which is the act that turns a drafted
+ * statement into a commitment the business stands behind. It is the 95/5 split
+ * the platform exists for: the drafting is the agent's, the truth of it is a
+ * person's, and the platform never confirms on the company's behalf.
+ *
+ * Idempotent by reference, like the waiver register: an undertaking already
+ * confirmed is left as it is, not written twice. With no `references` it
+ * confirms every undertaking on the matrix; with a subset it confirms only
+ * those. It refuses on a line that is not an undertaking — one that needs a
+ * document or carries a weighting is not a thing to confirm with a sentence.
+ */
+export function confirmUndertakings(
+  ctx: EngineContext,
+  analysisId: string,
+  input: { references?: string[] },
+): { confirmed: UndertakingGiven[]; already: number; total: number } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'A', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireAnalysis(ctx, analysisId);
+  const analysis = readAnalysis(record);
+  const wanted = input.references && input.references.length > 0 ? new Set(input.references) : null;
+
+  const candidates = analysis.matrix.filter((line) => {
+    if (wanted && !wanted.has(line.reference)) return false;
+    return undertakingFor(line).isUndertaking;
+  });
+  if (candidates.length === 0) {
+    throw new DomainError(
+      'NO_UNDERTAKINGS',
+      wanted
+        ? 'None of those references is a compliance undertaking — a line that needs a document or carries a weighting is not confirmed with a statement.'
+        : 'This matrix has no compliance undertaking to confirm — every line is answered by a document or a scored answer.',
+    );
+  }
+
+  const held = undertakingsOf(record);
+  const heldRefs = new Set(held.map((u) => u.reference));
+  const fresh = candidates.filter((line) => !heldRefs.has(line.reference));
+  const already = candidates.length - fresh.length;
+  if (fresh.length === 0) return { confirmed: [], already, total: candidates.length };
+
+  const now = new Date().toISOString();
+  const confirmed: UndertakingGiven[] = fresh.map((line) => ({
+    reference: line.reference,
+    requirement: line.requirement,
+    statement: undertakingFor(line).statement,
+    confirmedBy: ctx.auth.actorId,
+    confirmedAt: now,
+  }));
+
+  // Written against the project the analysis actually lives on, not the caller's
+  // current project. The matrix is looked up tenant-wide (requireAnalysis guards
+  // the tenant, not the project), so an analysis produced under one project and
+  // confirmed from another — which is exactly what happens when the invitation,
+  // the matrix and the working project are separate records — would otherwise
+  // commit the event under the wrong project and be refused by the ledger's
+  // tenant-isolation guard as "Entity belongs to a different tenant or project".
+  write(ctx, {
+    eventType: 'REQUIREMENT_UNDERTAKEN',
+    entity: { refType: 'ITTAnalysis', refId: analysisId },
+    projectId: record.projectId,
+    nextState: { ...(record.state as Record<string, unknown>), undertakings: [...held, ...confirmed] },
+  });
+
+  return { confirmed, already, total: candidates.length };
 }
 
 // --- A requirement consciously not answered -----------------------------------------
@@ -1144,9 +1870,11 @@ export function waiveRequirement(
     grantedAt: new Date().toISOString(),
   };
 
+  // The analysis's own project, not the caller's — same reason as confirmUndertakings.
   write(ctx, {
     eventType: 'REQUIREMENT_WAIVED',
     entity: { refType: 'ITTAnalysis', refId: analysisId },
+    projectId: record.projectId,
     nextState: { ...(record.state as Record<string, unknown>), waivers: [...held, waiver] },
   });
 
@@ -1194,9 +1922,11 @@ export function revokeWaiver(
   };
   const waivers = held.map((waiver, at) => (at === index ? revoked : waiver));
 
+  // The analysis's own project, not the caller's — same reason as confirmUndertakings.
   write(ctx, {
     eventType: 'REQUIREMENT_WAIVER_REVOKED',
     entity: { refType: 'ITTAnalysis', refId: analysisId },
+    projectId: record.projectId,
     nextState: { ...(record.state as Record<string, unknown>), waivers },
   });
 

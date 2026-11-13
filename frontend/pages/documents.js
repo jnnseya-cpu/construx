@@ -478,6 +478,10 @@ export async function documents(root) {
         <div class="actions">
           <button class="btn" id="set-branding">Set the client identity</button>
           <label class="btn quiet" style="cursor:pointer">
+            Upload a logo
+            <input type="file" accept="image/png,image/jpeg" id="logo-file" style="display:none" />
+          </label>
+          <label class="btn quiet" style="cursor:pointer">
             Set the cover image
             <input type="file" accept="image/png,image/jpeg,image/webp" id="cover-file" style="display:none" />
           </label>
@@ -537,12 +541,29 @@ export async function documents(root) {
           value: held?.documentReferencePrefix,
           hint: 'Every document reference starts with this. It is what a page pulled out of a bundle is identified by.',
         },
-        { name: 'logoRef', label: 'Logo, as a data URI', value: held?.logoRef, required: false, hint: 'Optional. A document with no logo is honest; one with somebody else\'s is not.' },
+        { name: 'logoRef', label: 'Logo, as a data URI', value: held?.logoRef, required: false, hint: 'Optional, and the hard way — the "Upload a logo" button takes a PNG or JPEG file instead. A document with no logo is honest; one with somebody else\'s is not.' },
       ],
     });
     if (ok) {
       toast('Identity applied', `${ok.clientName} — every document from here carries it`, 'ok');
       await draw();
+    }
+  });
+
+  document.getElementById('logo-file')?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    brandingError('');
+    try {
+      // Uploaded rather than pasted as a data URI: the same mark the account
+      // header carries belongs on the documents it issues, and asking for base64
+      // is asking the one-director business to do the renderer's job by hand.
+      const stored = await api.upload(`/v1/projects/${projectId}/branding/logo`, file);
+      toast('Logo set', `${Math.round(stored.bytes / 1024)}KB · ${stored.contentType} — on every document from here`, 'ok');
+      await draw();
+    } catch (error) {
+      brandingError(`${error.code ? `${error.code} — ` : ''}${error.message}`);
+      event.target.value = '';
     }
   });
 
@@ -949,6 +970,24 @@ async function issuerPanels(host) {
   const profile = issuer.profile;
   const rules = Object.entries(profile?.numberingRules ?? {});
   const legal = readiness?.legal ?? lifecycle?.legal ?? null;
+  /*
+   * Everything that will refuse Issue, said before Issue is pressed. A test run
+   * reached Issue on an approved quotation and was refused three times running —
+   * company details, then "regenerate, the details changed", then no numbering
+   * rule — while this screen said "Legal documents can be issued under it".
+   * The document types waiting to go out are known; so is which have no rule.
+   */
+  const unruled = [
+    ...new Set(
+      (lifecycle.documents ?? [])
+        .filter((doc) => doc.status !== 'ISSUED' && !profile?.numberingRules?.[doc.documentType])
+        .map((doc) => doc.documentType),
+    ),
+  ];
+  const beforeIssue = [
+    ...(legal && !legal.complete ? [`enter ${(legal.missingLabels ?? legal.missing).join(', ')} under “Set the issuer details” — do this before you generate, because a revision carries the details it was generated with`] : []),
+    ...unruled.map((type) => `set a numbering rule for ${type} under “Set a numbering rule”`),
+  ];
   const statusTone = (status) => (status === 'ISSUED' ? 'ok' : status === 'APPROVED' ? 'ok' : status === 'AWAITING_APPROVAL' ? 'warn' : 'neutral');
   const documentActions = (doc) => {
     const act = (action, label, tone = 'quiet') => html`<button class="btn ${tone} sm" data-document-action="${action}" data-document="${doc.id}" data-title="${doc.title}" data-revision="${doc.revision}" data-hash="${doc.revisions[doc.revisions.length - 1]?.hash ?? ''}">${label}</button>`;
@@ -968,7 +1007,10 @@ async function issuerPanels(host) {
     if (doc.status === 'ISSUED') return html`${read} ${act('download', 'Download')} ${act('supersede', 'Supersede')}`;
     const pending = (lifecycle.issuances ?? []).find((issuance) => issuance.documentId === doc.id && issuance.status === 'PENDING');
     if (pending) return html`${read} ${act('issue', `Retry ${pending.number}`, '')} <button class="btn quiet sm" data-issuance-void="${pending.id}" data-number="${pending.number}">Void number</button>`;
-    if (doc.status === 'DRAFT') return html`${read} ${act('generate', doc.revision === 0 ? 'Generate' : 'Regenerate')}`;
+    // "Generate a revision" — the name the guide strip, the dialog and its toast
+    // all use. The button alone said "Generate", so the guide named a button
+    // that was not on the screen.
+    if (doc.status === 'DRAFT') return html`${read} ${act('generate', doc.revision === 0 ? 'Generate a revision' : 'Regenerate')}`;
     if (doc.status === 'GENERATED') return html`${read} ${act('generate', 'Regenerate')} ${act('submit', 'Submit')} ${act('approve', 'Approve')} ${act('issue', 'Issue', '')}`;
     if (doc.status === 'AWAITING_APPROVAL') return html`${read} ${act('approve', 'Approve', '')} ${act('reject', 'Send back')}`;
     if (doc.status === 'APPROVED') return html`${read} ${act('issue', 'Issue', '')} ${act('reject', 'Send back')} ${act('generate', 'Regenerate')}`;
@@ -988,7 +1030,7 @@ async function issuerPanels(host) {
             ${legal
               ? html`<div class="notice ${legal.complete ? '' : 'warn'}" style="margin-bottom:12px"><div>
                   <b>Registered issuer ${legal.complete ? 'complete' : 'incomplete'}</b> · ${humanise((profile.legal?.state ?? legal.verification ?? 'UNVERIFIED').toLowerCase())}${profile.legal?.verifiedAt ? html` on ${date(profile.legal.verifiedAt)}` : ''}.
-                  ${legal.complete ? 'Legal documents can be issued under it; the platform operator verifies the details against the register.' : html`Missing: ${legal.missing.join(', ')}. Nothing is issued until they are entered — no detail is guessed.`}
+                  ${legal.complete ? `The registered details are complete; the platform operator verifies them against the register.${unruled.length ? ` No numbering rule yet for ${unruled.join(', ')} — nothing of that type can be issued until one is set.` : ''}` : html`Missing: ${(legal.missingLabels ?? legal.missing).join(', ')}. Nothing is issued until they are entered — no detail is guessed.`}
                 </div></div>`
               : ''}
             <div class="grid g3" style="gap:14px">
@@ -1034,6 +1076,12 @@ async function issuerPanels(host) {
               hashed manifest; an approval names the hash it approved; issuing reserves the number first and finishes with the same
               number on a retry. An issued document never changes — a correction supersedes it.
             </div>
+            ${beforeIssue.length && (lifecycle.documents ?? []).some((doc) => doc.status !== 'ISSUED')
+              ? html`<div class="notice warn" style="margin:0 17px 10px" data-before-issue><div>
+                  <b>Before a document here can be issued</b>
+                  <ol style="margin:6px 0 0 18px">${beforeIssue.map((step) => html`<li>${step}</li>`)}</ol>
+                </div></div>`
+              : ''}
             ${table({
               headers: ['Type', 'Title', 'Status', 'Revision', 'Number', 'Updated', ''],
               rows: (lifecycle.documents ?? []).map((doc) => [
@@ -1234,8 +1282,14 @@ async function issuerPanels(host) {
       path: '/v1/documents/lifecycle',
       submitLabel: 'Open the draft',
       fields: [
-        { name: 'documentType', label: 'Document type', type: 'select', options: (lifecycle.documentTypes ?? []).map((t) => ({ value: t, label: t })) },
-        { name: 'title', label: 'Title', placeholder: 'Quotation — welfare village, phase 1' },
+        {
+          name: 'documentType',
+          label: 'Document type',
+          type: 'select',
+          options: (lifecycle.documentTypes ?? []).map((t) => ({ value: t, label: t })),
+          hint: 'A quotation is drawn from a priced estimate — use "Draw up the quotation" on Tender & Procurement so it carries the priced lines and total. Opened blank here it goes out empty.',
+        },
+        { name: 'title', label: 'Title', placeholder: 'e.g. Method statement — welfare village, phase 1' },
         { name: 'body', label: 'Rows', type: 'textarea', required: false, placeholder: 'Client: Riverside Depot Ltd\nTotal excl. VAT: 48,500.00\nValidity: 30 days', hint: 'One row per line, label: value' },
         { name: 'sourceRefType', label: 'Source record type', required: false, placeholder: 'Project' },
         { name: 'sourceRefId', label: 'Source record id', required: false },
@@ -1333,7 +1387,12 @@ async function issuerPanels(host) {
             path: '/v1/documents/lifecycle',
             submitLabel: 'Open the superseding draft',
             fields: [
-              { name: 'title', label: 'Title', value: `${doc.title} (revised)` },
+              // The client's copy carries no "(revised)" — the supersession is
+              // recorded against the document (supersedes: doc.id) and shown in
+              // its own history, not stamped on the title the buyer reads. Any
+              // "(revised)" already stacked onto an earlier title is stripped, so
+              // a second supersession does not read "(revised) (revised)".
+              { name: 'title', label: 'Title', value: String(doc.title ?? '').replace(/(\s*\(revised\))+\s*$/i, '') },
               { name: 'body', label: 'Rows', type: 'textarea', value: Object.entries(doc.body ?? {}).map(([k, v]) => `${k}: ${v}`).join('\n') },
             ],
             transform: (v) => ({ documentType: doc.documentType, title: v.title, body: parseRows(v.body), supersedes: doc.id, ...(doc.source ? { source: doc.source } : {}) }),
@@ -1534,18 +1593,18 @@ export async function editRegisteredDetails(issuer) {
     fields: [
       { name: 'registeredName', label: 'Registered name', value: a.registeredName },
       { name: 'tradingName', label: 'Trading name', value: a.tradingName, required: false },
-      { name: 'registrationNo', label: 'Company number', value: a.registrationNo, required: false, hint: 'Companies House, RCCM or equivalent' },
+      { name: 'registrationNo', label: 'Company number', value: a.registrationNo, required: false, hint: 'Companies House, RCCM or equivalent. Needed before a quotation, invoice or contract can be issued.' },
       { name: 'vatNumber', label: 'VAT number', value: a.vatNumber, required: false },
-      { name: 'line1', label: 'Registered address', value: a.registeredAddress.line1, required: false },
+      { name: 'line1', label: 'Registered address', value: a.registeredAddress.line1, required: false, hint: 'Needed before a quotation, invoice or contract can be issued.' },
       // The second line had no input at all. It was in the model, read out of
       // the existing profile and written straight back on every save, so the
       // only way a company could ever have one was for something other than
       // this form to have put it there — and nothing else writes it. A field
       // that cannot be filled in is a field that does not exist.
       { name: 'line2', label: 'Address line 2', value: a.registeredAddress.line2 ?? '', required: false },
-      { name: 'city', label: 'City', value: a.registeredAddress.city, required: false },
+      { name: 'city', label: 'City', value: a.registeredAddress.city, required: false, hint: 'Needed before a quotation, invoice or contract can be issued.' },
       { name: 'postcode', label: 'Postcode', value: a.registeredAddress.postcode, required: false },
-      { name: 'country', label: 'Country code', value: a.registeredAddress.country, required: false, hint: 'GB, CD, FR…' },
+      { name: 'country', label: 'Country code', value: a.registeredAddress.country, required: false, hint: 'GB, CD, FR… Needed before a quotation, invoice or contract can be issued.' },
       { name: 'phone', label: 'Phone', value: a.contact.phone, required: false },
       { name: 'email', label: 'Email', value: a.contact.email, required: false },
       { name: 'web', label: 'Web', value: a.contact.web, required: false },

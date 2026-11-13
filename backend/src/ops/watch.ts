@@ -6,6 +6,7 @@ import { ping, scannerAddress, scannerConfigured } from '../evidence/scanner.ts'
 import { entriesByCodePrefix, outboxPosition, queue } from '../notifications/outbox.ts';
 import { deliveries } from '../notifications/notify.ts';
 import { webhookHealth } from '../billing/stripe.ts';
+import { postOpsWebhook } from './opswebhook.ts';
 import { issuancesOf } from '../group/issuance.ts';
 import type { Platform } from '../platform.ts';
 import { backupStanding } from './backup.ts';
@@ -649,10 +650,12 @@ async function postWebhook(
   at: string,
   onCall?: OnCallNow,
 ): Promise<void> {
-  const url = config.ops.alertWebhookUrl;
-  if (url === '') return;
+  if (config.ops.alertWebhookUrl === '') return;
   const headline = `${transition === 'RESOLVED' ? 'RESOLVED' : rule.severity}: ${rule.what} — ${observation.detail}`;
-  const body = JSON.stringify({
+  webhookState = { ...webhookState, configured: true, lastAttemptAt: new Date().toISOString() };
+  // The POST itself lives in `postOpsWebhook`, shared with the support-report
+  // channel; this keeps the watch's own view of what happened to its alerts.
+  const result = await postOpsWebhook({
     // `text` is what Slack, Teams, Discord and most uptime services read.
     // The on-call name is in it, so a channel full of people knows whose it is.
     text: `[CONSTRUX] ${headline}${onCall?.person ? ` — on call: ${onCall.person.name}` : ''}`,
@@ -669,18 +672,10 @@ async function postWebhook(
     publicBaseUrl: config.publicBaseUrl,
     ...(onCall?.person ? { onCall: { name: onCall.person.name, email: onCall.person.email, until: onCall.until, byOverride: onCall.byOverride } } : {}),
   });
-  webhookState = { ...webhookState, configured: true, lastAttemptAt: new Date().toISOString() };
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'user-agent': 'construx-watch/1' },
-      body,
-      signal: AbortSignal.timeout(5_000),
-    });
-    webhookState = { ...webhookState, lastStatus: response.status, ...(response.ok ? { lastError: undefined } : { lastError: `HTTP ${response.status}` }) };
-  } catch (error) {
-    webhookState = { ...webhookState, lastStatus: undefined, lastError: error instanceof Error ? error.message : String(error) };
-  }
+  webhookState =
+    result.status !== undefined
+      ? { ...webhookState, lastStatus: result.status, ...(result.ok ? { lastError: undefined } : { lastError: result.error }) }
+      : { ...webhookState, lastStatus: undefined, lastError: result.error };
 }
 
 export type WatchPosition = {

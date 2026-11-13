@@ -19,6 +19,8 @@ import { commands } from './commands.js';
 import { commercial } from './commercial.js';
 import { company } from './company.js';
 import { concept } from './concept.js';
+import { consultancy } from './consultancy.js';
+import { grid } from './grid.js';
 import { communications } from './communications.js';
 import { contracts } from './contracts.js';
 import { construction } from './construction.js';
@@ -45,6 +47,7 @@ import { overview } from './overview.js';
 import { partners } from './partners.js';
 import { performance } from './performance.js';
 import { pipeline } from './pipeline.js';
+import { feasibility } from './feasibility.js';
 import { procurement } from './procurement.js';
 import { programme } from './programme.js';
 import { reports } from './reports.js';
@@ -79,6 +82,9 @@ export const PAGES = {
   team,
   group,
   pipeline,
+  feasibility,
+  consultancy,
+  grid,
   programme,
   field,
   construction,

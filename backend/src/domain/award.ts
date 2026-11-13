@@ -156,6 +156,96 @@ export function recordSubmission(
   return { packId, contentHash, receivedAt: receipt.receivedAt };
 }
 
+/**
+ * Record a bid submitted on the buyer's own portal, not assembled in the platform.
+ *
+ * The in-house path — compile a pack, lock a content hash, record a receipt that
+ * names that hash — proves exactly what was submitted and when. A one-person firm
+ * that writes its answers straight onto In-Tend has none of that, and without a
+ * pack on the record the whole bid flow reads the tender as still in preparation:
+ * the guide nags "assign returns" and "write the submission" on a bid that went in
+ * a week ago, and no outcome can be recorded against it.
+ *
+ * This is the bridge. It records the fact the bid was submitted — the date and the
+ * portal's reference — as a `BidSubmissionPack` already in `SUBMITTED`, flagged
+ * `externallySubmitted` so nothing downstream mistakes it for a pack the platform
+ * compiled and checked. The flow then reads the tender as submitted (the guide
+ * points at recording the outcome), and the award view shows it awaiting a result.
+ *
+ * It makes no claim it cannot stand behind: there is no content hash over a
+ * document the platform never held, so the hash is taken over the recorded facts
+ * themselves, and the receipt names the portal reference the firm was given.
+ */
+export function recordExternalSubmission(
+  ctx: EngineContext,
+  input: { submittedOn: string; portalReference: string; channel?: SubmissionChannel },
+): { packId: string; submittedOn: string; reference: string } {
+  authorise(ctx, 'PROCUREMENT_AWARD', 'I', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  const clientName = String(project.state.clientName ?? project.state.name ?? '');
+
+  const reference = String(input.portalReference ?? '').trim();
+  if (reference.length < 2) {
+    throw new DomainError(
+      'PORTAL_REFERENCE_REQUIRED',
+      'A submission needs the reference the portal gave back when the bid went in. "Submitted" on its own is not a record.',
+      422,
+      [{ field: 'portalReference', message: 'The reference the portal returned' }],
+    );
+  }
+  const submittedOn = String(input.submittedOn ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(submittedOn)) {
+    throw new DomainError('SUBMISSION_DATE_REQUIRED', 'A submission needs the date it was sent.', 422, [
+      { field: 'submittedOn', message: 'The date it was submitted' },
+    ]);
+  }
+
+  // One external submission per tender. A re-submission is a new record, not a
+  // second note on this one — the same rule recordSubmission holds.
+  const existing = ctx.ledger
+    .list(ctx.projectId, 'BidSubmissionPack')
+    .find((record) => record.state.externallySubmitted === true);
+  if (existing) {
+    const prior = (existing.state.submission as { reference?: string; receivedAt?: string } | undefined) ?? {};
+    throw new DomainError(
+      'ALREADY_SUBMITTED',
+      `This tender was already recorded as submitted on ${String(prior.receivedAt ?? '')} (${String(prior.reference ?? '')}). ` +
+        'A resubmission is a new record, not a second note on this one.',
+      409,
+    );
+  }
+
+  const packId = ulid();
+  // No document was held, so the hash is taken over the recorded facts rather than
+  // over content that does not exist — honest about what it stands for.
+  const contentHash = hashEvidence(JSON.stringify({ project: ctx.projectId, reference, submittedOn, externally: true }));
+  const pack = {
+    id: packId,
+    clientName,
+    status: 'SUBMITTED' as const,
+    externallySubmitted: true,
+    contentHash,
+    submission: {
+      reference,
+      receivedAt: submittedOn,
+      channel: input.channel ?? 'PORTAL',
+      externally: true,
+      submittedPackHash: contentHash,
+    },
+    submittedAt: new Date().toISOString(),
+    submittedBy: ctx.auth.actorId,
+  };
+
+  write(ctx, {
+    eventType: 'BID_SUBMITTED_EXTERNALLY',
+    entity: { refType: 'BidSubmissionPack', refId: packId },
+    nextState: pack as unknown as Record<string, unknown>,
+  });
+
+  return { packId, submittedOn, reference };
+}
+
 // --- Award -------------------------------------------------------------------
 
 export const AWARD_OUTCOME = ['WON', 'LOST', 'WITHDRAWN'] as const;
@@ -396,6 +486,14 @@ export function recordAward(
     winner?: { name?: string; sumMinor?: number };
     notes?: string;
     evidenceHash?: string;
+    /**
+     * The standstill period the award notice opened, where one applies. Why a
+     * bid was lost — the reason class, the marks, the winning price — lives on the
+     * opportunity's own outcome (`recordOutcome`), which is the single record the
+     * calibration reads; the award notice is where the *standstill* is recorded,
+     * because that window is a fact about the notice, not the pursuit.
+     */
+    standstillEndsOn?: string;
   },
 ): { outcome: AwardOutcome; departures: Departure[] } {
   authorise(ctx, 'PROCUREMENT_AWARD', 'A', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
@@ -477,6 +575,9 @@ export function recordAward(
         // the outcome, because the register is read across jobs.
         winner: input.winner,
         notes: input.notes,
+        // The standstill the notice opened, counted down in awardPosition. The
+        // reason a bid was lost lives on the opportunity outcome, not here.
+        ...(input.standstillEndsOn ? { standstillEndsOn: input.standstillEndsOn } : {}),
         recordedAt: new Date().toISOString(),
         recordedBy: ctx.auth.actorId,
       },
@@ -616,6 +717,238 @@ export function resolveQualification(
   });
 
   return { qualification: input.qualification, standing: input.standing, unresolved };
+}
+
+// --- Post-tender control -----------------------------------------------------
+//
+// Between submission and award the bid is not idle: the buyer asks questions,
+// and may challenge an abnormally low price. Both are where a scored bid is lost
+// after the work is done — a question answered off the record that the evaluator
+// never saw tied to the bid, or a price nobody substantiated when the Act gave a
+// right to. Both are logged against the submission pack.
+
+export const QUERY_IMPACT = ['NONE', 'PRICE', 'SCOPE', 'PROGRAMME'] as const;
+export type QueryImpact = (typeof QUERY_IMPACT)[number];
+
+export type PostTenderQuery = {
+  id: string;
+  question: string;
+  /** When the buyer asked it. */
+  receivedOn: string;
+  /** The buyer's deadline for our reply, where one was set. */
+  replyDueBy?: string;
+  reply?: string;
+  /** What answering it changed, if anything. A query that moved the price is not a clarification. */
+  impact?: QueryImpact;
+  answeredOn?: string;
+  raisedBy: string;
+  answeredBy?: string;
+};
+
+function requireSubmittedPack(ctx: EngineContext, packId: string): EntityRecord {
+  const pack = requirePack(ctx, packId);
+  if (!pack.state.submission) {
+    throw new DomainError(
+      'NOT_SUBMITTED',
+      'There is no post-tender activity on a pack that was never submitted. Record the submission first.',
+    );
+  }
+  return pack;
+}
+
+/**
+ * Log a buyer's post-tender question against the submitted pack.
+ *
+ * It is the buyer's question, transcribed by somebody holding the portal message
+ * — not a judgement an agent makes — so `aiAllowed` is false on the event and
+ * this takes `U`. The value is that the answer, when it comes, is tied to the bid
+ * and the evaluator's view of it, rather than living in an inbox.
+ */
+export function logPostTenderQuery(
+  ctx: EngineContext,
+  packId: string,
+  input: { question: string; receivedOn: string; replyDueBy?: string },
+): { queryId: string; open: number } {
+  authorise(ctx, 'PROCUREMENT_AWARD', 'U', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  if (!input.question?.trim()) throw new DomainError('QUERY_TEXT_REQUIRED', 'A post-tender query needs the question the buyer asked.');
+  if (!input.receivedOn?.trim()) throw new DomainError('QUERY_DATE_REQUIRED', 'A post-tender query needs the date it was received.');
+
+  const pack = requireSubmittedPack(ctx, packId);
+  const existing = (pack.state.postTenderQueries as PostTenderQuery[] | undefined) ?? [];
+  const query: PostTenderQuery = {
+    id: `PTQ-${String(existing.length + 1).padStart(2, '0')}`,
+    question: input.question.trim(),
+    receivedOn: input.receivedOn.trim(),
+    ...(input.replyDueBy?.trim() ? { replyDueBy: input.replyDueBy.trim() } : {}),
+    raisedBy: ctx.auth.actorId,
+  };
+  const postTenderQueries = [...existing, query];
+
+  write(ctx, {
+    eventType: 'POST_TENDER_QUERY_RAISED',
+    entity: { refType: 'BidSubmissionPack', refId: packId },
+    nextState: { ...pack.state, postTenderQueries },
+  });
+
+  return { queryId: query.id, open: postTenderQueries.filter((q) => !q.reply).length };
+}
+
+/**
+ * Record our reply to a post-tender query, and what it changed.
+ *
+ * Naming the impact is the point: a query that moved the price or the scope is
+ * not a clarification, and a reply that quietly changed what was bid without the
+ * change going anywhere else is the one the award departs on.
+ */
+export function answerPostTenderQuery(
+  ctx: EngineContext,
+  packId: string,
+  queryId: string,
+  input: { reply: string; impact: QueryImpact },
+): { queryId: string; impact: QueryImpact; open: number } {
+  authorise(ctx, 'PROCUREMENT_AWARD', 'U', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  if (!input.reply?.trim()) throw new DomainError('REPLY_REQUIRED', 'A reply records what we told the buyer. "Answered" is not an answer.');
+  if (!QUERY_IMPACT.includes(input.impact)) {
+    throw new DomainError('QUERY_IMPACT_REQUIRED', `Say what answering it changed: one of ${QUERY_IMPACT.join(', ')}.`);
+  }
+
+  const pack = requireSubmittedPack(ctx, packId);
+  const existing = (pack.state.postTenderQueries as PostTenderQuery[] | undefined) ?? [];
+  const target = existing.find((q) => q.id === queryId);
+  if (!target) {
+    throw new DomainError('QUERY_NOT_FOUND', `This pack holds no post-tender query ${queryId}.`, 404);
+  }
+  if (target.reply) {
+    throw new DomainError('QUERY_ALREADY_ANSWERED', `${queryId} was already answered on ${target.answeredOn}. A reply is written once.`);
+  }
+
+  const postTenderQueries = existing.map((q) =>
+    q.id === queryId
+      ? { ...q, reply: input.reply.trim(), impact: input.impact, answeredOn: new Date().toISOString(), answeredBy: ctx.auth.actorId }
+      : q,
+  );
+
+  write(ctx, {
+    eventType: 'POST_TENDER_QUERY_ANSWERED',
+    entity: { refType: 'BidSubmissionPack', refId: packId },
+    nextState: { ...pack.state, postTenderQueries },
+  });
+
+  return { queryId, impact: input.impact, open: postTenderQueries.filter((q) => !q.reply).length };
+}
+
+export type PriceChallenge = {
+  /** When the buyer raised the abnormally-low-price challenge. */
+  raisedOn: string;
+  /** The buyer's deadline for our substantiation. */
+  responseDueBy?: string;
+  /** What the buyer said looked abnormally low. */
+  concern?: string;
+  raisedBy: string;
+  substantiation?: {
+    submittedAt: string;
+    submittedBy: string;
+    /** The evidence lines — productivity, quantities, supplier coverage, programme, exclusions, cost drivers. */
+    basis: string[];
+    /** The direct cost the price rests on, where it is being demonstrated. */
+    directCostMinor?: number;
+    /** The net margin on the offered price, so "abnormally low" can be answered with the actual figure. */
+    netMarginPercent?: number;
+  };
+};
+
+/**
+ * Record that the buyer has challenged the price as abnormally low.
+ *
+ * Under the Procurement Act the buyer must give a reasonable opportunity to
+ * demonstrate the price can be performed at before disregarding the tender on
+ * that ground. Logging the challenge is what starts that clock on the record.
+ */
+export function recordPriceChallenge(
+  ctx: EngineContext,
+  packId: string,
+  input: { raisedOn: string; responseDueBy?: string; concern?: string },
+): { raisedOn: string } {
+  authorise(ctx, 'PROCUREMENT_AWARD', 'U', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  if (!input.raisedOn?.trim()) throw new DomainError('CHALLENGE_DATE_REQUIRED', 'A price challenge needs the date the buyer raised it.');
+
+  const pack = requireSubmittedPack(ctx, packId);
+  if (pack.state.priceChallenge) {
+    throw new DomainError('CHALLENGE_ALREADY_RAISED', 'A price challenge is already on this pack. Substantiate it rather than raising a second.');
+  }
+
+  const challenge: PriceChallenge = {
+    raisedOn: input.raisedOn.trim(),
+    ...(input.responseDueBy?.trim() ? { responseDueBy: input.responseDueBy.trim() } : {}),
+    ...(input.concern?.trim() ? { concern: input.concern.trim() } : {}),
+    raisedBy: ctx.auth.actorId,
+  };
+
+  write(ctx, {
+    eventType: 'PRICE_CHALLENGE_RAISED',
+    entity: { refType: 'BidSubmissionPack', refId: packId },
+    nextState: { ...pack.state, priceChallenge: challenge },
+  });
+
+  return { raisedOn: challenge.raisedOn };
+}
+
+/**
+ * Substantiate the price against an abnormally-low challenge.
+ *
+ * The substantiation is the evidence the bid can be performed at the offered
+ * price: the cost build-up, productivity, supplier coverage, programme and the
+ * exclusions that explain the number — the same things the settlement already
+ * holds. Recorded so the response that kept the bid in is on the thread, not in
+ * an email nobody can find when the next one lands.
+ */
+export function substantiatePriceChallenge(
+  ctx: EngineContext,
+  packId: string,
+  input: { basis: string[]; directCostMinor?: number; netMarginPercent?: number },
+): { substantiatedAt: string; lines: number } {
+  authorise(ctx, 'PROCUREMENT_AWARD', 'U', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const basis = (input.basis ?? []).map((line) => line.trim()).filter(Boolean);
+  if (basis.length === 0) {
+    throw new DomainError(
+      'SUBSTANTIATION_REQUIRED',
+      'Substantiation is the evidence the price can be performed at — the cost build-up, productivity, supplier coverage, programme and exclusions. An empty response is a withdrawal.',
+    );
+  }
+
+  const pack = requireSubmittedPack(ctx, packId);
+  const challenge = pack.state.priceChallenge as PriceChallenge | undefined;
+  if (!challenge) {
+    throw new DomainError('NO_CHALLENGE', 'There is no price challenge on this pack to substantiate. Record the buyer’s challenge first.');
+  }
+  if (challenge.substantiation) {
+    throw new DomainError('ALREADY_SUBSTANTIATED', 'This price challenge has already been substantiated.');
+  }
+
+  const submittedAt = new Date().toISOString();
+  write(ctx, {
+    eventType: 'PRICE_CHALLENGE_SUBSTANTIATED',
+    entity: { refType: 'BidSubmissionPack', refId: packId },
+    nextState: {
+      ...pack.state,
+      priceChallenge: {
+        ...challenge,
+        substantiation: {
+          submittedAt,
+          submittedBy: ctx.auth.actorId,
+          basis,
+          ...(input.directCostMinor !== undefined ? { directCostMinor: Math.round(input.directCostMinor) } : {}),
+          ...(input.netMarginPercent !== undefined ? { netMarginPercent: input.netMarginPercent } : {}),
+        },
+      },
+    },
+  });
+
+  return { substantiatedAt: submittedAt, lines: basis.length };
 }
 
 // --- Conversion --------------------------------------------------------------
@@ -799,6 +1132,13 @@ export type AwardPosition = {
     qualificationsUnresolved: number;
     converted: boolean;
     contractSumMinor?: number;
+    /** The standstill window the award notice opened, counted down. */
+    standstill?: { endsOn: string; daysRemaining: number };
+    /** Buyer questions during evaluation, and how many are still unanswered. */
+    postTenderQueries?: PostTenderQuery[];
+    queriesOpen?: number;
+    /** An abnormally-low-price challenge, and whether it has been substantiated. */
+    priceChallenge?: { raisedOn: string; responseDueBy?: string; substantiated: boolean };
   }>;
   /**
    * Every qualification the award said nothing about, across every pack.
@@ -817,13 +1157,29 @@ export function awardPosition(ctx: EngineContext): AwardPosition {
   const packs = ctx.ledger.list(ctx.projectId, 'BidSubmissionPack').map((record) => {
     const state = record.state;
     const submission = state.submission as (SubmissionReceipt & { submittedPackHash?: string }) | undefined;
-    const award = state.award as { outcome?: AwardOutcome; terms?: AwardedTerms } | undefined;
+    const award = state.award as
+      | { outcome?: AwardOutcome; terms?: AwardedTerms; standstillEndsOn?: string }
+      | undefined;
     const departures = (state.departures as Array<Departure & { id: string; status: string }>) ?? [];
+    const queries = (state.postTenderQueries as PostTenderQuery[] | undefined) ?? [];
+    const priceChallenge = state.priceChallenge as PriceChallenge | undefined;
+    // A standstill is a window, and what a bidder needs is how long is left in it
+    // — a challenge filed after it closes is out of time. Computed, not stored, so
+    // it is right whenever it is read.
+    const standstill = award?.standstillEndsOn
+      ? {
+          endsOn: award.standstillEndsOn,
+          daysRemaining: Math.ceil(
+            (new Date(`${award.standstillEndsOn}T23:59:59Z`).getTime() - Date.now()) / 86_400_000,
+          ),
+        }
+      : undefined;
 
     return {
       packId: String(state.id),
       contentHash: String(state.contentHash),
       status: String(state.status),
+      ...(standstill ? { standstill } : {}),
       submitted: submission
         ? {
             reference: submission.reference,
@@ -838,6 +1194,17 @@ export function awardPosition(ctx: EngineContext): AwardPosition {
       outcome: award?.outcome,
       departures,
       departuresOutstanding: departures.filter((d) => d.status === 'OPEN').length,
+      postTenderQueries: queries,
+      queriesOpen: queries.filter((q) => !q.reply).length,
+      ...(priceChallenge
+        ? {
+            priceChallenge: {
+              raisedOn: priceChallenge.raisedOn,
+              ...(priceChallenge.responseDueBy ? { responseDueBy: priceChallenge.responseDueBy } : {}),
+              substantiated: priceChallenge.substantiation !== undefined,
+            },
+          }
+        : {}),
       qualificationStandings: (state.qualificationStandings as QualificationStanding[] | undefined) ?? [],
       qualificationsUnresolved: ((state.qualificationStandings as QualificationStanding[] | undefined) ?? []).filter(
         (entry) => entry.standing === 'UNRESOLVED',
@@ -850,11 +1217,15 @@ export function awardPosition(ctx: EngineContext): AwardPosition {
   const unresolved = packs.reduce((sum, p) => sum + p.qualificationsUnresolved, 0);
   const outstanding = packs.reduce((sum, p) => sum + p.departuresOutstanding, 0);
   const mismatched = packs.filter((p) => p.submitted && !p.submitted.hashMatches).length;
+  const queriesOpen = packs.reduce((sum, p) => sum + (p.queriesOpen ?? 0), 0);
+  const challengesOpen = packs.filter((p) => p.priceChallenge && !p.priceChallenge.substantiated).length;
 
   const parts = [`${packs.length} submission pack${packs.length === 1 ? '' : 's'}`];
   const won = packs.filter((p) => p.outcome === 'WON').length;
   const lost = packs.filter((p) => p.outcome === 'LOST').length;
   if (won > 0 || lost > 0) parts.push(`${won} won, ${lost} lost`);
+  if (queriesOpen > 0) parts.push(`${queriesOpen} post-tender quer${queriesOpen === 1 ? 'y' : 'ies'} to answer`);
+  if (challengesOpen > 0) parts.push(`${challengesOpen} price challenge${challengesOpen === 1 ? '' : 's'} to substantiate`);
   if (outstanding > 0) parts.push(`${outstanding} award departure${outstanding === 1 ? '' : 's'} still open`);
   if (unresolved > 0) {
     parts.push(

@@ -3,6 +3,7 @@ import { before, describe, it } from 'node:test';
 import { rejectsCode, throwsCode } from './helpers.ts';
 import * as bidresponse from '../src/domain/bidresponse.ts';
 import * as evidence from '../src/domain/evidenceclaim.ts';
+import * as structure from '../src/domain/structure.ts';
 import * as itt from '../src/domain/itt.ts';
 import * as redteam from '../src/domain/redteam.ts';
 import { ROUTES } from '../src/api/routes.ts';
@@ -321,6 +322,23 @@ describe('severity is a gate', () => {
     assert.match(String(error.message), /no response/);
   });
 
+  it('runs as checks only when asked, spends nothing, and counts as a current review for the issue gate', async () => {
+    // The human route to issue: the deterministic lenses with no model, cleared
+    // by a named person's decisions. Before this every review sent the pack to
+    // a provider, and an empty wallet blocked even the checks that cost nothing.
+    const { review, acuConsumed } = await redteam.challengeSubmission(asQS(), { packId, withModel: false });
+    assert.equal(acuConsumed, 0);
+    assert.equal(review.modelChallenge.ran, false);
+    assert.match(review.modelChallenge.reason ?? '', /by choice, at no cost/);
+    assert.ok(review.findings.every((entry) => entry.raisedBy !== 'MODEL'), 'no finding claims a model raised it');
+    const pack = bidresponse.bidResponsePack(asQS(), packId);
+    assert.equal(redteam.assuranceStanding(review, pack).current, true, 'a checks-only review is a review of the pack as it stands');
+    // Reachable from the console as its own route, and not quoted as AI.
+    const route = ROUTES.find((r) => r.pattern === '/v1/projects/:projectId/bid-responses/:packId/checks');
+    assert.ok(route, 'no route for the checks-only review');
+    assert.equal(route.ai, undefined, 'a review that calls no provider must not be quoted as one');
+  });
+
   it('refuses a review of an earlier version of the pack', async () => {
     const { review } = await redteam.challengeSubmission(asQS(), { packId });
     const before_ = bidresponse.bidResponsePack(asQS(), packId);
@@ -378,6 +396,34 @@ describe('severity is a gate', () => {
       () => redteam.disposeFinding(asOwner(), review.id, high.id, { decision: 'FIXED', note: 'Changed my mind about it' }),
       'FINDING_DISPOSED',
     );
+  });
+
+  it('carries a recorded decision onto the same finding when the review is re-run', async () => {
+    // The defect a bidder hit: fix one critical finding, re-run the review, and
+    // every decision recorded against the other findings is gone — 27 of them to
+    // record again. A re-run rebuilds the findings, but a decision true a minute
+    // ago is still true, so it must carry onto the same finding.
+    const first = (await redteam.challengeSubmission(asQS(), { packId })).review;
+    const high = first.findings.find(
+      (entry) => (entry.severity === 'HIGH' || entry.severity === 'MEDIUM') && !entry.disposition,
+    );
+    assert.ok(high, 'no undisposed high or medium finding to decide');
+
+    redteam.disposeFinding(asOwner(), first.id, high.id, {
+      decision: 'ACCEPTED',
+      note: 'Evidence is attached separately in the submission, per the invitation.',
+    });
+
+    // Re-run — nothing about the pack changed, so this finding comes back.
+    const second = (await redteam.challengeSubmission(asQS(), { packId })).review;
+    assert.notEqual(second.id, first.id, 'the re-run produced a new review');
+    const sameAgain = second.findings.find(
+      (entry) => entry.severity === high.severity && entry.reference === high.reference && entry.title === high.title,
+    );
+    assert.ok(sameAgain, 'the finding did not come back on the re-run');
+    assert.equal(sameAgain.disposition?.decision, 'ACCEPTED', 'the recorded decision was lost on re-run');
+    assert.match(sameAgain.disposition!.note, /attached separately/);
+    assert.equal(sameAgain.disposition?.by, seed.users.owner!.auth.actorId, 'the decision lost who made it');
   });
 
   it('refuses a finding that is not on the review', async () => {
@@ -585,6 +631,56 @@ describe('the evidence lens, on the day the buyer reads it', () => {
     // Asserted, unverified, and expiring two months before the return date.
     // Both are the red team's business and neither is a completeness question.
     assert.ok(review.findings.some((entry) => entry.reference === 'R-03'));
+  });
+
+  it('does not report a clause answered by a written method statement as unevidenced', () => {
+    const line = (reference: string) => ({
+      reference, category: 'CONTRACT', requirement: 'Complete the Services with all reasonable skill and care',
+      mandatory: true, owner: 'OWNER', evidenceRequired: 'Complete the Services with all reasonable skill and care', status: 'GAP',
+    });
+    const pack = (sections: unknown[]) => ({
+      id: 'p', reference: 'BID-0001', projectId: 'x', analysisId: 'a', clientName: 'c',
+      returnBy: '2027-03-01T12:00:00.000Z', sections, deadlines: [], status: 'DRAFTING', passes: 1,
+      plannedAt: '2026-01-01T00:00:00.000Z', plannedBy: 'u',
+    }) as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['pack'];
+    const run = (sections: unknown[]) => redteam.evaluatorFindings({
+      pack: pack(sections),
+      matrix: [line('C-1')] as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['matrix'],
+      waivedKeys: new Set(), claims: [], staleKeys: new Map(),
+    });
+
+    // A written method statement answers the contractual obligation.
+    const answered = run([{ key: 'C-1', title: 'Skill and care', deliverable: 'd', owner: 'OWNER', mandatory: true, status: 'DRAFTED', words: 120, body: ['We will complete the Services with all reasonable skill and care, by the controls below.'] }]);
+    assert.equal(answered.some((f) => f.title.includes('asks for evidence nothing answers')), false, 'a clause with a drafted section was called unevidenced');
+
+    // The same clause with no section written still fires — nothing answers it.
+    const empty = run([]);
+    assert.equal(empty.some((f) => f.reference === 'C-1' && f.title.includes('asks for evidence nothing answers')), true, 'a genuinely unanswered clause stopped firing');
+  });
+
+  it('does not report a clause answered by a confirmed compliance undertaking as unevidenced', () => {
+    const line = {
+      reference: 'C-9', category: 'CONTRACT', requirement: 'Comply with the terms of this agreement',
+      mandatory: true, owner: 'OWNER', evidenceRequired: 'Comply with the terms of this agreement', status: 'GAP',
+    };
+    const pack = {
+      id: 'p', reference: 'BID-0001', projectId: 'x', analysisId: 'a', clientName: 'c',
+      returnBy: '2027-03-01T12:00:00.000Z', sections: [], deadlines: [], status: 'DRAFTING', passes: 1,
+      plannedAt: '2026-01-01T00:00:00.000Z', plannedBy: 'u',
+    } as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['pack'];
+    const base = {
+      pack,
+      matrix: [line] as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['matrix'],
+      waivedKeys: new Set<string>(), claims: [], staleKeys: new Map<string, string>(),
+    };
+
+    // No section, no claim, but the bidder has confirmed the undertaking → answered.
+    const confirmed = redteam.evaluatorFindings({ ...base, undertakingRefs: new Set(['C-9']) });
+    assert.equal(confirmed.some((f) => f.title.includes('asks for evidence nothing answers')), false, 'a confirmed undertaking was treated as unevidenced');
+
+    // Nothing confirmed → still fires.
+    const notConfirmed = redteam.evaluatorFindings({ ...base, undertakingRefs: new Set<string>() });
+    assert.equal(notConfirmed.some((f) => f.reference === 'C-9' && f.title.includes('asks for evidence nothing answers')), true, 'an unconfirmed clause stopped firing');
   });
 });
 
@@ -895,6 +991,244 @@ describe('the quality floor', () => {
     throwsCode(
       () => bidresponse.setBidResponseQualityFloor(asQS(), { packId: pid, floorPercent: 150 }),
       'BID_RESPONSE_FLOOR_RANGE',
+    );
+  });
+});
+
+/**
+ * Carrying a decision forward across a re-run — the pure core of it.
+ *
+ * The full-flow test above proves the deterministic findings carry, because the
+ * local challenge raises none of its own. These exercise the part that cannot be
+ * driven from a deployment with no reasoning provider: a model-raised finding,
+ * re-worded on every pass, whose decision must still stick where the section it
+ * is on was not edited — and must not stick where it was.
+ */
+describe('carryForwardDispositions', () => {
+  const decided = (decision: redteam.FindingDisposition['decision'] = 'ACCEPTED') => ({
+    decision,
+    note: 'Decided with a real reason recorded here.',
+    by: 'owner',
+    at: '2027-01-01T00:00:00.000Z',
+  });
+
+  const finding = (over: Partial<redteam.AssuranceFinding>): redteam.AssuranceFinding => ({
+    id: Math.random().toString(36).slice(2),
+    lens: 'EVALUATOR',
+    severity: 'HIGH',
+    title: 'A finding',
+    detail: 'detail',
+    remedy: 'remedy',
+    raisedBy: 'CHECK',
+    ...over,
+  });
+
+  const review = (findings: redteam.AssuranceFinding[], sectionDigests: Record<string, string>): redteam.AssuranceReview => ({
+    id: 'prior',
+    reference: 'ASR-0001',
+    packId: 'pack',
+    analysisId: 'analysis',
+    packPasses: 1,
+    runAt: '2027-01-01T00:00:00.000Z',
+    runBy: 'qs',
+    findings,
+    findableScorePercent: 50,
+    scoreBasis: [],
+    qualityFloorPercent: 80,
+    modelChallenge: { ran: true, findings: findings.filter((f) => f.raisedBy === 'MODEL').length },
+    limits: [],
+    sectionDigests,
+    summary: 'prior',
+  });
+
+  it('carries an exact deterministic finding, whatever changed elsewhere', () => {
+    const prior = review(
+      [finding({ raisedBy: 'CHECK', reference: 'Q1', sectionKey: 'Q1', title: 'Q1 is below the 80% quality floor', disposition: decided('ACCEPTED') })],
+      { Q1: 'digest-a' },
+    );
+    const fresh = [finding({ raisedBy: 'CHECK', reference: 'Q1', sectionKey: 'Q1', title: 'Q1 is below the 80% quality floor' })];
+    // Q1 was edited (digest differs), yet the deterministic finding still carries
+    // by exact title — the content change does not weaken the exact match.
+    redteam.carryForwardDispositions(prior, fresh, redteam.unchangedSections(prior, { Q1: 'digest-b' }));
+    assert.equal(fresh[0]!.disposition?.decision, 'ACCEPTED');
+  });
+
+  it('carries a re-worded model finding on a section nobody edited', () => {
+    const prior = review(
+      [finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'Insurance certificates and CAR sum-insured not evidenced', disposition: decided('WAIVED') })],
+      { Q3: 'same' },
+    );
+    // Same section, same severity, different wording — the fresh adversarial pass.
+    const fresh = [finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'No evidence of insurance or CAR sum insured' })];
+    redteam.carryForwardDispositions(prior, fresh, redteam.unchangedSections(prior, { Q3: 'same' }));
+    assert.equal(fresh[0]!.disposition?.decision, 'WAIVED', 'the decision on an untouched section was lost');
+  });
+
+  it('gives a model finding a fresh look where its section was edited', () => {
+    const prior = review(
+      [finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'Insurance not evidenced', disposition: decided('WAIVED') })],
+      { Q3: 'before' },
+    );
+    const fresh = [finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'Something else about Q3 entirely' })];
+    // Q3's prose changed, so a model finding on it may be a new concern: no carry.
+    redteam.carryForwardDispositions(prior, fresh, redteam.unchangedSections(prior, { Q3: 'after' }));
+    assert.equal(fresh[0]!.disposition, undefined, 'a decision was applied to a concern on an edited section');
+  });
+
+  it('does not guess when two model findings share a section and severity', () => {
+    const prior = review(
+      [
+        finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'First concern', disposition: decided('ACCEPTED') }),
+        finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'Second concern', disposition: decided('WAIVED') }),
+      ],
+      { Q3: 'same' },
+    );
+    const fresh = [
+      finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'Re-worded first' }),
+      finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'Re-worded second' }),
+    ];
+    redteam.carryForwardDispositions(prior, fresh, redteam.unchangedSections(prior, { Q3: 'same' }));
+    assert.equal(fresh[0]!.disposition, undefined, 'carried an ambiguous model decision');
+    assert.equal(fresh[1]!.disposition, undefined, 'carried an ambiguous model decision');
+  });
+
+  it('does nothing with no prior review, and falls back to exact match with no digests', () => {
+    const fresh = [finding({ raisedBy: 'MODEL', sectionKey: 'Q3', title: 'anything' })];
+    redteam.carryForwardDispositions(undefined, fresh, new Set());
+    assert.equal(fresh[0]!.disposition, undefined);
+
+    // A prior review from before digests existed: exact match still works, the
+    // section-and-severity path simply finds nothing unchanged.
+    const prior = review([finding({ raisedBy: 'CHECK', reference: 'Q1', sectionKey: 'Q1', title: 'T', disposition: decided() })], {});
+    delete (prior as { sectionDigests?: unknown }).sectionDigests;
+    const again = [finding({ raisedBy: 'CHECK', reference: 'Q1', sectionKey: 'Q1', title: 'T' })];
+    redteam.carryForwardDispositions(prior, again, redteam.unchangedSections(prior, { Q1: 'x' }));
+    assert.equal(again[0]!.disposition?.decision, 'ACCEPTED');
+  });
+});
+
+describe('the red team does not mistake the buyer’s own words for the bidder’s mistakes', () => {
+  const section = (over: Record<string, unknown>) => ({
+    key: 'R-1', title: 'T', deliverable: 'd', owner: 'OWNER', mandatory: true,
+    status: 'DRAFTED', authorship: 'AI_DRAFTED', words: 40, ...over,
+  });
+  const matrix = (requirement: string) =>
+    [{ reference: 'R-1', category: 'TECHNICAL', requirement, mandatory: true, owner: 'OWNER', evidenceRequired: 'x', status: 'GAP', weightingPercent: 30 }] as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['matrix'];
+  const pack = (sections: unknown[]) => ({
+    id: 'p', reference: 'BID-0001', projectId: 'x', analysisId: 'a', clientName: 'c',
+    returnBy: '2027-03-01T12:00:00.000Z', sections, deadlines: [], status: 'DRAFTING', passes: 1,
+    plannedAt: '2026-01-01T00:00:00.000Z', plannedBy: 'u',
+  }) as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['pack'];
+  const run = (requirement: string, body: string[]) =>
+    redteam.evaluatorFindings({ pack: pack([section({ body })]), matrix: matrix(requirement), waivedKeys: new Set(), claims: [], staleKeys: new Map() });
+
+  it('does not flag a figure the buyer themselves stated in the requirement', () => {
+    const findings = run(
+      'The tender evaluation will be based 70% Price and 30% Quality.',
+      ['We acknowledge the buyer’s stated basis and will structure the response against the 30% quality weighting the buyer set.'],
+    );
+    assert.equal(findings.some((f) => f.title.includes('states a figure')), false, 'the buyer’s own 30% was treated as an invented figure');
+  });
+
+  it('still flags a figure the buyer did not state', () => {
+    const findings = run(
+      'Explain how you will monitor and reduce embodied carbon across the works.',
+      ['We will target a 35% reduction against the scheme baseline.'],
+    );
+    assert.equal(findings.some((f) => f.title.includes('states a figure')), true, 'an unsourced 35% slipped through');
+  });
+
+  it('does not flag the buyer’s own bracketed clause text as an unfilled placeholder', () => {
+    const findings = run(
+      'carry out and fulfil, in all respects, the duties of a designer [and principal designer] under the CDM Regulations;',
+      ['We will carry out and fulfil the duties of a designer [and principal designer] under the CDM Regulations.'],
+    );
+    assert.equal(findings.some((f) => f.title.includes('placeholder')), false, 'the buyer’s [and principal designer] was treated as a placeholder');
+  });
+
+  it('still flags a bracketed placeholder the bidder left', () => {
+    const findings = run(
+      'carry out and fulfil the duties of a designer under the CDM Regulations;',
+      ['We will complete the works in [NUMBER] phases agreed with the authority.'],
+    );
+    assert.equal(findings.some((f) => f.title.includes('placeholder')), true, 'a real [NUMBER] placeholder slipped through');
+  });
+});
+
+describe('the red team reads claims where they live — on the tenancy, not the bid', () => {
+  // The production bug the governance-scoped harness above could never catch: a
+  // claim is filed on the tenancy (the Assert-a-claim route runs on governance),
+  // but the red team runs on the bid's own project. Reading only the project's
+  // claims, it saw none and reported "evidence nothing answers" against every
+  // requirement however many certificates were filed and linked. Here the pack
+  // lives on a real project and the claim on governance, so the old read saw
+  // nothing and the finding stood; the fix reads tenant-wide and clears it.
+  const PI_HASH = `sha256:${'b2'.repeat(32)}`;
+  // A fresh tender project, opened at CONCEPT where ESTIMATE_TENDER is allowed,
+  // and crucially NOT the governance project the claim is filed on.
+  let bidProjectId: string;
+  const projectCtx = () => platform.context(seed.users.qs!.auth, bidProjectId, { source: 'WEB' });
+
+  before(() => {
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    bidProjectId = structure.createProject(platform.context(seed.users.admin!.auth, `${seed.tenantId}-governance`, { source: 'WEB' }), {
+      portfolioId, name: 'A tender with evidence filed on the tenancy',
+      sectorType: 'RMI', assetType: 'Professional services',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Spalding' },
+      contractValueMinor: 33_000_000, currency: 'GBP',
+      plannedStart: '2027-01-01', plannedCompletion: '2027-06-01',
+    }).projectId;
+  });
+
+  function stand(analysisId: string, packId: string): void {
+    platform.ledger.commit({
+      tenantId: seed.tenantId, projectId: bidProjectId,
+      actor: { refType: 'User', refId: seed.users.qs!.auth.actorId }, source: 'WEB',
+      correlationId: analysisId, eventType: 'ITT_ANALYSED',
+      entity: { refType: 'ITTAnalysis', refId: analysisId },
+      nextState: {
+        id: analysisId, reference: 'TENANT-CLAIM-01', clientName: 'the Council', returnBy: '2027-03-01',
+        matrix: [{ reference: 'TECH-9', category: 'Technical', requirement: 'Provide a documented methodology for delivering the works', mandatory: true, evidenceRequired: 'Methodology document', status: 'GAP' }],
+        mandatoryGaps: [], weightings: { stated: 100, complete: true }, terms: [], bars: [],
+        quantifiedExposureMinor: 0, committedCapacityMinor: 0, clarifications: [], readyToPrice: false,
+        analysedAt: new Date().toISOString(), analysedBy: seed.users.qs!.auth.actorId,
+      },
+    });
+    platform.ledger.commit({
+      tenantId: seed.tenantId, projectId: bidProjectId,
+      actor: { refType: 'User', refId: seed.users.qs!.auth.actorId }, source: 'WEB',
+      correlationId: packId, eventType: 'BID_RESPONSE_PLANNED',
+      entity: { refType: 'BidResponsePack', refId: packId },
+      nextState: {
+        id: packId, reference: 'BID-TENANT-01', projectId: bidProjectId, analysisId,
+        clientName: 'the Council', returnBy: '2027-03-01',
+        sections: [], deadlines: [], status: 'DRAFTING', passes: 0,
+      },
+    });
+  }
+
+  it('sees a governance claim linked to the requirement, and clears "nothing answers"', async () => {
+    // Filed on the tenancy, then linked to the requirement it answers on this bid.
+    const claim = evidence.assertClaim(asQS(), {
+      kind: 'INSURANCE', claim: 'Professional indemnity insurance of £10m, held and current', sourceHash: PI_HASH,
+    });
+
+    // Not yet linked → the red team still reports the requirement unanswered.
+    stand('an-tenant-before', 'pk-tenant-before');
+    const before = await redteam.challengeSubmission(projectCtx(), { packId: 'pk-tenant-before' });
+    assert.ok(
+      before.review.findings.some((f) => f.reference === 'TECH-9' && f.title.includes('asks for evidence nothing answers')),
+      'with nothing linked the requirement should read as unanswered',
+    );
+
+    // Link the held claim to the requirement, then run again → cleared.
+    evidence.linkClaim(asQS(), { claimId: claim.id, references: ['TECH-9'] });
+    stand('an-tenant-after', 'pk-tenant-after');
+    const after = await redteam.challengeSubmission(projectCtx(), { packId: 'pk-tenant-after' });
+    assert.equal(
+      after.review.findings.some((f) => f.reference === 'TECH-9' && f.title.includes('asks for evidence nothing answers')),
+      false,
+      'a governance claim linked to the requirement should clear the finding',
     );
   });
 });

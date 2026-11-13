@@ -784,6 +784,11 @@ describe('where the job is, and the one thing to do next', () => {
     assert.equal(flow.nowDo?.id, 'ISSUED');
     assert.equal(flow.nowDo?.screen, 'documents');
     assert.match(flow.summary, /Next: issue it/);
+    // Pricing the risk register is a tender discipline, not a quotation one, so
+    // on a price-only enquiry it is a statement that it is not needed — and it is
+    // never the headline, so it cannot displace "issue it".
+    assert.equal(state('RISK'), 'NOT_NEEDED');
+    assert.notEqual(flow.nowDo?.id, 'RISK');
   });
 
   it('names a button that actually exists on the screen it names', () => {
@@ -880,5 +885,305 @@ describe('where the job is, and the one thing to do next', () => {
     // The button, by the words printed on it, not the name of the step.
     assert.equal(flow.nowDo?.door, 'Upload a tender document');
     assert.equal(flow.steps.find((step) => step.id === 'MEASURED')!.state, 'BLOCKED');
+  });
+
+  it('offers the by-hand pricing door on a real job with no drawings, not a dead end', () => {
+    // A consultancy / fee bid has no drawings at all and is priced entirely by
+    // hand. Reported as "I cannot see how to price": the pricing road was
+    // blocked with no door, because the manual take-off was only ever offered
+    // beside a drawing. On a job that is actually being worked (an invitation is
+    // recorded), the step is now ready and points at the by-hand take-off.
+    const admin = seed.users.admin!.auth;
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const tender = structure.createProject(platform.context(admin, `${seed.tenantId}-governance`), {
+      portfolioId,
+      name: 'A consultancy fee bid with no drawings',
+      sectorType: 'RMI',
+      assetType: 'Professional services',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Spalding' },
+      contractValueMinor: 33_000_000,
+      currency: 'GBP',
+      plannedStart: '2026-12-01',
+      plannedCompletion: '2027-02-01',
+    }).projectId;
+    const ctx = platform.context(seed.users.qs!.auth, tender, { source: 'WEB' });
+
+    // An invitation recorded directly on the project, with no drawing anywhere.
+    ctx.ledger.commit({
+      tenantId: ctx.tenantId, projectId: tender, actor: { refType: 'User', refId: ctx.auth.actorId },
+      source: 'WEB', correlationId: ctx.correlationId, eventType: 'TENDER_RECEIVED',
+      entity: { refType: 'TenderInvitation', refId: `inv-${tender.slice(-6)}` },
+      nextState: {
+        id: `inv-${tender.slice(-6)}`, reference: 'TWC000009', clientName: 'the Council',
+        opportunityId: `opp-${tender.slice(-6)}`, requirementsExtracted: true,
+        deliverables: [
+          { reference: 'D1', title: 'Fee proposal', mandatory: true, owner: 'OWNER', internalDueBy: '2026-11-09', source: { document: 'Invitation to tender TWC000009' } },
+        ],
+      },
+    });
+
+    const measured = bidFlow(platform, ctx).steps.find((s) => s.id === 'MEASURED')!;
+    assert.equal(measured.state, 'READY', 'a fee bid with no drawings can still be priced by hand');
+    assert.equal(measured.door, 'Enter measured quantities');
+    assert.equal(measured.command, 'measured-takeoff');
+    assert.equal(measured.screen, 'procurement');
+  });
+
+  it('counts the matrix bound to this job’s invitation, though it was typed in on Pipeline & Bids', () => {
+    /*
+     * Found in a browser run with the real Conwy tender: a compliance matrix
+     * typed in on Pipeline & Bids (no model) is written on the governance chain
+     * beside the invitation it is bound to. The flow read only the project's
+     * chain, so the matrix step said "not done" with a 100%-weighted matrix on
+     * file. The analysis the invitation names counts; one in another tenancy
+     * never does.
+     */
+    const admin = seed.users.admin!.auth;
+    const governance = `${seed.tenantId}-governance`;
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const job = structure.createProject(platform.context(admin, governance), {
+      portfolioId,
+      name: 'Waterloo Cottage retaining wall',
+      sectorType: 'TRANSPORT',
+      assetType: 'Retaining wall',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Conwy' },
+      contractValueMinor: 51_542_354,
+      currency: 'GBP',
+      plannedStart: '2027-01-11',
+      plannedCompletion: '2027-04-30',
+    }).projectId;
+    const ctx = platform.context(seed.users.qs!.auth, job, { source: 'WEB' });
+    const commit = (projectId: string, eventType: string, refType: string, refId: string, nextState: Record<string, unknown>) =>
+      ctx.ledger.commit({
+        tenantId: ctx.tenantId,
+        projectId,
+        actor: { refType: 'User', refId: ctx.auth.actorId },
+        source: 'WEB',
+        correlationId: ctx.correlationId,
+        eventType,
+        entity: { refType, refId },
+        nextState: { id: refId, ...nextState },
+      } as Parameters<typeof ctx.ledger.commit>[0]);
+
+    const analysisId = `analysis-typed-${job.slice(-6)}`;
+    commit(governance, 'ITT_ANALYSED', 'ITTAnalysis', analysisId, {
+      reference: 'ERCF2509N 05',
+      clientName: 'Conwy County Borough Council',
+      matrix: [{ reference: 'Q1', category: 'Quality', requirement: 'Methodology', mandatory: false, weightingPercent: 10, status: 'UNKNOWN' }],
+      mandatoryGaps: [],
+      weightings: { stated: 100, complete: true },
+      analysedAt: new Date().toISOString(),
+      analysedBy: ctx.auth.actorId,
+    });
+    const matrixBefore = bidFlow(platform, ctx).steps.find((step) => step.id === 'MATRIX')!.state;
+    assert.notEqual(matrixBefore, 'DONE', 'no invitation names the analysis yet, so it is not this job’s');
+
+    commit(job, 'TENDER_RECEIVED', 'TenderInvitation', `itt-${job.slice(-6)}`, {
+      reference: 'ERCF2509N 05',
+      clientName: 'Conwy County Borough Council',
+      projectId: job,
+      analysisId,
+    });
+    assert.equal(bidFlow(platform, ctx).steps.find((step) => step.id === 'MATRIX')!.state, 'DONE');
+  });
+
+  it('a loss recorded on the opportunity ends the road; a win still waits for the award notice', () => {
+    /*
+     * Found in a browser run: a portal submission recorded, then "Record how a
+     * bid ended" with a loss, marks and feedback — and the guide went on asking
+     * "Record how it ended" for an award notice, a loop a lost bidder cannot
+     * leave. A win still waits for the notice, where the standstill is counted.
+     */
+    const admin = seed.users.admin!.auth;
+    const governance = `${seed.tenantId}-governance`;
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const job = (name: string) =>
+      structure.createProject(platform.context(admin, governance), {
+        portfolioId,
+        name,
+        sectorType: 'TRANSPORT',
+        assetType: 'Retaining wall',
+        location: { continentCode: 'EU', countryCode: 'GB', city: 'Conwy' },
+        contractValueMinor: 51_542_354,
+        currency: 'GBP',
+        plannedStart: '2027-01-11',
+        plannedCompletion: '2027-04-30',
+      }).projectId;
+    const ended = (outcome: 'WON' | 'LOST') => {
+      const projectId = job(`Ended ${outcome.toLowerCase()} — ${Math.random().toString(36).slice(2, 8)}`);
+      const ctx = platform.context(seed.users.qs!.auth, projectId, { source: 'WEB' });
+      const commit = (chain: string, eventType: string, refType: string, refId: string, nextState: Record<string, unknown>) =>
+        ctx.ledger.commit({
+          tenantId: ctx.tenantId,
+          projectId: chain,
+          actor: { refType: 'User', refId: ctx.auth.actorId },
+          source: 'WEB',
+          correlationId: ctx.correlationId,
+          eventType,
+          entity: { refType, refId },
+          nextState: { id: refId, ...nextState },
+        } as Parameters<typeof ctx.ledger.commit>[0]);
+      // A matrix with a weighted question makes this a tender (the BID road),
+      // on which the award step is shown at all.
+      commit(projectId, 'ITT_ANALYSED', 'ITTAnalysis', `analysis-${projectId.slice(-6)}`, {
+        reference: 'ERCF2509N 05',
+        clientName: 'Conwy County Borough Council',
+        matrix: [{ reference: 'Q1', category: 'Quality', requirement: 'Methodology', mandatory: false, weightingPercent: 10, status: 'UNKNOWN' }],
+        mandatoryGaps: [],
+        weightings: { stated: 100, complete: true },
+        analysedAt: new Date().toISOString(),
+        analysedBy: ctx.auth.actorId,
+      });
+      commit(projectId, 'BID_SUBMITTED_EXTERNALLY', 'BidSubmissionPack', `pack-${projectId.slice(-6)}`, { status: 'SUBMITTED', external: true });
+      const award = () => bidFlow(platform, ctx).steps.find((step) => step.id === 'AWARD')!;
+      const before = award().state;
+      commit(governance, 'OPPORTUNITY_REGISTERED', 'Opportunity', `opp-${projectId.slice(-6)}`, {
+        title: 'Waterloo Cottage',
+        clientName: 'Conwy County Borough Council',
+        projectId,
+        stage: 'BID',
+        outcome: { outcome, decidedOn: '2027-01-08' },
+      });
+      return { before, after: award() };
+    };
+
+    const lost = ended('LOST');
+    assert.equal(lost.before, 'READY');
+    assert.equal(lost.after.state, 'DONE', 'a recorded loss still asked for an award notice');
+    assert.match(lost.after.detail, /Lost — recorded on the opportunity on 2027-01-08/);
+
+    const won = ended('WON');
+    assert.equal(won.after.state, 'READY', 'a win waits for the award notice and its standstill');
+  });
+
+  it('treats a tender with a compliance matrix as a submission, even before the return register is filed', () => {
+    /*
+     * Reported on SHDC 000189, a 60/5/35 tender: the panel classed it as a
+     * price-only quotation and greyed out its whole submission road, because the
+     * road was derived only from the invitation's return-deliverable count and
+     * the register had not been filed by hand yet. But the compliance matrix
+     * had already been produced — it carries the buyer's evaluation weightings
+     * and the scored and mandatory pass/fail requirements, none of which a
+     * price-only enquiry has. The matrix is itself proof the job is a tender.
+     */
+    const admin = seed.users.admin!.auth;
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const tender = structure.createProject(platform.context(admin, `${seed.tenantId}-governance`), {
+      portfolioId,
+      name: 'A tender read but its register not yet filed',
+      sectorType: 'RMI',
+      assetType: 'Residential adaptation',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Spalding' },
+      contractValueMinor: 7_260_000,
+      currency: 'GBP',
+      plannedStart: '2026-12-01',
+      plannedCompletion: '2027-02-01',
+    }).projectId;
+    const ctx = platform.context(seed.users.qs!.auth, tender, { source: 'WEB' });
+
+    // A stored ITT analysis, the shape analyseITT writes: a matrix with a
+    // mandatory pass/fail line and a scored (weighted) question, and declared
+    // evaluation weightings totalling 100%.
+    ctx.ledger.commit({
+      tenantId: ctx.tenantId,
+      projectId: tender,
+      actor: { refType: 'User', refId: ctx.auth.actorId },
+      source: 'WEB',
+      correlationId: ctx.correlationId,
+      eventType: 'ITT_ANALYSED',
+      entity: { refType: 'ITTAnalysis', refId: `analysis-${tender.slice(-6)}` },
+      nextState: {
+        id: `analysis-${tender.slice(-6)}`,
+        reference: 'SHDC 000189',
+        clientName: 'South Holland District Council',
+        returnBy: '2026-11-20',
+        matrix: [
+          { reference: 'INS-EL', category: 'Insurance', requirement: 'Employers Liability £10 million', mandatory: true, status: 'GAP' },
+          { reference: 'QQ1', category: 'Quality', requirement: 'Relevant experience', mandatory: false, weightingPercent: 10, status: 'UNKNOWN' },
+        ],
+        mandatoryGaps: ['INS-EL'],
+        weightings: { stated: 100, complete: true },
+        terms: [],
+        bars: [],
+        quantifiedExposureMinor: 0,
+        committedCapacityMinor: 0,
+        clarifications: [],
+        readyToPrice: false,
+        analysedAt: new Date().toISOString(),
+        analysedBy: ctx.auth.actorId,
+      },
+    });
+
+    const flow = bidFlow(platform, ctx);
+    // The road is BID, not PRICE, so the submission steps are live rather than
+    // greyed out as "asks only for a price".
+    assert.equal(flow.road, 'BID');
+    assert.notEqual(flow.steps.find((step) => step.id === 'MATRIX')!.state, 'NOT_NEEDED');
+    assert.notEqual(flow.steps.find((step) => step.id === 'RESPONSE_PACK')!.state, 'NOT_NEEDED');
+    assert.doesNotMatch(flow.why, /quotation rather than a submission/);
+
+    // The headline next step is on the submission road, not the pricing road.
+    // A tender just read into a matrix is told to write the submission — not to
+    // "file the pack / measure the drawings", which is the pricing road and does
+    // not even apply to a tender priced from a schedule.
+    assert.equal(flow.nowDo?.id, 'RESPONSE_PACK', `nowDo was ${flow.nowDo?.id}`);
+    assert.equal(flow.steps.find((step) => step.id === 'RESPONSE_PACK')!.state, 'READY');
+    assert.match(flow.nowDo?.door ?? '', /Plan a response pack/);
+
+    // The risk register is a live step on the bid road (not NOT_NEEDED), blocked
+    // here only because nothing is priced yet to size a risk against — and it is
+    // never the headline, so it does not displace writing the submission.
+    const risk = flow.steps.find((step) => step.id === 'RISK')!;
+    assert.notEqual(risk.state, 'NOT_NEEDED');
+    assert.equal(risk.state, 'BLOCKED');
+    assert.equal(risk.command, 'register-risk');
+    assert.notEqual(flow.nowDo?.id, 'RISK');
+  });
+
+  it('keeps the submission step open until its sections are written, not just planned', () => {
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const tender = structure.createProject(platform.context(seed.users.admin!.auth, `${seed.tenantId}-governance`), {
+      portfolioId,
+      name: 'Pack written not just planned',
+      sectorType: 'RMI',
+      assetType: 'Highways civils',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Scunthorpe' },
+      contractValueMinor: 2_000_000,
+      currency: 'GBP',
+      plannedStart: '2027-04-01',
+      plannedCompletion: '2027-08-01',
+    }).projectId;
+    const ctx = platform.context(seed.users.qs!.auth, tender, { source: 'WEB' });
+    const analysisId = `analysis-${tender.slice(-6)}`;
+
+    ctx.ledger.commit({
+      tenantId: ctx.tenantId, projectId: tender, actor: { refType: 'User', refId: ctx.auth.actorId },
+      source: 'WEB', correlationId: ctx.correlationId, eventType: 'ITT_ANALYSED',
+      entity: { refType: 'ITTAnalysis', refId: analysisId },
+      nextState: {
+        id: analysisId, reference: 'HF1', clientName: 'North Lincolnshire', returnBy: '2026-11-30',
+        matrix: [{ reference: 'Q1', category: 'Quality', requirement: 'Method statement', mandatory: false, weightingPercent: 5, status: 'UNKNOWN' }],
+        mandatoryGaps: [], weightings: { stated: 100, complete: true }, terms: [], bars: [],
+        quantifiedExposureMinor: 0, committedCapacityMinor: 0, clarifications: [], readyToPrice: false,
+        analysedAt: new Date().toISOString(), analysedBy: ctx.auth.actorId,
+      },
+    });
+    // A pack planned, with its one section not yet written (no writtenAt).
+    ctx.ledger.commit({
+      tenantId: ctx.tenantId, projectId: tender, actor: { refType: 'User', refId: ctx.auth.actorId },
+      source: 'WEB', correlationId: ctx.correlationId, eventType: 'BID_RESPONSE_PLANNED',
+      entity: { refType: 'BidResponsePack', refId: `pack-${tender.slice(-6)}` },
+      nextState: {
+        id: `pack-${tender.slice(-6)}`, reference: 'BID-0001', projectId: tender, analysisId,
+        clientName: 'North Lincolnshire', returnBy: '2026-11-30',
+        sections: [{ key: 'Q1', title: 'Method statement', requirement: 'Method statement' }],
+        deadlines: [], status: 'DRAFTING', passes: 0,
+      },
+    });
+
+    const step = bidFlow(platform, ctx).steps.find((s) => s.id === 'RESPONSE_PACK')!;
+    assert.equal(step.state, 'READY', 'a planned pack with an unwritten section is not done');
+    assert.match(step.detail, /0 of 1 section/);
+    assert.equal(step.door, 'Write the next section');
   });
 });

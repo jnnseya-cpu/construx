@@ -554,6 +554,46 @@ export const config = {
      */
     heartbeatUrl: str('OPS_HEARTBEAT_URL', ''),
     heartbeatIntervalSeconds: num('OPS_HEARTBEAT_INTERVAL_SECONDS', 60),
+    /**
+     * The tender-deadline reminder sweep.
+     *
+     * A bid lost because nobody watched the clock is the one loss no amount of
+     * pricing skill prevents. The platform already holds every recorded
+     * invitation's return deadline, resolved to a single instant; this is the
+     * timer that reads them and tells the company's own people, through the same
+     * outbox every other notice uses, before the window closes.
+     *
+     * `tenderReminderLeadDays` is how many days before the deadline the reminder
+     * fires — the "5 days before" a bidder asked for, as a default a deployment
+     * can change. One reminder per invitation per deadline in force: an addendum
+     * that moves the deadline is a new deadline and earns a fresh reminder; a
+     * sweep that runs four times a day does not send four emails. Enabled by
+     * default, because a deadline nobody is reminded of is the failure it exists
+     * to stop; where no SMTP host is configured it is recorded, not sent, exactly
+     * as every other notice is.
+     */
+    tenderReminderEnabled: bool('TENDER_REMINDER_ENABLED', true),
+    tenderReminderLeadDays: num('TENDER_REMINDER_LEAD_DAYS', 5),
+    tenderReminderIntervalMinutes: num('TENDER_REMINDER_INTERVAL_MINUTES', 360),
+    /**
+     * Whether the Grid Connection AI add-on's delivery routes are hard-gated on a
+     * live entitlement and a named seat (spec §2, A01). The entitlement machinery —
+     * the Platform-Admin grant, the verified provider status, the paid quantity and
+     * the per-user seats — is always live and provisionable; this switch only decides
+     * whether the grid *delivery* routes refuse an unseated user. Off by default so a
+     * deployment provisions and assigns seats before enforcement bites; an operator
+     * turns it on when the add-on goes commercial. No billing is charged either way.
+     */
+    gridConnectionEnforceSeats: bool('GRID_CONNECTION_ENFORCE_SEATS', false),
+    /**
+     * Whether the Trend Intelligence AI layer invisibly re-prioritises the marketing
+     * automation's daily topic choice by live demand. Off by default, so the automation
+     * keeps its written order (the first uncovered topic) until an operator turns the
+     * control layer on; when on, the daily release prefers the uncovered topic whose
+     * capability area is busiest in the platform's own recent activity. It only reorders
+     * what the automation already writes — it never grants a new channel, claim or action.
+     */
+    trendRetargetEnabled: bool('TREND_RETARGET_ENABLED', false),
   },
 
   /**
@@ -1106,6 +1146,20 @@ export const config = {
     noProgressAttempts: num('AI_NO_PROGRESS_ATTEMPTS', 5),
     reasoningProvider: str('AI_REASONING_PROVIDER', 'OPENAI'),
     perceptionProvider: str('AI_PERCEPTION_PROVIDER', 'GEMINI'),
+    /**
+     * Route each call to the cheapest cleared, healthy provider whose window
+     * holds it, rather than to the configured primary first.
+     *
+     * Off by default, because the primary order is a deliberate choice on most
+     * deployments and "cheapest" is not always "best" — a scored submission
+     * written by the cheapest model can lose more in marks than it saves in
+     * pennies. With one provider configured it changes nothing (there is nothing
+     * to choose between). With several, it picks the lowest estimated cost at the
+     * measured input size, and the quality-escalation path still applies: a draft
+     * the red team rejects is retried on a *different* model, which `avoid`
+     * already steers, so cheapest-first does not trap the work on a weak model.
+     */
+    selectCheapest: bool('AI_SELECT_CHEAPEST', false),
     /**
      * Which vendor embeds text for semantic search, or empty for none.
      *

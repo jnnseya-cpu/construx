@@ -1,3 +1,4 @@
+import { expertBriefing } from '../ai/expertise.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
@@ -18,6 +19,10 @@ export function registerRisk(
   input: RiskInput & { projectValueMinor: number; projectDurationDays: number },
 ): { riskId: string; scored: ReturnType<typeof scoreRisk> } {
   authorise(ctx, 'RISK_REGISTER', 'C', { lifecyclePhase: currentPhase(ctx) });
+
+  if (input.allocation && !['CLIENT', 'CONTRACTOR', 'SHARED'].includes(input.allocation)) {
+    throw new DomainError('RISK_ALLOCATION_INVALID', 'Allocation is one of CLIENT, CONTRACTOR or SHARED');
+  }
 
   const scored = scoreRisk(input, input.projectValueMinor, input.projectDurationDays);
   const riskId = input.id || ulid();
@@ -120,6 +125,11 @@ export function assessContingency(ctx: EngineContext): ReturnType<typeof conting
   const risks = ctx.ledger
     .list(ctx.projectId, 'RiskRegisterItem')
     .filter((r) => r.state.status === 'OPEN')
+    // A client-owned risk is the client's to carry, so it is not priced into our
+    // contingency — counting it would fund the same exposure twice, once here and
+    // once in the client's own budget. Risks with no allocation are treated as
+    // ours, which is the safe default.
+    .filter((r) => r.state.allocation !== 'CLIENT')
     .map((r) => r.state as unknown as ReturnType<typeof scoreRisk>);
 
   return contingencyRequirement(risks);
@@ -223,7 +233,11 @@ export async function draftRAMS(
     capability: 'REASONING',
     inputRefs: [{ refType: 'WorkPackage', refId: input.workPackageId }],
     request: {
-      task: 'Review the assembled method steps for residual hazards and sequencing conflicts',
+      task:
+        `${expertBriefing('HEALTH_AND_SAFETY', { stage: 5 })} ` +
+        'Review the assembled method steps for residual hazards and sequencing conflicts. Apply the hierarchy of ' +
+        'control — eliminate before you mitigate — and flag any step that depends on PPE where the hazard could be ' +
+        'designed or sequenced out instead.',
       payload: { activity: input.activityDescription, location: input.location, steps },
     },
     toWrites: (output) => [
@@ -423,7 +437,11 @@ export async function forecastSafetyRisk(
     capability: 'REASONING',
     inputRefs: [{ refType: 'Project', refId: ctx.projectId }],
     request: {
-      task: 'Interpret the safety leading indicators and prioritise the recommended controls',
+      task:
+        `${expertBriefing('HEALTH_AND_SAFETY', { stage: 5 })} ` +
+        'Interpret these safety leading indicators and prioritise the recommended controls. Read the trend behind the ' +
+        'numbers — a near-miss rate that is rising is telling you something before the incident does — and put the ' +
+        'control that removes the hazard above the one that only watches it.',
       payload: { signal, forecast },
     },
     toWrites: (output) => [

@@ -1,3 +1,4 @@
+import { expertPersona } from '../ai/expertise.ts';
 import { DomainError } from '../core/errors.ts';
 import { authorise, runAI, type EngineContext } from '../engines/context.ts';
 import type { EvidenceStore } from '../evidence/store.ts';
@@ -325,6 +326,7 @@ async function marketRates(
     inputRefs: [],
     request: {
       task:
+        `${expertPersona('ESTIMATOR')} ` +
         'Give a current market unit rate for each measured item, for a contractor working in the region and at the ' +
         'date stated. Answer with the item’s own `index` exactly as given — never a reworded description, which is ' +
         'how an answer gets lost on the way back. Give an all-in `rateMinor` for every item you answer, and split it ' +

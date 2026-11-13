@@ -273,6 +273,40 @@ describe('taking a document out is charged, in either form', () => {
     assert.match(word.filename, /\.docx$/);
   });
 
+  it('names the file after the title, not the reference', () => {
+    // The reference inherits the document-reference prefix, which on a tenancy
+    // that has not set its own is the project's name — so a tender submission
+    // downloaded as `RFX1000209 - EPC Assessments-00002.pdf`, the name of an
+    // unrelated project. The title is what a person asked the thing to be.
+    const wallet = fundedWallet();
+    const file = renderAndCharge(
+      wallet,
+      documentWith({ title: 'Tender Submission — South Holland District Council', subtitle: 'SHDC 000189', reference: 'RFX1000209 - EPC Assessments-00002' }),
+      { format: 'PDF' },
+      renderers,
+    );
+    // The human title, its em dash folded to a hyphen the filesystem and a bare
+    // Content-Disposition header can both carry, with the subtitle appended to
+    // tell one project's document from another's. The reference is on the page,
+    // not in the filename.
+    assert.equal(file.filename, 'Tender Submission - South Holland District Council - SHDC 000189.pdf');
+    assert.ok(!file.filename.includes('RFX1000209'), 'the stale reference leaked into the filename');
+  });
+
+  it('keeps a filename to printable ASCII so the download header can carry it', () => {
+    const wallet = fundedWallet();
+    const file = renderAndCharge(
+      wallet,
+      documentWith({ title: 'Report: Q1/Q2 — "final" £5,000', subtitle: '' }),
+      { format: 'DOCX' },
+      renderers,
+    );
+    assert.match(file.filename, /\.docx$/);
+    // No character a filesystem forbids and nothing outside printable ASCII.
+    assert.ok(!/[\\/:*?"<>|]/.test(file.filename.replace(/\.docx$/, '')), 'a forbidden character survived');
+    assert.ok(/^[\x20-\x7e]+$/.test(file.filename), 'a non-ASCII character survived into the header');
+  });
+
   it('lands on the statement as an export, beside everything else', () => {
     const wallet = fundedWallet();
     renderAndCharge(wallet, documentWith(), { format: 'DOCX', projectId: 'project-1' }, renderers);

@@ -141,6 +141,35 @@ export const MODULES = {
       requiresAgreementRef: true,
     },
   },
+  /**
+   * Grid Connection AI — the HV grid-connection delivery module.
+   *
+   * A paid add-on (£100/month, one seat; £50 per further seat — `billing/addon.ts`), but
+   * the *grant* is still an operator decision taken here, off the pricing page: the admin
+   * allocates the module to a company, exactly as for ETABLIX and Bid-On, and that grant is
+   * the Platform-Admin grant the add-on's three-state entitlement needs (`billing/addonstore.ts`).
+   * Whether the company then pays or is covered free — a free-exemption group account makes
+   * the add-on free too — is the billing half, separate from this allocation.
+   */
+  GRID_CONNECTION: {
+    name: 'CONSTRUX Grid Connection AI',
+    summary:
+      'The HV grid-connection delivery module: the 42-step, eight-gate connection playbook run by agents on the ' +
+      'Golden Thread, from agreement and capacity through design, commissioning and energisation to handover — with ' +
+      'the electrical gates advancing only on a verified authority record, and no agent ever switching or setting plant.',
+    restricted:
+      'A paid add-on sold per business at £100/month (one named seat) plus £50 per additional seat, allocated by ' +
+      'the operator rather than bought from the pricing page. A company on a free-exemption group account holds it ' +
+      'free of charge, like the rest of its platform.',
+    registry: {
+      moduleKey: 'construx.grid.connection_ai',
+      productCode: 'construx',
+      visibility: 'restricted',
+      requires: ['construx.core'],
+      eligibilityPolicy: 'explicit_tenant_grant',
+      customerSelfActivation: false,
+    },
+  },
 } as const;
 
 export type ModuleId = keyof typeof MODULES;

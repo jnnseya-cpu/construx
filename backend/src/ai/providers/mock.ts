@@ -60,6 +60,12 @@ class MockAdapter implements AIProviderAdapter {
     return base + Math.ceil(size / 400);
   }
 
+  /** Rate at a token size, so the local path can be cost-ranked like the remote ones. */
+  costAtTokensMinor(inputTokens: number): number {
+    const base = this.capability === 'PERCEPTION' ? 12 : 6;
+    return base + Math.ceil(inputTokens / 100);
+  }
+
   async execute(request: ProviderRequest): Promise<ProviderResponse> {
     const started = Date.now();
     const seed = seedOf(request);

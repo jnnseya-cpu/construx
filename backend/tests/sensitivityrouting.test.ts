@@ -201,6 +201,13 @@ describe('routing refuses rather than leaking', () => {
         assert.equal(problem.status, 403);
         assert.match(problem.message, /LEGAL_L4/, 'the refusal does not say which level was refused');
         assert.match(problem.message, /AI_PROVIDER_CLEARANCE/, 'the refusal does not say how to fix it');
+        // The exact line, which vendors are configured and at what, that a
+        // restart reads it, and that nothing was spent — the refusal used to name
+        // the variable and nothing else.
+        assert.match(problem.message, /AI_PROVIDER_CLEARANCE=OPENAI:LEGAL_L4/);
+        assert.match(problem.message, /OPENAI cleared to INTERNAL/);
+        assert.match(problem.message, /restart/);
+        assert.match(problem.message, /nothing was charged/);
       }
     });
   });

@@ -29,13 +29,18 @@ export const session = {
 
 /** Raised for any non-2xx response, carrying the problem+json detail. */
 export class ApiError extends Error {
-  constructor(problem, status) {
+  constructor(problem, status, correlationId) {
     super(problem?.detail || problem?.title || `Request failed (${status})`);
     this.name = 'ApiError';
     this.status = status;
     this.code = problem?.title;
     this.problem = problem;
     this.fieldErrors = problem?.errors ?? [];
+    // The response's `x-correlation-id`, where the server sent one. It is the
+    // single thing a developer needs to find this exact failure in the logs, so
+    // carrying it on the error lets a "report this problem" control hand it over
+    // without the person ever seeing or copying it.
+    this.correlationId = correlationId ?? problem?.correlationId;
   }
 }
 
@@ -210,6 +215,7 @@ async function request(method, path, body, options = {}) {
 
   const text = await response.text();
   const payload = problemFrom(text);
+  const correlationId = response.headers.get('x-correlation-id') ?? undefined;
 
   if (!response.ok) {
     noticeEnrolmentRequired(payload, response.status);
@@ -224,9 +230,10 @@ async function request(method, path, body, options = {}) {
             'has been lost — reload in a moment.',
         },
         response.status,
+        correlationId,
       );
     }
-    throw new ApiError(payload, response.status);
+    throw new ApiError(payload, response.status, correlationId);
   }
   return payload;
 }

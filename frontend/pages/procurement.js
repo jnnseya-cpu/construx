@@ -1,7 +1,7 @@
 import { api, entityBundle, isWithheld } from '../lib/api.js';
 import { barChart, boxPlot, funnelChart, ganttChart, radarChart, scatterPlot } from '../lib/charts.js';
 import { command, commandBar } from '../lib/command.js';
-import { CONTRACT_FORM, PRICING_BASIS, today } from '../lib/enums.js';
+import { CONTRACT_FORM, METHOD_OF_MEASUREMENT, PRICING_BASIS, today } from '../lib/enums.js';
 import { badge, date, days, drillable, exact, html, humanise, money, pct, positionReport, raw, render, resolveHtml, statusTone, table, toast } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { flowPanel, loadFlow } from '../lib/flow.js';
@@ -275,7 +275,7 @@ export async function procurement(root) {
   // built on, the price history to check it against, the trade catalogue, where
   // coverage is too thin to compete, the frameworks already held, what a tender
   // review found, and what has actually converted.
-  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units, calibration, lessons, boq, ingestion, perception, flow] = await Promise.all([
+  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units, calibration, lessons, boq, ingestion, perception, flow, contingency, settlements] = await Promise.all([
     api.get('/v1/tender/cost-heads').catch((error) => ({ error })),
     api.read('/v1/cost-intelligence', 'ESTIMATE_TENDER').catch((error) => ({ error })),
     api.get('/v1/supply-chain/trades').catch((error) => ({ error })),
@@ -306,6 +306,14 @@ export async function procurement(root) {
     // Where this job is on the road from an enquiry to a price. Computed
     // server-side: the console holds no copy of what happens next.
     loadFlow(projectId),
+    // The priced risk register as a contingency: expected value, a P80 tail and
+    // the top drivers. Held beside the base estimate, counted once, so a
+    // contingency can be defended line by line rather than taken as a percentage.
+    api.read(`/v1/projects/${projectId}/risk/contingency`, 'RISK_REGISTER').catch((error) => ({ error })),
+    // The settlement: the cost-to-price bridge, the actions carried as conditions
+    // and whether the price and the programme share a cut-off. Assembled with the
+    // risk exposures and the award departures into one settlement pack below.
+    api.read(`/v1/projects/${projectId}/settlements`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
   ]);
 
   const b = await entityBundle(projectId, [
@@ -323,6 +331,11 @@ export async function procurement(root) {
     'BoQItem',
     'FundingModel',
     'MasterPricing',
+    // Without this, the "Answer clarification" question picker read `b.Clarification`,
+    // which was never fetched, so it was always empty and the form showed "nothing
+    // to act on" even with open bidder queries on file — a buyer could never answer
+    // a TQ from the screen. The entities exist on the ledger; they just weren't read.
+    'Clarification',
   ]);
 
   const rfq = b.RFQ.at(-1);
@@ -377,6 +390,12 @@ export async function procurement(root) {
     .catch(() => ({ routes: [], summary: '' }));
   const openRoutes = routes.routes.filter((r) => r.status === 'OPEN');
   const unanswered = intel.clarifications.filter((c) => c.status === 'OPEN');
+  // The client-side questions still to be sent to the buyer's portal. The
+  // platform drafts and registers them; it does not transmit to the portal, so
+  // the one friction left is copying each question out by hand. These are the
+  // ones a single "copy all" collects — open, client-side, not the internal
+  // notes or the bidders' own queries.
+  const toSendToClient = intel.clarifications.filter((c) => c.status === 'OPEN' && c.side === 'CLIENT');
 
   // The firm's own rate library, grouped by unit so a measured line can be
   // priced by picking a stored rate rather than retyping it — and crucially
@@ -606,9 +625,57 @@ export async function procurement(root) {
   const adjudication = b.Adjudication.at(-1);
   const subcontract = b.Subcontract.at(-1);
   const estimate = b.Estimate.at(-1);
+  // The commercial inputs of the last estimate, so "Price the bill" opens with
+  // them filled rather than blank — re-pricing after a change should not mean
+  // re-typing the overhead, profit, programme and weekly prelims every time.
+  // Money is stored in minor and the form's money fields take pounds, so these
+  // divide by 100; a missing value falls back to an empty field.
+  const priorModel = estimate?.model ?? {};
+  const priorHead = (list, head, key) => {
+    const found = (list ?? []).find((entry) => entry.head === head);
+    return found && found[key] != null ? found[key] : undefined;
+  };
+  const priorWeekly = (head) => {
+    const minor = priorHead(priorModel.timeRelated, head, 'weeklyRateMinor');
+    return minor == null ? '' : minor / 100;
+  };
+  const priorSum = (head) => {
+    const minor = priorHead(priorModel.quantified, head, 'rateMinor');
+    return minor == null ? '' : minor / 100;
+  };
+  const priorFee = (head) => {
+    const minor = priorHead(priorModel.fees, head, 'lumpSumMinor');
+    return minor == null ? '' : minor / 100;
+  };
   const funding = b.FundingModel.at(-1);
   const maturity = b.DesignMaturityAssessment.at(-1);
   const pack = b.TenderPackage.at(-1);
+
+  // Two packages can read identically on screen and differ only by a character
+  // nobody can see — a dash variant, a stray space — so a dropdown of their
+  // names alone cannot be chosen between. Annotating each with the number of
+  // live lines it holds makes "…South · 43 items" and "…South · 6 items"
+  // tellable apart, which is the whole point of offering a move between them.
+  const packLineCount = {};
+  (boq?.items ?? []).forEach((item) => {
+    const id = String(item.packageId ?? '');
+    if (id) packLineCount[id] = (packLineCount[id] ?? 0) + 1;
+  });
+  const packLabel = (id) => {
+    const n = packLineCount[id] ?? 0;
+    return `${id} · ${n} item${n === 1 ? '' : 's'}`;
+  };
+  const packageOptions = () => (boq?.packages ?? []).map((id) => ({ value: id, label: packLabel(id) }));
+  // The sentinel the "Work package" select uses to mean "not one of these — a new
+  // one, named below". A builder does not type this as a package name; and were it
+  // ever chosen as a real name, the backend would snap it to any match anyway.
+  const NEW_PACKAGE = '__CONSTRUX_NEW_PACKAGE__';
+  // Lines measured at zero quantity — placeholders that price at nothing and that
+  // the estimate already flags as a defect. Clearing them is one click rather than
+  // ticking them out of a list of fifty, because they are an exact, machine-known
+  // set: every live line whose quantity is zero.
+  const emptyLines = (boq?.items ?? []).filter((item) => Number(item.quantity) === 0);
+  const emptyLineIds = emptyLines.map((item) => item.boqItemId);
 
   // Stage six: both routes converge and the sum that goes out is assembled.
   // The arithmetic is trivial; what matters is scope priced by nobody, which is
@@ -1196,7 +1263,14 @@ export async function procurement(root) {
         intel.clarifications.length === 0
           ? ''
           : html`<div class="card pad0" style="margin-bottom:14px">
-              <h2 style="padding:15px 17px 0">Clarification register</h2>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 17px 0">
+                <h2 style="padding:0">Clarification register</h2>
+                ${
+                  toSendToClient.length > 0
+                    ? html`<button class="btn quiet sm" data-copy-clarifications="1" title="Put every open client-side question on your clipboard, numbered, to paste into the buyer’s portal.">Copy all ${toSendToClient.length} question${toSendToClient.length === 1 ? '' : 's'} to send</button>`
+                    : ''
+                }
+              </div>
               ${
                 intel.clarificationStanding && (intel.clarificationStanding.overdue > 0 || intel.clarificationStanding.dueSoon > 0)
                   ? html`<div style="padding:10px 17px 0"><div class="notice ${intel.clarificationStanding.overdue > 0 ? 'bad' : 'warn'}"><div>
@@ -1264,7 +1338,7 @@ export async function procurement(root) {
           ? html`
             <div class="card pad0" style="margin-bottom:14px">
               <h2 style="padding:15px 17px 0">
-                Estimate build-up${estimate.durationWeeks ? ` — ${estimate.durationWeeks} weeks on site` : ''}
+                Estimate build-up${estimate.durationWeeks ? ` — ${estimate.durationWeeks} week${estimate.durationWeeks === 1 ? '' : 's'} on site` : ''}
               </h2>
               <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
                 Each head is priced on the basis it actually has. Site staff, welfare, logistics, safety and quality are
@@ -1520,6 +1594,147 @@ export async function procurement(root) {
 
       ${
         /*
+         * The tender risk register, priced as a contingency.
+         *
+         * cause → event → impact as one record, with who carries it. A client-
+         * owned risk is not priced into our contingency; a contractor-owned one
+         * is. The contingency is held beside the base estimate — expected value
+         * plus a P80 tail — so it is counted once and can be defended line by
+         * line rather than taken as a percentage buried in a rate.
+         */
+        contingency?.error
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <div style="padding:15px 17px">
+                <h2>The risk register, priced</h2>
+                <div class="metric-sub" style="margin-bottom:11px">
+                  Each risk is a cause, the event it leads to, and the cost and time if it happens — scored at a
+                  probability, with who carries it. The contingency below is held beside the base estimate, not inside a
+                  rate, so the exposure is counted once and defended line by line.
+                </div>
+                <div style="display:flex;gap:22px;flex-wrap:wrap;margin-bottom:11px">
+                  <div><div class="metric">${money(contingency?.expectedMinor ?? 0)}</div><div class="metric-sub">expected value</div></div>
+                  <div><div class="metric">${money(contingency?.p80Minor ?? 0)}</div><div class="metric-sub">P80 contingency to hold</div></div>
+                  <div><div class="metric">${money(contingency?.worstCaseMinor ?? 0)}</div><div class="metric-sub">worst case</div></div>
+                </div>
+                ${(contingency?.topDrivers ?? []).length > 0
+                  ? table({
+                      headers: ['Risk', 'Expected cost', 'Share'],
+                      align: ['', 'num', 'num'],
+                      rows: (contingency.topDrivers ?? []).map((driver) => [
+                        driver.title,
+                        money(driver.expectedCostMinor),
+                        pct(Number(driver.share ?? 0) * 100, 0),
+                      ]),
+                    })
+                  : html`<div class="empty"><b>No risks priced yet</b>Register the tender's risks — ground, access,
+                      energisation, supply chain — so the contingency is a number you can defend, not a percentage.</div>`}
+                <div class="actions" style="margin-top:12px">
+                  ${raw(
+                    commandBar([
+                      {
+                        id: 'register-risk',
+                        label: 'Register a tender risk',
+                        tone: 'primary',
+                        permitted: can('RISK_REGISTER', 'C'),
+                        reason: blockedReason('RISK_REGISTER', 'C'),
+                      },
+                    ]),
+                  )}
+                </div>
+              </div>
+            </div>`
+      }
+
+      ${
+        /*
+         * The settlement pack, on one screen.
+         *
+         * The engine was complete and had no screen: open the meeting, move the
+         * price with a reason and an owner, carry what is unresolved as a stated
+         * condition, approve under a named authority. This assembles the four
+         * things a settlement approver needs in front of them at once — the
+         * cost-to-price bridge, the risk exposures held as contingency, the
+         * contract departures the submission will carry, and the sign-off — so the
+         * decision is taken against the whole position rather than four screens.
+         */
+        settlements?.error
+          ? ''
+          : (() => {
+              const list = settlements?.settlements ?? [];
+              const current = list.at(-1);
+              const departures = (awards?.packs ?? []).flatMap((p) => p.departures ?? []);
+              const departuresOutstanding = (awards?.packs ?? []).reduce((n, p) => n + (p.departuresOutstanding ?? 0), 0);
+              const open = current && current.status === 'OPEN';
+              return html`<div class="card pad0" style="margin-bottom:14px">
+                <div style="padding:15px 17px">
+                  <h2>The settlement pack</h2>
+                  <div class="metric-sub" style="margin-bottom:11px">
+                    ${settlements?.summary ?? 'No settlement opened yet.'} Everything an approver signs against, in one
+                    place: the bridge from cost to price, the risk held as contingency, the departures the submission
+                    carries, and the authority the price goes out under.
+                  </div>
+                  ${current
+                    ? html`<div class="split-list">
+                        <div class="row"><span class="lbl">Pre-settlement</span><span class="val">${money(current.bridge.preSettlementMinor)}</span></div>
+                        <div class="row"><span class="lbl">Adjustments (${current.bridge.adjustments.length})</span><span class="val">${money(current.bridge.adjustmentTotalMinor)}</span></div>
+                        <div class="row"><span class="lbl"><b>Settled price</b></span><span class="val"><b style="color:var(--orange)">${money(current.bridge.postSettlementMinor)}</b></span></div>
+                        <div class="row"><span class="lbl">Risk contingency (P80)</span><span class="val">${money(contingency?.p80Minor ?? 0)}</span></div>
+                        <div class="row"><span class="lbl">Contract departures</span><span class="val">${departures.length}${departuresOutstanding > 0 ? raw(` ${badge(`${departuresOutstanding} outstanding`, 'bad')}`) : ''}</span></div>
+                        <div class="row"><span class="lbl">Programme shares the price’s cut-off</span><span class="val">${current.programmeAligned === null ? '—' : current.programmeAligned ? raw(badge('yes', 'ok')) : raw(badge('no', 'warn'))}</span></div>
+                        <div class="row"><span class="lbl">Conditions carried to the submission</span><span class="val">${(current.conditions ?? []).length}</span></div>
+                        <div class="row"><span class="lbl">Actions open</span><span class="val">${current.actions.open}</span></div>
+                        ${current.finalPriceMinor !== undefined
+                          ? html`<div class="row"><span class="lbl"><b>Approved price</b></span><span class="val"><b>${money(current.finalPriceMinor)}</b></span></div>`
+                          : ''}
+                      </div>
+                      ${current.bridge.adjustments.length > 0
+                        ? table({
+                            headers: ['Category', 'Reason', 'Owner', 'Amount'],
+                            align: ['', '', '', 'num'],
+                            rows: current.bridge.adjustments.map((a) => [a.category, a.reason, a.owner, money(a.amountMinor)]),
+                          })
+                        : ''}
+                      ${departures.length > 0
+                        ? html`<div class="metric-sub" style="margin-top:10px"><b>Departures the submission carries:</b>
+                            ${departures.slice(0, 6).map((d) => d.summary ?? d.topic ?? '').filter(Boolean).join('; ')}</div>`
+                        : ''}`
+                    : html`<div class="empty"><b>No settlement opened</b>Freeze the pre-settlement position and open the
+                        meeting to move the price, carry conditions and approve it under a named authority.</div>`}
+                  <div class="actions" style="margin-top:12px">
+                    ${raw(
+                      commandBar([
+                        {
+                          id: 'open-settlement',
+                          label: 'Open the settlement',
+                          permitted: can('ESTIMATE_TENDER', 'C') && !!estimate,
+                          reason: !estimate
+                            ? 'Price the bill first — a settlement is opened against an estimate.'
+                            : blockedReason('ESTIMATE_TENDER', 'C'),
+                        },
+                        {
+                          id: 'settlement-adjustment',
+                          label: 'Move the price',
+                          permitted: can('ESTIMATE_TENDER', 'U') && !!open,
+                          reason: !open ? 'Open a settlement first.' : blockedReason('ESTIMATE_TENDER', 'U'),
+                        },
+                        {
+                          id: 'approve-settlement',
+                          label: 'Approve the price',
+                          tone: 'primary',
+                          permitted: can('ESTIMATE_TENDER', 'A') && !!open,
+                          reason: !open ? 'Open a settlement first.' : blockedReason('ESTIMATE_TENDER', 'A'),
+                        },
+                      ]),
+                    )}
+                  </div>
+                </div>
+              </div>`;
+            })()
+      }
+
+      ${
+        /*
          * The bill, and the door that prices it.
          *
          * Both engines existed and neither had a screen: `runTakeoff` wrote
@@ -1578,6 +1793,12 @@ export async function procurement(root) {
                         reason: blockedReason('BOQ_TAKEOFF', 'C'),
                       },
                       {
+                        id: 'price-fee-schedule',
+                        label: 'Price as a fee (day-rates)',
+                        permitted: can('ESTIMATE_TENDER', 'C') && can('BOQ_TAKEOFF', 'C'),
+                        reason: blockedReason('ESTIMATE_TENDER', 'C') ?? blockedReason('BOQ_TAKEOFF', 'C'),
+                      },
+                      {
                         id: 'build-estimate',
                         label: 'Price the bill',
                         tone: 'primary',
@@ -1586,6 +1807,12 @@ export async function procurement(root) {
                           (boq?.items ?? []).length === 0
                             ? 'Nothing has been measured yet. An estimate prices measured lines; it does not invent them.'
                             : blockedReason('ESTIMATE_TENDER', 'C'),
+                      },
+                      {
+                        id: 'register-risk',
+                        label: 'Register a tender risk',
+                        permitted: can('RISK_REGISTER', 'C'),
+                        reason: blockedReason('RISK_REGISTER', 'C'),
                       },
                       /*
                        * The way out of a bill that is wrong.
@@ -1613,8 +1840,66 @@ export async function procurement(root) {
                             ? 'Nothing is measured, so there is nothing to retire.'
                             : blockedReason('BOQ_TAKEOFF', 'U'),
                       },
+                      /*
+                       * The bill splitting into two packages for one job is the
+                       * other way a measure goes wrong: a name keyed by hand that
+                       * reads the same as one a model confirmed, differing by a
+                       * dash or a space nobody can see. An estimate prices one
+                       * package at a time, so a line in the second is dropped
+                       * from the price silently. This re-files those lines under
+                       * the package they belong to. It is only offered when there
+                       * is more than one package to move between.
+                       */
+                      {
+                        id: 'move-measure',
+                        label: 'Move a measure to another package',
+                        permitted: can('BOQ_TAKEOFF', 'U') && (boq?.packages ?? []).length > 1,
+                        reason:
+                          (boq?.packages ?? []).length > 1
+                            ? blockedReason('BOQ_TAKEOFF', 'U')
+                            : 'There is only one package, so there is nothing to move between.',
+                      },
+                      /*
+                       * The common case made one click. A line measured at zero
+                       * prices at nothing and the estimate flags it; the set is
+                       * exact, so clearing all of them is one decision rather than
+                       * ticking each out of a long list. Offered only when there
+                       * is at least one such line.
+                       */
+                      {
+                        id: 'clear-empty-lines',
+                        label: `Clear the lines priced at nothing${emptyLines.length ? ` (${emptyLines.length})` : ''}`,
+                        permitted: can('BOQ_TAKEOFF', 'U') && emptyLines.length > 0,
+                        reason:
+                          emptyLines.length === 0
+                            ? 'No line is measured at zero, so there is nothing priced at nothing to clear.'
+                            : blockedReason('BOQ_TAKEOFF', 'U'),
+                      },
+                      /*
+                       * Retiring a package is too blunt once a job is one
+                       * package: a few stale lines — an empty placeholder left
+                       * when the real line was measured under another code, a
+                       * line entered twice — cannot be cleared without taking the
+                       * whole measure with them. This retires the named lines and
+                       * leaves the rest standing.
+                       */
+                      {
+                        id: 'retire-items',
+                        label: 'Retire specific lines',
+                        permitted: can('BOQ_TAKEOFF', 'U') && (boq?.items ?? []).length > 0,
+                        reason:
+                          (boq?.items ?? []).length === 0
+                            ? 'Nothing is measured, so there is no line to retire.'
+                            : blockedReason('BOQ_TAKEOFF', 'U'),
+                      },
                     ]),
                   )}
+                  ${
+                    (boq?.items ?? []).length > 0
+                      ? html`<button class="btn sm" data-download-schedule="1" style="margin-top:9px">Download pricing schedule (PDF)</button>
+                          <button class="btn quiet sm" data-copy-schedule="1" style="margin-top:9px">Copy for Appendix B</button>`
+                      : ''
+                  }
                 </div>
               </div>
             </div>`
@@ -1752,6 +2037,57 @@ export async function procurement(root) {
           },
         ],
       })}
+
+      <div class="card pad0" style="margin-bottom:14px">
+        <div style="padding:15px 17px">
+          <h2>After submission</h2>
+          <div class="metric-sub" style="margin-bottom:11px">
+            Record the client’s award notice against the pack — won, lost or withdrawn — with any standstill window it
+            opened. A win computes what departs from what was bid; a standstill is counted down above. Why a bid was lost,
+            and the marks, go on the opportunity’s outcome on Pipeline &amp; Bids, which the calibration reads.
+          </div>
+          <div class="actions">
+            ${raw(
+              commandBar([
+                {
+                  id: 'log-query',
+                  label: 'Log a post-tender query',
+                  permitted: can('PROCUREMENT_AWARD', 'U'),
+                  reason: blockedReason('PROCUREMENT_AWARD', 'U'),
+                },
+                {
+                  id: 'answer-query',
+                  label: 'Answer a query',
+                  permitted: can('PROCUREMENT_AWARD', 'U') && (awards?.packs ?? []).some((p) => (p.queriesOpen ?? 0) > 0),
+                  reason: (awards?.packs ?? []).some((p) => (p.queriesOpen ?? 0) > 0)
+                    ? blockedReason('PROCUREMENT_AWARD', 'U')
+                    : 'No post-tender query is open.',
+                },
+                {
+                  id: 'price-challenge',
+                  label: 'Record a price challenge',
+                  permitted: can('PROCUREMENT_AWARD', 'U'),
+                  reason: blockedReason('PROCUREMENT_AWARD', 'U'),
+                },
+                {
+                  id: 'substantiate-price-challenge',
+                  label: 'Substantiate the price',
+                  permitted: can('PROCUREMENT_AWARD', 'U') && (awards?.packs ?? []).some((p) => p.priceChallenge && !p.priceChallenge.substantiated),
+                  reason: (awards?.packs ?? []).some((p) => p.priceChallenge && !p.priceChallenge.substantiated)
+                    ? blockedReason('PROCUREMENT_AWARD', 'U')
+                    : 'No open price challenge to substantiate.',
+                },
+                {
+                  id: 'record-award',
+                  label: 'Record the award outcome',
+                  permitted: can('PROCUREMENT_AWARD', 'A'),
+                  reason: blockedReason('PROCUREMENT_AWARD', 'A'),
+                },
+              ]),
+            )}
+          </div>
+        </div>
+      </div>
     `,
   );
 
@@ -1874,8 +2210,8 @@ export async function procurement(root) {
           name: 'packageId',
           label: 'Package',
           type: 'select',
-          options: (boq?.packages ?? []).map((name) => ({ value: name, label: name })),
-          hint: 'Every item still standing against this package is retired together — a half-retired measure is not a measure.',
+          options: packageOptions(),
+          hint: 'Every item still standing against this package is retired together — a half-retired measure is not a measure. The item count tells two same-named packages apart.',
         },
         {
           name: 'reason',
@@ -1883,6 +2219,94 @@ export async function procurement(root) {
           type: 'textarea',
           rows: 2,
           hint: 'Somebody reading the bill in a year needs to know whether the drawing changed or the run was repeated — the two lead to different questions.',
+        },
+      ],
+    },
+    'move-measure': {
+      title: 'Move a measure to another package',
+      intent:
+        'Two readings of one job can end up filed under names that read the same but differ by a dash or a space nobody ' +
+        'can see, so the bill holds two packages for one job — and because an estimate prices one package at a time, the ' +
+        'lines in the second are left out of the price with nothing to show them missing. This re-files them under the ' +
+        'package they belong to, keeping their quantities and cost codes. Nothing is created and nothing is deleted.',
+      path: `/v1/projects/${projectId}/tender/boq/move`,
+      submitLabel: 'Move these lines',
+      fields: [
+        {
+          name: 'fromPackageId',
+          label: 'Move from',
+          type: 'select',
+          options: packageOptions(),
+          hint: 'The package to empty. Every line still standing against it moves together. Use the item count to pick the stray one.',
+        },
+        {
+          name: 'toPackageId',
+          label: 'Move into',
+          type: 'select',
+          options: packageOptions(),
+          hint: 'The package they belong to — usually the one holding the rest of the job.',
+        },
+        {
+          name: 'reason',
+          label: 'Why they are moving',
+          type: 'textarea',
+          rows: 2,
+          hint: 'Somebody reading the bill in a year needs to know whether two readings of one job were merged or a line was re-scoped — the two lead to different questions.',
+        },
+      ],
+    },
+    'clear-empty-lines': {
+      title: 'Clear the lines priced at nothing',
+      intent:
+        emptyLines.length > 0
+          ? `Retires the ${emptyLines.length} line${emptyLines.length === 1 ? '' : 's'} measured at zero quantity, which ` +
+            `price at nothing and which the estimate flags as a defect: ${emptyLines
+              .map((item) => item.costCode)
+              .join(', ')}. They stay on the record with a reason against them; nothing else on the bill is touched. ` +
+            'Clear them before pricing so the quotation does not carry an empty line.'
+          : 'No line is measured at zero quantity. There is nothing priced at nothing to clear.',
+      path: `/v1/projects/${projectId}/tender/boq/retire-items`,
+      submitLabel: `Clear ${emptyLines.length} line${emptyLines.length === 1 ? '' : 's'}`,
+      fields: [
+        {
+          name: 'reason',
+          label: 'Why they no longer stand',
+          type: 'textarea',
+          rows: 2,
+          value: 'Placeholder lines measured at zero quantity — the real scope is measured on other lines of the bill.',
+          hint: 'Recorded against each retired line. Edit it if these zeros were something other than placeholders.',
+        },
+      ],
+      // The lines are the exact zero-quantity set, computed here rather than ticked
+      // out of a list — the same retire-items endpoint, a determined selection.
+      transform: (v) => ({ boqItemIds: emptyLineIds, reason: v.reason }),
+    },
+    'retire-items': {
+      title: 'Retire specific lines',
+      intent:
+        'For a bill where a few lines are stale — an empty placeholder left behind when the real line was measured ' +
+        'under another code, or a line entered twice — and the rest of the package is the measure. The chosen lines ' +
+        'stop being the current measure and stay on the record with a reason against them; nothing is deleted, and ' +
+        'everything you do not tick is left exactly as it stands.',
+      path: `/v1/projects/${projectId}/tender/boq/retire-items`,
+      submitLabel: 'Retire these lines',
+      fields: [
+        {
+          name: 'boqItemIds',
+          label: 'Lines to retire',
+          type: 'multiselect',
+          options: (boq?.items ?? []).map((item) => ({
+            value: item.boqItemId,
+            label: `${item.costCode} · ${item.description} (${item.quantity} ${item.unit})`,
+          })),
+          hint: 'Tick each line that no longer stands. A placeholder priced at nothing, or a duplicate of a line measured elsewhere, is the usual case.',
+        },
+        {
+          name: 'reason',
+          label: 'Why they no longer stand',
+          type: 'textarea',
+          rows: 2,
+          hint: 'Somebody reading the bill in a year needs to know whether they were duplicates, placeholders or re-scoped — the three lead to different questions.',
         },
       ],
     },
@@ -2011,7 +2435,7 @@ export async function procurement(root) {
           value: (packRun?.headsToSettle ?? []).length > 0 ? 'Not included in this offer' : '',
           hint: 'It travels into the quotation as a stated qualification, so the customer reads it rather than assuming it.',
         },
-        { name: 'clientName', label: 'Quoted to', type: 'text', hint: 'The client this offer is made to.' },
+        { name: 'clientName', label: 'Quoted to', type: 'text', required: false, hint: 'The client this offer is made to. Leave blank and it goes to the tender’s buyer.' },
         { name: 'validUntil', label: 'Valid until', type: 'date', min: today(), hint: 'A quotation without a lapse date is a standing offer.' },
         { name: 'paymentTerms', label: 'Payment terms', type: 'text', required: false, placeholder: '30 days from invoice' },
         /*
@@ -2230,16 +2654,39 @@ export async function procurement(root) {
       path: `/v1/projects/${projectId}/tender/takeoff/measured`,
       submitLabel: 'Record the measurement',
       fields: [
+        // When packages already exist, this is a real dropdown of them — not a
+        // free-typed box. A typed box let the browser's own autofill offer a name
+        // the person had keyed once with a stray space or a different dash, and
+        // the bill split into two packages for one job that an estimate then
+        // priced one at a time. Picking an existing package reuses its exact id;
+        // a genuinely new one is opened through the last option and named below.
+        (boq?.packages ?? []).length > 0
+          ? {
+              name: 'packageId',
+              label: 'Work package',
+              type: 'select',
+              options: [
+                ...packageOptions(),
+                { value: NEW_PACKAGE, label: '＋ A new package — name it below' },
+              ],
+              hint: 'Pick the package these quantities belong to; the item count tells two same-named packages apart. Choose the last option only to open a genuinely new package.',
+            }
+          : {
+              name: 'packageId',
+              label: 'Work package',
+              type: 'text',
+              hint: 'Name the package these quantities belong to — this opens the first one. Use the same name when you price them.',
+            },
         {
-          name: 'packageId',
-          label: 'Work package',
+          name: 'newPackageName',
+          label: 'New package name',
           type: 'text',
-          suggestions: boq?.packages ?? [],
-          hint: 'The package these quantities belong to. Use the same name when you price them.',
+          required: false,
+          hint: 'Only if you chose “a new package” above. Otherwise leave this blank.',
         },
-        { name: 'costCodePrefix', label: 'Cost code prefix', type: 'text', placeholder: 'WALL', hint: 'Codes run WALL.001, WALL.002 and so on.' },
-        { name: 'discipline', label: 'Discipline', type: 'text', placeholder: 'STRUCTURES' },
-        { name: 'sheetId', label: 'Sheet', type: 'text', placeholder: '25133-TDC-FN-ZZ-DR-S-1600', hint: 'The drawing the measurement was taken off.' },
+        { name: 'costCodePrefix', label: 'Cost code prefix', type: 'text', required: false, placeholder: 'WALL', hint: 'Codes run WALL.001, WALL.002 and so on. Optional — defaults to ITEM.' },
+        { name: 'discipline', label: 'Discipline', type: 'text', required: false, placeholder: 'STRUCTURES', hint: 'Optional. Defaults to “By hand” for a measurement taken off your own sheets.' },
+        { name: 'sheetId', label: 'Sheet', type: 'text', required: false, placeholder: '25133-TDC-FN-ZZ-DR-S-1600', hint: 'The drawing the measurement was taken off. Leave blank if there is no drawing — a fee or services bill has none.' },
         {
           name: 'items',
           label: 'The items, one per line',
@@ -2249,21 +2696,124 @@ export async function procurement(root) {
             'Rake out and repoint in lime mortar | m2 | 86\nRebuild collapsed section in reclaimed stone | m2 | 12\nReplace coping, bed and point | m | 34',
           hint: 'description | unit | quantity — and optionally a fourth field naming a different sheet for that line.',
         },
+        {
+          // Asked, not assumed. Without it every hand-entered line was tagged
+          // NRM2 — a building standard — on a highways bill measured to MMHW.
+          name: 'measurementRule',
+          label: 'Method of measurement',
+          type: 'select',
+          options: METHOD_OF_MEASUREMENT,
+          hint: 'The rule the buyer’s bill is drawn to — the preamble usually says. NRM2 is building work; a highways or civils bill is usually MMHW or CESMM.',
+        },
+      ],
+      transform: (v) => {
+        // A measurement taken off your own sheets may have no drawing number at
+        // all — a fee or services bill has none. Rather than refuse eleven lines
+        // with a validation error about an empty sheet, a blank one is recorded
+        // honestly as "By hand", which is exactly what it was.
+        const sheet = String(v.sheetId ?? '').trim() || 'By hand';
+        const discipline = String(v.discipline ?? '').trim() || 'Professional services';
+        return {
+          // A new package takes the name typed below; otherwise the chosen package's
+          // exact id is used, so re-measuring into an existing package never forks it.
+          packageId: v.packageId === NEW_PACKAGE ? String(v.newPackageName ?? '').trim() : v.packageId,
+          costCodePrefix: String(v.costCodePrefix ?? '').trim() || 'ITEM',
+          sources: [{ discipline, sheetId: sheet }],
+          items: String(v.items ?? '')
+            .split('\n')
+            .map((line) => line.split('|').map((part) => part.trim()))
+            .filter((parts) => parts.length >= 3 && parts[0])
+            .map((parts) => ({
+              description: parts[0],
+              unit: parts[1],
+              quantity: Number(parts[2]),
+              sourceSheet: parts[3] || sheet,
+              ...(v.measurementRule ? { measurementRule: v.measurementRule } : {}),
+            })),
+        };
+      },
+    },
+    'price-fee-schedule': {
+      title: 'Price as a fee — day-rates',
+      intent:
+        'For a professional-services or consultancy bid priced by resource and day-rate rather than a measured ' +
+        'construction bill — a fee bid has no drawings to measure. Each line is a role and its day-rate; add a day ' +
+        'count in the middle only if you are pricing a fee for a defined scope. With rates alone it is a schedule of ' +
+        'rates — what a framework or DPS tenders, applied by the buyer to its own call-off volumes. Disbursements are ' +
+        'expenses carried at cost and never marked up. It files the lines and prices them in one step, and the ' +
+        'quotation and pricing schedule follow exactly as for any priced bill.',
+      path: `/v1/projects/${projectId}/tender/fee-schedule`,
+      submitLabel: 'Price the fee',
+      fields: [
+        {
+          name: 'packageName',
+          label: 'What the fee is for',
+          type: 'text',
+          required: false,
+          placeholder: 'Professional services',
+          hint: 'The package the fee lines are filed under. Leave blank for “Professional services”.',
+        },
+        {
+          name: 'resources',
+          label: 'Resource lines, one per line',
+          type: 'textarea',
+          rows: 6,
+          placeholder: 'Project Director | 875\nSenior Project Manager | 725\nQuantity Surveyor | 575',
+          hint:
+            'role | day-rate in pounds — e.g. “Project Director | 875”. That is a schedule of rates, which is what a ' +
+            'framework or DPS tenders. To price a fee for a defined scope instead, add the days in the middle: ' +
+            '“Project Director | 5 | 875” is 5 days at £875.',
+        },
+        {
+          name: 'disbursements',
+          label: 'Disbursements (optional), one per line',
+          type: 'textarea',
+          rows: 3,
+          required: false,
+          placeholder: 'Travel and subsistence | 500\nPrinting and plotting | 150',
+          hint: 'label | amount in pounds — carried at cost after margin, never marked up.',
+        },
+        {
+          name: 'overheadPercent',
+          label: 'Overhead (%)',
+          type: 'number',
+          step: '0.1',
+          required: false,
+          value: 0,
+          hint: 'Leave at 0 if your day-rate is all-in (the usual case).',
+        },
+        { name: 'profitPercent', label: 'Profit (%)', type: 'number', step: '0.1', required: false, value: 0 },
+        {
+          name: 'basisOfEstimate',
+          label: 'Basis of the fee',
+          type: 'textarea',
+          rows: 2,
+          required: false,
+          placeholder: 'Professional-services fee, priced by resource and day-rate.',
+          hint: 'Travels with the estimate and into the quotation.',
+        },
       ],
       transform: (v) => ({
-        packageId: v.packageId,
-        costCodePrefix: v.costCodePrefix,
-        sources: [{ discipline: v.discipline, sheetId: v.sheetId }],
-        items: String(v.items ?? '')
+        ...(String(v.packageName ?? '').trim() ? { packageName: String(v.packageName).trim() } : {}),
+        resources: String(v.resources ?? '')
           .split('\n')
           .map((line) => line.split('|').map((part) => part.trim()))
-          .filter((parts) => parts.length >= 3 && parts[0])
-          .map((parts) => ({
-            description: parts[0],
-            unit: parts[1],
-            quantity: Number(parts[2]),
-            sourceSheet: parts[3] || v.sheetId,
-          })),
+          // Two columns is a rate card (role | rate); three is an extended fee
+          // (role | days | rate). Keep a line when it has a role and a final rate.
+          .filter((parts) => parts.length >= 2 && parts[0] && parts[parts.length - 1])
+          .map((parts) =>
+            parts.length >= 3
+              ? { role: parts[0], days: Number(parts[1]), dayRateMinor: Math.round(Number(parts[2]) * 100) }
+              : { role: parts[0], dayRateMinor: Math.round(Number(parts[1]) * 100) },
+          ),
+        disbursements: String(v.disbursements ?? '')
+          .split('\n')
+          .map((line) => line.split('|').map((part) => part.trim()))
+          .filter((parts) => parts.length >= 2 && parts[0] && parts[1])
+          .map((parts) => ({ label: parts[0], amountMinor: Math.round(Number(parts[1]) * 100) })),
+        overheadPercent: Number(v.overheadPercent) || 0,
+        profitPercent: Number(v.profitPercent) || 0,
+        ...(String(v.basisOfEstimate ?? '').trim() ? { basisOfEstimate: String(v.basisOfEstimate).trim() } : {}),
       }),
     },
     'duration-estimate': {
@@ -2275,20 +2825,33 @@ export async function procurement(root) {
         'basis. Take the figure to the construction-period field, and to the WBS generator on the programme side.',
       path: `/v1/projects/${projectId}/programme/duration-estimate`,
       submitLabel: 'Estimate it',
+      // Before the form opens, read the two figures off the priced bill and fill
+      // them in — so the common case is a glance and one press, not retyping a
+      // total the measurement already holds. Where nothing is priced the fields
+      // open blank with a hint, and the person can type them.
+      prepare: async () => {
+        const { basis } = await api.get(`/v1/projects/${projectId}/programme/duration-basis`).catch(() => ({ basis: null }));
+        if (!basis) return {};
+        // The money field is entered in major units (command.js multiplies by
+        // 100 on submit), so the net-measured minor figure is shown in major.
+        return { values: { netMeasuredMinor: basis.netMeasuredMinor / 100, tradeGroups: basis.tradeGroups } };
+      },
       fields: [
         {
           name: 'netMeasuredMinor',
           label: 'Net measured works',
           type: 'number',
           money: true,
-          hint: 'The measured-works total from the estimate — direct cost only, before heads, overhead and profit.',
+          required: false,
+          hint: 'The measured-works total — direct cost only, before heads, overhead and profit. Filled from the priced bill; leave it to use that, or type your own.',
         },
         {
           name: 'tradeGroups',
           label: 'Trade phases the works span',
           type: 'number',
           step: '1',
-          hint: 'How many distinct trade phases are in the bill — groundworks, walls, roof, finishes, externals and so on.',
+          required: false,
+          hint: 'How many distinct trade phases are in the bill — groundworks, walls, roof, finishes, externals. Filled from the bill’s work sections.',
         },
         {
           name: 'complexity',
@@ -2302,15 +2865,170 @@ export async function procurement(root) {
           ],
         },
       ],
+      // Blank means "use the priced bill" — omit it so the server derives it,
+      // rather than sending a 0 or a NaN that would estimate a fortnight from
+      // nothing.
       transform: (v) => ({
-        netMeasuredMinor: Number(v.netMeasuredMinor),
-        tradeGroups: Number(v.tradeGroups),
+        ...(v.netMeasuredMinor !== '' && v.netMeasuredMinor != null ? { netMeasuredMinor: Number(v.netMeasuredMinor) } : {}),
+        ...(v.tradeGroups !== '' && v.tradeGroups != null ? { tradeGroups: Number(v.tradeGroups) } : {}),
         ...(v.complexity ? { complexity: v.complexity } : {}),
       }),
       report: (res) => ({
         title: `About ${res.weeks} week${res.weeks === 1 ? '' : 's'} — low confidence`,
         message: `${res.basis} Take it to the construction period and confirm it; this is an estimate from the works, not a programme a planner has built.`,
         tone: 'ok',
+      }),
+    },
+    'register-risk': {
+      title: 'Register a tender risk',
+      intent:
+        'A tender risk is one record: the cause, the event it leads to, and the cost and time if it happens — scored ' +
+        'at a probability, with who carries it. A client-owned risk is not priced into our contingency; a contractor-' +
+        'owned one is. The register produces a P80 contingency held beside the base estimate, so the exposure is ' +
+        'counted once and defended line by line rather than taken as a percentage.',
+      path: `/v1/projects/${projectId}/risk`,
+      submitLabel: 'Register it',
+      fields: [
+        { name: 'title', label: 'The risk, in a line', type: 'text',
+          hint: 'The event — "temporary generation runs beyond the priced period".' },
+        { name: 'cause', label: 'Cause', type: 'textarea', rows: 2, required: false,
+          hint: 'What gives rise to it — "DNO energisation depends on a wayleave not yet granted". A control acts on the cause, not the event.' },
+        { name: 'category', label: 'Category', type: 'select',
+          options: [
+            { value: 'GROUND_CONDITIONS', label: 'Ground conditions' },
+            { value: 'PROGRAMME', label: 'Programme' },
+            { value: 'COMMERCIAL', label: 'Commercial' },
+            { value: 'DESIGN', label: 'Design' },
+            { value: 'SUPPLY_CHAIN', label: 'Supply chain' },
+            { value: 'SAFETY', label: 'Safety' },
+            { value: 'QUALITY', label: 'Quality' },
+            { value: 'ENVIRONMENTAL', label: 'Environmental' },
+            { value: 'REGULATORY', label: 'Regulatory' },
+            { value: 'WEATHER', label: 'Weather' },
+          ] },
+        { name: 'allocation', label: 'Who carries it', type: 'select',
+          options: [
+            { value: 'CONTRACTOR', label: 'Us — priced into our contingency' },
+            { value: 'CLIENT', label: 'The client — not priced into our contingency' },
+            { value: 'SHARED', label: 'Shared' },
+          ],
+          hint: 'A client-owned risk is left out of our contingency, so the same exposure is never funded twice.' },
+        { name: 'probability', label: 'Probability (0–1)', type: 'number', step: '0.05', min: 0, max: 1,
+          hint: 'A proportion, not a percentage. 0.4 means a four-in-ten chance.' },
+        { name: 'costOptimistic', label: 'Cost if it happens — best case (£)', type: 'number', money: true },
+        { name: 'costMostLikely', label: 'Cost if it happens — most likely (£)', type: 'number', money: true },
+        { name: 'costPessimistic', label: 'Cost if it happens — worst case (£)', type: 'number', money: true },
+        { name: 'dayOptimistic', label: 'Delay if it happens — best case (days)', type: 'number', required: false, value: 0 },
+        { name: 'dayMostLikely', label: 'Delay if it happens — most likely (days)', type: 'number', required: false, value: 0 },
+        { name: 'dayPessimistic', label: 'Delay if it happens — worst case (days)', type: 'number', required: false, value: 0 },
+      ],
+      transform: (v) => ({
+        title: String(v.title ?? '').trim(),
+        category: v.category,
+        ...(String(v.cause ?? '').trim() ? { cause: String(v.cause).trim() } : {}),
+        ...(v.allocation ? { allocation: v.allocation } : {}),
+        probability: Number(v.probability ?? 0),
+        costImpact: {
+          optimistic: Math.round(Number(v.costOptimistic ?? 0)),
+          mostLikely: Math.round(Number(v.costMostLikely ?? 0)),
+          pessimistic: Math.round(Number(v.costPessimistic ?? 0)),
+        },
+        scheduleImpactDays: {
+          optimistic: Number(v.dayOptimistic ?? 0),
+          mostLikely: Number(v.dayMostLikely ?? 0),
+          pessimistic: Number(v.dayPessimistic ?? 0),
+        },
+        // Score normalisation only — the expected cost that drives the
+        // contingency is independent of these. Taken from the priced estimate
+        // where there is one, with a sensible fallback where there is not.
+        projectValueMinor: Number(estimate?.totalMinor ?? 0),
+        projectDurationDays: Math.max(1, Math.round(Number(estimate?.durationWeeks ?? 26) * 7)),
+      }),
+    },
+    'open-settlement': {
+      title: 'Open the settlement',
+      intent:
+        'Freezes the pre-settlement position — the estimate total as it stands — and opens the meeting. From here the ' +
+        'price is moved with a reason and an owner, what cannot be closed is carried as a stated condition, and the ' +
+        'result is approved under a named authority.',
+      path: `/v1/projects/${projectId}/settlements`,
+      submitLabel: 'Open it',
+      fields: [
+        { name: 'estimateId', label: 'Estimate', type: 'select',
+          options: b.Estimate.map((e) => ({ value: String(e.id), label: `${e.reference ?? e.id} · ${money(e.totalMinor ?? 0)}` })) },
+        { name: 'informationAt', label: 'Information cut-off', type: 'date',
+          hint: 'The revision of the information the price is settled against — so the price and the programme can be checked to share it.' },
+        { name: 'addendum', label: 'Against addendum', type: 'text', required: false,
+          hint: 'The last addendum reflected, where one applies.' },
+      ],
+      transform: (v) => ({
+        estimateId: v.estimateId,
+        cutOff: { informationAt: String(v.informationAt ?? ''), ...(String(v.addendum ?? '').trim() ? { addendum: String(v.addendum).trim() } : {}) },
+      }),
+    },
+    'settlement-adjustment': {
+      title: 'Move the price',
+      intent:
+        'Every movement carries a category, a reason and the person who decided it — taking money out of a price is the ' +
+        'commonest thing that happens in this meeting, so the amount is signed. Supplier, scope and benchmark ' +
+        'corrections point at a document; the judgements taken in the room do not.',
+      path: (v) => `/v1/projects/${projectId}/settlements/${v.settlementId}/adjustments`,
+      submitLabel: 'Record it',
+      fields: [
+        { name: 'settlementId', label: 'Settlement', type: 'select',
+          options: (settlements?.settlements ?? []).filter((s) => s.status === 'OPEN').map((s) => ({ value: s.settlementId, label: s.reference })) },
+        { name: 'category', label: 'Category', type: 'select',
+          options: [
+            { value: 'SUPPLIER_PRICE', label: 'Supplier price (needs evidence)' },
+            { value: 'SCOPE_CORRECTION', label: 'Scope correction (needs evidence)' },
+            { value: 'BENCHMARK_CORRECTION', label: 'Benchmark correction (needs evidence)' },
+            { value: 'RISK_ALLOWANCE', label: 'Risk allowance' },
+            { value: 'CONTINGENCY', label: 'Contingency' },
+            { value: 'INFLATION', label: 'Inflation' },
+            { value: 'MARGIN', label: 'Margin' },
+            { value: 'COMMERCIAL_OPPORTUNITY', label: 'Commercial opportunity' },
+          ] },
+        { name: 'amountMinor', label: 'Amount (£, negative to take out)', type: 'number', money: true,
+          hint: 'Signed. A reduction is negative.' },
+        { name: 'reason', label: 'Reason', type: 'textarea', rows: 2 },
+        { name: 'owner', label: 'Decided by', type: 'text' },
+      ],
+      transform: (v) => ({
+        category: v.category,
+        amountMinor: Math.round(Number(v.amountMinor ?? 0)),
+        reason: String(v.reason ?? '').trim(),
+        owner: String(v.owner ?? '').trim(),
+      }),
+    },
+    'approve-settlement': {
+      title: 'Approve the price',
+      intent:
+        'The settled price goes out under a named authority and within its limit. The cost-to-price bridge, the risk ' +
+        'contingency and the departures the submission carries are on the screen behind this — the approval is taken ' +
+        'against the whole position.',
+      path: (v) => `/v1/projects/${projectId}/settlements/${v.settlementId}/approve`,
+      submitLabel: 'Approve',
+      fields: [
+        { name: 'settlementId', label: 'Settlement', type: 'select',
+          options: (settlements?.settlements ?? []).filter((s) => s.status === 'OPEN').map((s) => ({ value: s.settlementId, label: `${s.reference} · ${money(s.bridge.postSettlementMinor)}` })) },
+        { name: 'finalPriceMinor', label: 'Final price (£)', type: 'number', money: true,
+          hint: 'The number that goes out. Normally the settled price above.' },
+        { name: 'delegatedTo', label: 'Authority delegated to', type: 'text',
+          hint: 'The person or office approving it, not the system.' },
+        { name: 'limitMinor', label: 'The limit that authority carries (£)', type: 'number', money: true },
+        { name: 'authorityReference', label: 'Under what authority', type: 'text', required: false,
+          hint: 'Scheme of delegation, board minute or policy.' },
+        { name: 'summary', label: 'Approval summary', type: 'textarea', rows: 2,
+          hint: 'What is being approved and on what basis — read back on the thread.' },
+      ],
+      transform: (v) => ({
+        finalPriceMinor: Math.round(Number(v.finalPriceMinor ?? 0)),
+        authority: {
+          delegatedTo: String(v.delegatedTo ?? '').trim(),
+          limitMinor: Math.round(Number(v.limitMinor ?? 0)),
+          ...(String(v.authorityReference ?? '').trim() ? { reference: String(v.authorityReference).trim() } : {}),
+        },
+        summary: String(v.summary ?? '').trim(),
       }),
     },
     'build-estimate': {
@@ -2327,14 +3045,15 @@ export async function procurement(root) {
           name: 'packageId',
           label: 'Work package',
           type: 'select',
-          options: (boq?.packages ?? []).map((id) => ({ value: id, label: id })),
-          hint: 'The package whose measured lines are being priced.',
+          options: packageOptions(),
+          hint: 'The package whose measured lines are being priced. The item count tells two same-named packages apart — if the job split into two, move them into one package first.',
         },
         {
           name: 'durationWeeks',
           label: 'Construction period (weeks)',
           type: 'number',
           step: '1',
+          value: priorModel.durationWeeks ?? estimate?.durationWeeks ?? '',
           hint: 'Drives every time-related head. Not in the drawings, and not guessed at here.',
         },
         {
@@ -2342,14 +3061,16 @@ export async function procurement(root) {
           label: 'Overhead (%)',
           type: 'number',
           step: '0.1',
+          value: priorModel.margin?.overheadPercent ?? '',
           hint: 'What this business carries, on the cost beneath it.',
         },
-        { name: 'profitPercent', label: 'Profit (%)', type: 'number', step: '0.1' },
+        { name: 'profitPercent', label: 'Profit (%)', type: 'number', step: '0.1', value: priorModel.margin?.profitPercent ?? '' },
         {
           name: 'basisOfEstimate',
           label: 'Basis of the estimate',
           type: 'textarea',
           rows: 2,
+          value: estimate?.basisOfEstimate ?? '',
           hint: 'What it was built from and what it assumes. It travels with the estimate and into the quotation.',
         },
         {
@@ -2358,7 +3079,22 @@ export async function procurement(root) {
           type: 'textarea',
           rows: 3,
           required: false,
+          value: Array.isArray(estimate?.assumptions) ? estimate.assumptions.join('\n') : '',
           hint: 'Each becomes a stated assumption on the estimate rather than something a reader has to infer.',
+        },
+        {
+          name: 'fixedSums',
+          label: 'Provisional and fixed sums (one per line, as "label: amount")',
+          type: 'textarea',
+          rows: 3,
+          required: false,
+          value: Array.isArray(estimate?.fixedSums)
+            ? estimate.fixedSums.map((s) => `${s.label}: ${(Number(s.amountMinor) / 100).toFixed(2)}`).join('\n')
+            : '',
+          hint:
+            'All-in sums the contractor does not mark up — provisional sums (soakaway, asbestos) and nominated allowances. ' +
+            'Each is added to the tender total AFTER margin, never marked up, so a sum that already carries its own overhead ' +
+            'and profit is not charged twice. Enter the amount in pounds, e.g. "Soakaway: 2750".',
         },
         // The site-wide heads a small job actually carries. Priced on their own
         // basis — by the week, or as their own sum — never as a percentage of
@@ -2369,6 +3105,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorWeekly('PRELIMINARIES'),
           hint: 'Set-up, welfare, accommodation, utilities. Multiplied by the period above, so a longer job costs more.',
         },
         {
@@ -2377,6 +3114,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorWeekly('SITE_MANAGEMENT'),
           hint: 'A visiting or resident manager — the site-staff establishment, by the week. Price it here rather than excluding it.',
         },
         {
@@ -2385,6 +3123,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorWeekly('HEALTH_AND_SAFETY'),
           hint: 'Safety advice, inductions, PPE, monitoring.',
         },
         {
@@ -2393,6 +3132,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorWeekly('LOGISTICS'),
           hint: 'Gate, marshalling, hoists, cranage, deliveries — by the week.',
         },
         {
@@ -2401,6 +3141,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorWeekly('QUALITY'),
           hint: 'Inspection, ITP administration, snagging and handover evidence — by the week.',
         },
         {
@@ -2409,6 +3150,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorSum('TEMPORARY_WORKS'),
           hint: 'Design-and-check plus hire — scaffold, props, support. A CDM duty, not a percentage allowance.',
         },
         {
@@ -2417,6 +3159,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorSum('TESTING'),
           hint: 'Materials, structural and systems testing against the ITP.',
         },
         {
@@ -2425,6 +3168,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorSum('COMMISSIONING'),
           hint: 'Systems commissioning, witnessing and demonstration.',
         },
         {
@@ -2433,6 +3177,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorSum('WASTE'),
           hint: 'Skips, muck away and gate fees for the whole job.',
         },
         {
@@ -2441,6 +3186,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorFee('DESIGN'),
           hint: 'The contractor-designed portion, per the design responsibility matrix.',
         },
         {
@@ -2449,6 +3195,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorFee('PROFESSIONAL_FEES'),
           hint: 'External consultants, surveys, statutory and planning fees.',
         },
         {
@@ -2457,6 +3204,7 @@ export async function procurement(root) {
           type: 'number',
           step: '0.01',
           required: false,
+          value: priorModel.insurance?.policies?.[0]?.percentOfContractValue ?? '',
           hint: 'Contract works and liability premiums, on the value they insure.',
         },
         // The other half of honesty about a head. A head neither priced nor
@@ -2468,6 +3216,7 @@ export async function procurement(root) {
           label: 'Heads not included in this price',
           type: 'multiselect',
           required: false,
+          value: (priorModel.exclusions ?? []).map((exclusion) => exclusion.head),
           options: (costHeads?.heads ?? []).map((head) => ({ value: head.head, label: `${head.label} — ${head.note}` })),
           hint:
             'Each becomes a stated exclusion carried into the quotation. Contingency belongs here unless the risk ' +
@@ -2478,6 +3227,7 @@ export async function procurement(root) {
           label: 'Why those are excluded',
           type: 'text',
           required: false,
+          value: (priorModel.exclusions ?? [])[0]?.reason ?? '',
           placeholder: 'Not included in this offer; by others',
         },
         // One rate field per measured line. The quantities are what came off
@@ -2585,6 +3335,24 @@ export async function procurement(root) {
             ? { head: 'PROFESSIONAL_FEES', description: 'Consultants, surveys and statutory fees', lumpSumMinor: Number(v.professionalFeesMinor) }
             : null,
         ].filter(Boolean);
+        // Provisional and fixed sums, one per line as "label: amount" in pounds.
+        // Converted to minor here and added after margin by the cost model — not
+        // marked up, because they already carry their own.
+        const fixedSums = String(v.fixedSums ?? '')
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const split = line.lastIndexOf(':');
+            const label = (split >= 0 ? line.slice(0, split) : line).trim();
+            const amount = Number(String(split >= 0 ? line.slice(split + 1) : '').replace(/[^0-9.]/g, ''));
+            return {
+              label: label || 'Fixed sum',
+              amountMinor: Math.round((Number.isFinite(amount) ? amount : 0) * 100),
+              provisional: /provisional|soakaway|asbestos|allowance|contingen/i.test(label),
+            };
+          })
+          .filter((sum) => sum.amountMinor > 0);
         return {
           packageId: v.packageId,
           durationWeeks: weeks,
@@ -2600,6 +3368,7 @@ export async function procurement(root) {
           ...(excluded.length > 0
             ? { exclusions: excluded.map((head) => ({ head, reason: v.exclusionReason || 'Not included in this offer' })) }
             : {}),
+          ...(fixedSums.length > 0 ? { fixedSums } : {}),
           // Measured, confirmed, and handed back as measured — with the rate
           // the estimator put against each one.
           lines: (boq?.items ?? [])
@@ -2660,10 +3429,21 @@ export async function procurement(root) {
           name: 'estimateId',
           label: 'Estimate',
           type: 'select',
-          options: b.Estimate.map((e) => ({
-            value: e._refId,
-            label: `${e.packageId ?? e._refId} · ${e.status ?? ''}`.trim(),
-          })),
+          // The newest quotable estimate first, so it is the one already
+          // selected. Listed oldest-first, the default was the first incomplete
+          // draft of the job — which the platform refuses to quote — with the
+          // finished one fourth in a list of identically named lines. An id is
+          // a ULID, so it orders by when the estimate was made.
+          options: [...b.Estimate]
+            .sort((a, z) =>
+              (a.status === 'INCOMPLETE') - (z.status === 'INCOMPLETE') || String(z._refId).localeCompare(String(a._refId)),
+            )
+            .map((e) => ({
+              value: e._refId,
+              label:
+                `${e.packageId ?? e._refId} · ${money(e.totalMinor ?? 0)} · ` +
+                (e.status === 'INCOMPLETE' ? 'incomplete — cannot be quoted' : String(e.status ?? '').toLowerCase()),
+            })),
         },
         { name: 'clientName', label: 'Quoted to', type: 'text', hint: 'The client this offer is made to. An estimate has no addressee; this is it.' },
         { name: 'validUntil', label: 'Valid until', type: 'date', min: today(), hint: 'A quotation without a lapse date is a standing offer.' },
@@ -2892,6 +3672,156 @@ export async function procurement(root) {
         { name: 'reason', label: 'Why', type: 'textarea', rows: 2 },
       ],
       transform: ({ lessonId: _lessonId, ...rest }) => rest,
+    },
+    'log-query': {
+      title: 'Log a post-tender query',
+      intent:
+        'The buyer’s question during evaluation, against the pack it is about. Logged so the answer, when it comes, is ' +
+        'tied to the bid and the evaluator’s view of it rather than living in an inbox — a query answered off the record ' +
+        'is how a scored bid is tripped up after the hard work is done.',
+      path: (v) => `/v1/projects/${projectId}/bid-packs/${v.packId}/queries`,
+      submitLabel: 'Log it',
+      fields: [
+        { name: 'packId', label: 'Submission pack', type: 'select',
+          options: (awards?.packs ?? []).filter((p) => p.submitted).map((p) => ({ value: p.packId, label: `${p.packId.slice(-8)} · ${p.status}` })),
+          emptyHint: 'Nothing has been submitted yet, so there is no bid for a buyer to ask about.' },
+        { name: 'question', label: 'The buyer’s question', type: 'textarea', rows: 3 },
+        { name: 'receivedOn', label: 'Received on', type: 'date' },
+        { name: 'replyDueBy', label: 'Reply due by', type: 'date', required: false,
+          hint: 'The buyer’s deadline for our answer, where one was set.' },
+      ],
+      transform: (v) => ({
+        question: String(v.question ?? '').trim(),
+        receivedOn: String(v.receivedOn ?? '').trim(),
+        ...(String(v.replyDueBy ?? '').trim() ? { replyDueBy: String(v.replyDueBy).trim() } : {}),
+      }),
+    },
+    'answer-query': {
+      title: 'Answer a post-tender query',
+      intent:
+        'Our reply, and what answering it changed. Naming the impact is the point: a query that moved the price or the ' +
+        'scope is not a clarification, and a reply that quietly changed what was bid is the one the award departs on.',
+      path: (v) => {
+        const [packId, queryId] = String(v.target ?? '').split('::');
+        return `/v1/projects/${projectId}/bid-packs/${packId}/queries/${queryId}/answer`;
+      },
+      submitLabel: 'Record the reply',
+      fields: [
+        { name: 'target', label: 'Open query', type: 'select',
+          options: (awards?.packs ?? []).flatMap((p) =>
+            (p.postTenderQueries ?? []).filter((q) => !q.reply).map((q) => ({
+              value: `${p.packId}::${q.id}`,
+              label: `${q.id} · ${String(q.question).slice(0, 60)}${String(q.question).length > 60 ? '…' : ''}`,
+            })),
+          ),
+          emptyHint: 'No post-tender query is open. Log one first, or every one is already answered.' },
+        { name: 'reply', label: 'Our reply', type: 'textarea', rows: 3 },
+        { name: 'impact', label: 'What it changed', type: 'select',
+          options: [
+            { value: 'NONE', label: 'Nothing — a clarification' },
+            { value: 'PRICE', label: 'The price' },
+            { value: 'SCOPE', label: 'The scope' },
+            { value: 'PROGRAMME', label: 'The programme' },
+          ] },
+      ],
+      transform: (v) => ({ reply: String(v.reply ?? '').trim(), impact: v.impact }),
+    },
+    'price-challenge': {
+      title: 'Record a price challenge',
+      intent:
+        'The buyer has challenged the price as abnormally low. Under the Procurement Act they must give a reasonable ' +
+        'opportunity to demonstrate it can be performed at before disregarding the tender on that ground — logging the ' +
+        'challenge starts that clock on the record.',
+      path: (v) => `/v1/projects/${projectId}/bid-packs/${v.packId}/price-challenge`,
+      submitLabel: 'Record it',
+      fields: [
+        { name: 'packId', label: 'Submission pack', type: 'select',
+          options: (awards?.packs ?? []).filter((p) => p.submitted && !p.priceChallenge).map((p) => ({ value: p.packId, label: `${p.packId.slice(-8)} · ${p.status}` })),
+          emptyHint: 'No submitted pack is without a challenge already — or nothing has been submitted.' },
+        { name: 'raisedOn', label: 'Raised on', type: 'date' },
+        { name: 'responseDueBy', label: 'Our response due by', type: 'date', required: false },
+        { name: 'concern', label: 'What the buyer said looked low', type: 'textarea', rows: 2, required: false },
+      ],
+      transform: (v) => ({
+        raisedOn: String(v.raisedOn ?? '').trim(),
+        ...(String(v.responseDueBy ?? '').trim() ? { responseDueBy: String(v.responseDueBy).trim() } : {}),
+        ...(String(v.concern ?? '').trim() ? { concern: String(v.concern).trim() } : {}),
+      }),
+    },
+    'substantiate-price-challenge': {
+      title: 'Substantiate the price',
+      intent:
+        'The evidence the bid can be performed at the offered price: the cost build-up, productivity, supplier coverage, ' +
+        'programme and the exclusions that explain the number — the same things the settlement already holds. Recorded so ' +
+        'the response that kept the bid in is on the thread, not in an email nobody can find when the next one lands.',
+      path: (v) => `/v1/projects/${projectId}/bid-packs/${v.packId}/price-challenge/substantiate`,
+      submitLabel: 'Substantiate',
+      fields: [
+        { name: 'packId', label: 'Submission pack', type: 'select',
+          options: (awards?.packs ?? []).filter((p) => p.priceChallenge && !p.priceChallenge.substantiated).map((p) => ({ value: p.packId, label: `${p.packId.slice(-8)} · challenged ${p.priceChallenge.raisedOn}` })),
+          emptyHint: 'No open price challenge to substantiate.' },
+        { name: 'basis', label: 'The substantiation, one point per line', type: 'textarea', rows: 5,
+          hint: 'Productivity, quantities, supplier coverage, programme, exclusions, cost drivers — each the evidence the number holds.' },
+        { name: 'directCostMinor', label: 'Direct cost the price rests on (£)', type: 'number', money: true, required: false },
+        { name: 'netMarginPercent', label: 'Net margin on the offered price (%)', type: 'number', required: false,
+          hint: '"Abnormally low" is answered with the actual figure, not an assurance.' },
+      ],
+      transform: (v) => ({
+        basis: String(v.basis ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
+        ...(v.directCostMinor !== undefined && v.directCostMinor !== '' ? { directCostMinor: Math.round(Number(v.directCostMinor)) } : {}),
+        ...(v.netMarginPercent !== undefined && v.netMarginPercent !== '' ? { netMarginPercent: Number(v.netMarginPercent) } : {}),
+      }),
+    },
+    'record-award': {
+      title: 'Record the award outcome',
+      intent:
+        'The client’s award notice against the submission pack: won, lost or withdrawn, with its reference and the date ' +
+        'it arrived. A win records the terms awarded so what departs from what was bid is computed while that comparison ' +
+        'is still cheap. Where the notice opened a standstill, record when it ends — a challenge filed after it closes is ' +
+        'out of time. Why a bid was lost is recorded on the opportunity’s own outcome, which the calibration reads.',
+      path: (v) => `/v1/projects/${projectId}/bid-packs/${v.packId}/award`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'packId', label: 'Submission pack', type: 'select',
+          options: (awards?.packs ?? []).filter((p) => !p.outcome).map((p) => ({ value: p.packId, label: `${p.packId.slice(-8)} · ${p.status}` })),
+          emptyHint: 'Every submitted pack already carries an outcome, or nothing has been submitted yet.' },
+        { name: 'outcome', label: 'Outcome', type: 'select',
+          options: [{ value: 'WON', label: 'Won' }, { value: 'LOST', label: 'Lost' }, { value: 'WITHDRAWN', label: 'Withdrawn' }] },
+        { name: 'reference', label: 'Award / notice reference', type: 'text' },
+        { name: 'receivedOn', label: 'Received on', type: 'date' },
+        { name: 'standstillEndsOn', label: 'Standstill ends (if any)', type: 'date', required: false,
+          hint: 'The end of the standstill window the notice opened. Left blank where none applies.' },
+        { name: 'contractSumMinor', label: 'Awarded contract sum (£, on a win)', type: 'number', money: true, required: false },
+        { name: 'commencementDate', label: 'Commencement (on a win)', type: 'date', required: false },
+        { name: 'completionDate', label: 'Completion (on a win)', type: 'date', required: false },
+        { name: 'winnerName', label: 'Who won (on a loss, where disclosed)', type: 'text', required: false },
+        { name: 'winnerSumMinor', label: 'Winning price (on a loss, where disclosed)', type: 'number', money: true, required: false },
+        { name: 'notes', label: 'Notes', type: 'textarea', rows: 2, required: false },
+      ],
+      transform: (v) => ({
+        outcome: v.outcome,
+        reference: String(v.reference ?? '').trim(),
+        receivedOn: String(v.receivedOn ?? '').trim(),
+        ...(String(v.standstillEndsOn ?? '').trim() ? { standstillEndsOn: String(v.standstillEndsOn).trim() } : {}),
+        ...(v.outcome === 'WON'
+          ? {
+              terms: {
+                ...(v.contractSumMinor !== undefined && v.contractSumMinor !== '' ? { contractSumMinor: Math.round(Number(v.contractSumMinor)) } : {}),
+                ...(String(v.commencementDate ?? '').trim() ? { commencementDate: String(v.commencementDate).trim() } : {}),
+                ...(String(v.completionDate ?? '').trim() ? { completionDate: String(v.completionDate).trim() } : {}),
+              },
+            }
+          : {}),
+        ...((String(v.winnerName ?? '').trim() || (v.winnerSumMinor !== undefined && v.winnerSumMinor !== ''))
+          ? {
+              winner: {
+                ...(String(v.winnerName ?? '').trim() ? { name: String(v.winnerName).trim() } : {}),
+                ...(v.winnerSumMinor !== undefined && v.winnerSumMinor !== '' ? { sumMinor: Math.round(Number(v.winnerSumMinor)) } : {}),
+              },
+            }
+          : {}),
+        ...(String(v.notes ?? '').trim() ? { notes: String(v.notes).trim() } : {}),
+      }),
     },
     award: {
       title: 'Award the package',
@@ -3529,6 +4459,10 @@ export async function procurement(root) {
         { name: 'reason', label: 'Why it is being withdrawn', type: 'textarea', rows: 2,
           hint: 'e.g. “Answered by Appendix B, Section 3 — strip foundations priced per the SE report.”' },
       ],
+      // `clarificationId` is the path param, not a body field the route accepts
+      // (`additionalProperties: false`, reason only). Strip it so the body is
+      // just the reason.
+      transform: ({ clarificationId, ...rest }) => rest,
       report: (res) => ({ title: `${res.reference} withdrawn`, message: 'It is off the open register, with the reason on the record.', tone: 'ok' }),
     },
     'clarification-answer': {
@@ -3551,6 +4485,14 @@ export async function procurement(root) {
         { name: 'answer', label: 'The client’s answer, in their words', type: 'textarea', rows: 3 },
         { name: 'answeredOn', label: 'Date answered', type: 'date', required: false },
       ],
+      // `clarificationId` names the question in the path, so it is not part of
+      // the body the route accepts (`additionalProperties: false`, answer only).
+      // Strip it here, exactly as `issueClarification` strips its own path param,
+      // and carry the date only when one was entered.
+      transform: ({ clarificationId, answeredOn, ...rest }) => ({
+        ...rest,
+        ...(String(answeredOn ?? '').trim() ? { answeredOn } : {}),
+      }),
       report: (res) => ({ title: `${res.reference} answered`, message: 'The client’s answer is on the record; the question is closed.', tone: 'ok' }),
     },
     'close-tender': {
@@ -3799,10 +4741,118 @@ export async function procurement(root) {
    * a fresh element on every `draw()`, so listeners cannot stack.
    */
   root.addEventListener('click', async (event) => {
+    // The priced take-off as a branded, downloadable file — the end-to-end
+    // answer: a tender's pricing is produced and downloaded in the platform, not
+    // copied out and finished elsewhere.
+    const downloadSchedule = event.target.closest('[data-download-schedule]');
+    if (downloadSchedule) {
+      try {
+        await api.download(`/v1/projects/${projectId}/tender/pricing-schedule.pdf`, { format: 'PDF' });
+        toast('Downloaded', 'Your pricing schedule PDF has been saved.', 'ok');
+      } catch (error) {
+        toast('Could not download', error?.message ?? 'Finish pricing the bill first — there is no complete estimate to export.', 'err');
+      }
+      return;
+    }
+
+    // The priced take-off, exported for the buyer's own pricing schedule
+    // ("Appendix B"). It is a read, not a command, so it is handled here rather
+    // than through the command dispatcher: fetch the apportioned lines the
+    // platform already computes and put them on the clipboard to transcribe.
+    const copySchedule = event.target.closest('[data-copy-schedule]');
+    if (copySchedule) {
+      try {
+        const sched = await api.get(`/v1/projects/${projectId}/tender/pricing-schedule`);
+        const lines = (sched.lines ?? []).map(
+          (l) => `${l.n}. ${l.description} — ${Number(l.quantity).toLocaleString('en-GB')} ${l.unit} — ${money(l.amountMinor)}`,
+        );
+        const quals = [
+          ...(sched.assumptions ?? []).map((a) => `Assumed: ${a}`),
+          ...(sched.exclusions ?? []).map((e) => `Not included — ${e.label}: ${e.reason}`),
+        ];
+        // The note has to match what the schedule actually carries. Once
+        // provisional and fixed sums are on it, "measured works only — add the
+        // contingency and provisional sums separately" contradicts the lines
+        // the buyer can see, so it only stands where no sums were added.
+        const hasSums = Number(sched.fixedSumsMinor ?? 0) > 0;
+        const hasContingency = (sched.lines ?? []).some((l) => /contingen/i.test(String(l.description ?? '')));
+        const note = hasSums
+          ? `NOTE: this schedule carries the measured works and the provisional and fixed sums listed above${hasContingency ? ', including a contingency' : ''}. ` +
+            `Add VAT${hasContingency ? '' : ', a contingency'} and any M&E fix or external works the take-off does not itself cover before submission.`
+          : 'NOTE: these are the measured works only. On the buyer’s Appendix B also add a contingency, the provisional sums (soakaway, plumbing, asbestos) and any M&E fix / external works the take-off does not itself cover.';
+        const text = [
+          `PRICING SCHEDULE (priced take-off) — ${sched.projectName}${sched.packageId ? ` · ${sched.packageId}` : ''}`,
+          `Period on site: ${sched.durationWeeks} weeks`,
+          '',
+          ...lines,
+          '',
+          `TOTAL (excluding VAT): ${money(sched.totalMinor)}`,
+          ...(quals.length ? ['', 'Qualifications:', ...quals] : []),
+          '',
+          note,
+        ].join('\n');
+        await navigator.clipboard.writeText(text);
+        toast('Copied', `${(sched.lines ?? []).length} priced lines on your clipboard — paste them into your Appendix B.`, 'ok');
+      } catch (error) {
+        toast('Could not export the schedule', error?.message ?? 'No complete estimate to export yet — finish pricing the bill first.', 'err');
+      }
+      return;
+    }
+
+    // Every open client-side question, numbered, on the clipboard — so the one
+    // manual step the platform cannot do (it is not wired into the buyer's
+    // portal) is one press, not one copy per question. Built from the register
+    // already on the page, not re-fetched: the questions are the tenant's own.
+    const copyClarifications = event.target.closest('[data-copy-clarifications]');
+    if (copyClarifications) {
+      if (toSendToClient.length === 0) {
+        toast('Nothing to copy', 'No open question is waiting to go to the client.', 'warn');
+        return;
+      }
+      const lines = toSendToClient.map((c, i) => {
+        const about = [c.links?.document, c.links?.clause && `clause ${c.links.clause}`, c.links?.drawing, c.links?.package, c.links?.scopeItem]
+          .filter(Boolean)
+          .join(', ');
+        return `${i + 1}. [${c.reference}] ${c.question}${about ? ` (re: ${about})` : ''}`;
+      });
+      const text = [
+        `Tender clarification questions — ${intel.projectName ?? 'this tender'}`,
+        '',
+        ...lines,
+      ].join('\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        toast(
+          'Copied',
+          `${toSendToClient.length} question${toSendToClient.length === 1 ? '' : 's'} on your clipboard. Paste ${toSendToClient.length === 1 ? 'it' : 'them'} into the buyer’s portal before the clarification deadline — the platform does not transmit to the portal itself.`,
+          'ok',
+        );
+      } catch {
+        toast('Not copied', 'This browser would not write to the clipboard. The questions are listed in the register below to copy by hand.', 'warn');
+      }
+      return;
+    }
+
     const button = event.target.closest('[data-command]');
     if (!button) return;
-    const spec = COMMANDS[button.dataset.command];
+    let spec = COMMANDS[button.dataset.command];
     if (!spec) return;
+    // A command may read state before it opens — the duration estimate fills its
+    // fields from the priced bill. `prepare` returns `false` to cancel, or
+    // `{ values }` to pre-fill matching fields; the spec is cloned so the shared
+    // COMMANDS entry is never mutated.
+    if (spec.prepare) {
+      const prepared = await spec.prepare();
+      if (prepared === false) return;
+      if (prepared?.values) {
+        spec = {
+          ...spec,
+          fields: spec.fields.map((field) =>
+            field.name in prepared.values ? { ...field, value: prepared.values[field.name] } : field,
+          ),
+        };
+      }
+    }
     const result = await command(spec);
     if (!result) return;
     // A command whose answer belongs to this screen rather than to the record

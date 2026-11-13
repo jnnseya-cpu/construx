@@ -7,6 +7,7 @@ import { barChart, gauge, heatmap, lineChart, pieChart } from '../lib/charts.js'
 import * as outbox from '../lib/outbox.js';
 import { recordVoice, recordingDescription, voiceSupport } from '../lib/voice.js';
 import { mountSiteTwin } from '../lib/sitetwin.js';
+import { siteVisitGuide } from '../lib/sitevisitguide.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -1279,6 +1280,8 @@ export async function field(root) {
             </div>`
           : ''
       }
+
+      ${siteVisitGuide()}
 
       <div class="grid g2">
         <div class="card pad0">

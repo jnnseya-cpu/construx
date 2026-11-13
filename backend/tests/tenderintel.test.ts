@@ -886,6 +886,14 @@ describe('tender intelligence · the position', () => {
 
     const suppressed = position.comparisons.filter((c) => c.rankingSuppressed);
     assert.ok(suppressed.length >= 1, 'no comparison reported a suppressed ranking');
+
+    // The register carries the full question, not only the short subject, so the
+    // "copy all questions to send to the client" action has the real text to put
+    // on the clipboard. The first internal question was raised with a subject and
+    // a longer, distinct question body.
+    const full = position.clarifications.find((c) => c.question.startsWith('Clause 4.21 is struck through'));
+    assert.ok(full, 'the full question text was not exposed on the register');
+    assert.notEqual(full.question, full.subject, 'the register collapsed the question onto its subject');
   });
 
   it('counts the acknowledgements against the distribution', () => {

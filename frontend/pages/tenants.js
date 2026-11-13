@@ -873,7 +873,7 @@ export async function tenants(root) {
               <div class="row"><span class="lbl">Operational</span><span class="val">${light(readiness.operational)}</span></div>
               <div class="row"><span class="lbl">Billing</span><span class="val">${light(readiness.billing)}</span></div>
               <div class="row"><span class="lbl">Document issuance</span><span class="val">${light(readiness.issuance)}</span></div>
-              <div class="row"><span class="lbl">Registered issuer</span><span class="val">${readiness.legal.verification.toLowerCase()}${readiness.legal.complete ? '' : html` · missing ${readiness.legal.missing.join(', ')}`}</span></div>
+              <div class="row"><span class="lbl">Registered issuer</span><span class="val">${readiness.legal.verification.toLowerCase()}${readiness.legal.complete ? '' : html` · missing ${(readiness.legal.missingLabels ?? readiness.legal.missing).join(', ')}`}</span></div>
             </div>
             <div class="metric-sub" style="margin-top:8px">Three lights, kept apart. None is made green by guessing a detail: the company enters its registered issuer; you verify it.</div>
           </div>`);

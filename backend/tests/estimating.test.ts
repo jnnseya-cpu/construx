@@ -382,6 +382,69 @@ describe('Estimating through the engine', () => {
     );
   });
 
+  it('prices a professional-services fee as a complete estimate from day-rates', async () => {
+    const ctx = qsCtx();
+    const result = await tender.priceDayRateSchedule(ctx, {
+      packageName: 'Professional services',
+      resources: [
+        { role: 'Director', days: 5, dayRateMinor: 60_000 }, // 5 × £600 = £3,000
+        { role: 'Senior consultant', days: 10, dayRateMinor: 40_000 }, // 10 × £400 = £4,000
+      ],
+      disbursements: [{ label: 'Travel and subsistence', amountMinor: 50_000 }], // £500
+      basisOfEstimate: 'Fee by day-rate',
+    });
+
+    const record = ctx.ledger.require({ refType: 'Estimate', refId: result.estimateId });
+    // It completes — every construction head is excluded, none left as an omission.
+    assert.equal(record.state.status, 'DRAFT', 'a fee estimate should be complete, not INCOMPLETE');
+    assert.equal((record.state.omissions as unknown[]).length, 0);
+    // Own labour (DIRECT_WORKS) 3,000 + 4,000 = 7,000, margin nil, plus the £500
+    // disbursement carried after margin and not marked up = £7,500.
+    assert.equal(result.totalMinor, 300_000 + 400_000 + 50_000);
+    // The resource lines are on the bill as measured items.
+    const boq = ctx.ledger.list(ctx.projectId, 'BoQItem').filter((r) => result.boqItemIds.includes(r.refId));
+    assert.equal(boq.length, 2);
+  });
+
+  it('prices a schedule of rates — a rate card with no day counts, which is what a DPS tenders', async () => {
+    const ctx = qsCtx();
+    // A framework/DPS rate card: role and day-rate, no committed days. The bidder
+    // tenders the rates and the buyer applies them to its own call-off volumes.
+    const result = await tender.priceDayRateSchedule(ctx, {
+      packageName: 'DPS day-rates',
+      resources: [
+        { role: 'Project Director / Lead Consultant', dayRateMinor: 87_500 }, // £875
+        { role: 'Senior Project Manager', dayRateMinor: 72_500 }, // £725
+        { role: 'Quantity Surveyor', dayRateMinor: 57_500 }, // £575
+      ],
+    });
+
+    const record = ctx.ledger.require({ refType: 'Estimate', refId: result.estimateId });
+    // It completes rather than reading INCOMPLETE — a rate card is a valid submission.
+    assert.equal(record.state.status, 'DRAFT');
+    assert.equal((record.state.omissions as unknown[]).length, 0);
+    // Each line priced at one person-day, so the schedule carries the rate itself:
+    // 875 + 725 + 575 = £2,175.
+    assert.equal(result.totalMinor, 87_500 + 72_500 + 57_500);
+    // The estimate says plainly it is a schedule of rates, not an extended fee.
+    assert.match(String(record.state.basisOfEstimate), /schedule of rates/i);
+    // All three roles are on the bill.
+    const boq = ctx.ledger.list(ctx.projectId, 'BoQItem').filter((r) => result.boqItemIds.includes(r.refId));
+    assert.equal(boq.length, 3);
+  });
+
+  it('refuses a fee schedule with no resource lines, or a line with an explicit bad day count or rate', async () => {
+    await rejectsCode(() => tender.priceDayRateSchedule(qsCtx(), { resources: [] }), 'FEE_SCHEDULE_EMPTY');
+    await rejectsCode(
+      () => tender.priceDayRateSchedule(qsCtx(), { resources: [{ role: 'Director', days: 0, dayRateMinor: 60_000 }] }),
+      'FEE_DAYS_INVALID',
+    );
+    await rejectsCode(
+      () => tender.priceDayRateSchedule(qsCtx(), { resources: [{ role: 'Director', dayRateMinor: 0 }] }),
+      'FEE_RATE_INVALID',
+    );
+  });
+
   it('answers what the tender becomes on a longer programme', () => {
     const ctx = qsCtx();
     const built = tender.buildEstimate(ctx, {
@@ -895,5 +958,160 @@ describe('a job with weeks on site and nothing priced by the week', () => {
       margin: { overheadPercent: 5, profitPercent: 20 },
     });
     assert.ok(!priced.warnings.some((warning) => warning.includes('weeks on site')));
+  });
+});
+
+// ── One job, one package ─────────────────────────────────────────────────────
+
+/*
+ * The bill holding two packages for one job, because the package is a free-typed
+ * name and two readings entered at different times were filed under names that
+ * read identically but differ by a character a human cannot see. An estimate
+ * prices one package at a time, so a line in the second package is dropped from
+ * the price with nothing to show it is missing. Two guards together: the second
+ * reading snaps to the first package's id rather than forking, and a bill that
+ * already forked can be put back into one package without losing a line.
+ */
+describe('One job, one package — a same-looking name never splits the bill', () => {
+  const liveIn = (ctx: ReturnType<typeof qsCtx>, pkg: string) =>
+    ctx.ledger
+      .list(seed.projectId, 'BoQItem')
+      .filter((r) => String(r.state.packageId) === pkg && String(r.state.status ?? 'LIVE') !== 'SUPERSEDED');
+
+  it('snaps a package name that differs only by dash, space or case to the one already measured', async () => {
+    const ctx = qsCtx();
+    const base = `Single-storey extension & adaptations — ${ulid()}`;
+    const first = await tender.runTakeoff(ctx, {
+      packageId: base,
+      costCodePrefix: 'E20',
+      sources: [{ discipline: 'STRUCTURES', sheetId: 'S-100' }],
+      items: [{ description: 'Blockwork skin', unit: 'm2', quantity: 40 }],
+      measuredBy: 'PERSON',
+    });
+
+    // The same name keyed again: the em dash typed as a hyphen, a trailing space,
+    // a lower-case first letter. Invisible on screen; a different string outright.
+    const variant = `${base.replace('—', '-').replace('Single', 'single')} `;
+    assert.notEqual(variant, base, 'the variant was not actually a different string');
+    const second = await tender.runTakeoff(ctx, {
+      packageId: variant,
+      costCodePrefix: 'SUB',
+      sources: [{ discipline: 'STRUCTURES', sheetId: 'S-101' }],
+      items: [{ description: 'Damp-proof membrane', unit: 'm2', quantity: 22 }],
+      measuredBy: 'PERSON',
+    });
+
+    const ids = new Set([...first.boqItemIds, ...second.boqItemIds]);
+    const packs = new Set(
+      ctx.ledger
+        .list(seed.projectId, 'BoQItem')
+        .filter((r) => ids.has(r.refId))
+        .map((r) => String(r.state.packageId)),
+    );
+    assert.equal(packs.size, 1, `the two readings forked into ${packs.size} packages`);
+    assert.equal([...packs][0], base, 'the second reading did not snap to the first package id');
+    assert.equal(liveIn(ctx, base).length, 2, 'both readings should sit in the one package');
+  });
+
+  it('moves a stray package into the one the job belongs to, keeping every line', async () => {
+    const ctx = qsCtx();
+    const home = `Groundworks home ${ulid()}`;
+    // A genuinely different name, so it does not snap and really does open a
+    // second package — the state this repair exists for.
+    const stray = `Groundworks stray ${ulid()}`;
+    await tender.runTakeoff(ctx, {
+      packageId: home,
+      costCodePrefix: 'D20',
+      sources: [{ discipline: 'CIVILS', sheetId: 'C-1' }],
+      items: [{ description: 'Bulk excavation', unit: 'm3', quantity: 14 }],
+      measuredBy: 'PERSON',
+    });
+    await tender.runTakeoff(ctx, {
+      packageId: stray,
+      costCodePrefix: 'D21',
+      sources: [{ discipline: 'CIVILS', sheetId: 'C-2' }],
+      items: [{ description: 'Below-ground drainage', unit: 'm', quantity: 12 }],
+      measuredBy: 'PERSON',
+    });
+    assert.equal(liveIn(ctx, home).length, 1);
+    assert.equal(liveIn(ctx, stray).length, 1);
+
+    // A move needs a reason, same as a retirement does.
+    throwsCode(
+      () => tender.movePackageMeasure(ctx, { fromPackageId: stray, toPackageId: home, reason: 'no' }),
+      'MOVE_REASON_REQUIRED',
+    );
+
+    const moved = tender.movePackageMeasure(ctx, {
+      fromPackageId: stray,
+      toPackageId: home,
+      reason: 'Two readings of one groundworks job; merging the stray drainage line into the package.',
+    });
+    assert.equal(moved.moved.length, 1);
+    assert.equal(liveIn(ctx, stray).length, 0, 'the stray package still holds a live line after the move');
+    assert.equal(liveIn(ctx, home).length, 2, 'the moved line did not land in the home package');
+
+    // The line kept its quantity and its cost code — it was re-filed, not redrawn.
+    const drainage = liveIn(ctx, home).find((r) => String(r.state.description) === 'Below-ground drainage')!;
+    assert.ok(drainage, 'the moved line is not in the home package by description');
+    assert.equal(Number(drainage.state.quantity), 12);
+    assert.equal(String(drainage.state.costCode), 'D21.001');
+    assert.equal(String(drainage.state.repackagedFrom), stray);
+
+    // Nothing to move twice, and a package cannot be moved into itself.
+    throwsCode(
+      () => tender.movePackageMeasure(ctx, { fromPackageId: stray, toPackageId: home, reason: 'Trying again when it is already empty.' }),
+      'NOTHING_TO_MOVE',
+    );
+    throwsCode(
+      () => tender.movePackageMeasure(ctx, { fromPackageId: home, toPackageId: home, reason: 'Into itself makes no sense.' }),
+      'SAME_PACKAGE',
+    );
+  });
+
+  it('retires named lines without taking the rest of the package with them', async () => {
+    const ctx = qsCtx();
+    const pkg = `Consolidated job ${ulid()}`;
+    // One package holding the real measure and two stale placeholder lines — the
+    // state a bill is in after a job is consolidated but the empty placeholders
+    // from an earlier attempt are still on it.
+    await tender.runTakeoff(ctx, {
+      packageId: pkg,
+      costCodePrefix: 'E20',
+      sources: [{ discipline: 'STRUCTURES', sheetId: 'S-1' }],
+      items: [
+        { description: 'Blockwork skin', unit: 'm2', quantity: 44 },
+        { description: 'Foundation concrete placeholder', unit: 'm3', quantity: 0 },
+        { description: 'Drainage placeholder', unit: 'm', quantity: 0 },
+      ],
+      measuredBy: 'PERSON',
+    });
+    assert.equal(liveIn(ctx, pkg).length, 3);
+
+    // The two zero-quantity placeholders are E20.002 and E20.003.
+    const stale = liveIn(ctx, pkg)
+      .filter((r) => Number(r.state.quantity) === 0)
+      .map((r) => r.refId);
+    assert.equal(stale.length, 2);
+
+    throwsCode(() => tender.supersedeItems(ctx, { boqItemIds: stale, reason: 'no' }), 'SUPERSEDE_REASON_REQUIRED');
+    throwsCode(() => tender.supersedeItems(ctx, { boqItemIds: [], reason: 'Nothing picked here.' }), 'NO_ITEMS_SELECTED');
+
+    const retired = tender.supersedeItems(ctx, {
+      boqItemIds: stale,
+      reason: 'Empty placeholders from an earlier attempt; the real lines were measured under SUB codes.',
+    });
+    assert.equal(retired.superseded.length, 2);
+
+    // The real line stands; the placeholders do not.
+    const remaining = liveIn(ctx, pkg);
+    assert.equal(remaining.length, 1, 'retiring two lines took more or fewer than two');
+    assert.equal(String(remaining[0]!.state.description), 'Blockwork skin');
+
+    // Retiring the same lines again finds nothing standing.
+    throwsCode(
+      () => tender.supersedeItems(ctx, { boqItemIds: stale, reason: 'Trying to retire what is already retired.' }),
+      'NOTHING_TO_SUPERSEDE',
+    );
   });
 });

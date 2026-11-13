@@ -1,3 +1,4 @@
+import { expertBriefing } from '../ai/expertise.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, runAI, write, type EngineContext } from '../engines/context.ts';
@@ -193,6 +194,7 @@ export async function readCommitments(
     inputRefs: [{ refType: 'Correspondence', refId: input.correspondenceId }],
     request: {
       task:
+        `${expertBriefing('COMMERCIAL_MANAGER')} ` +
         'Find every undertaking and every deadline in this letter. For each, say whether the author is promising ' +
         'to do something (PROMISE) or requiring the recipient to do something by a date (DEADLINE_IMPOSED), what ' +
         'exactly is owed, which party owes it, and the date it is owed by if the letter states one. Quote the ' +

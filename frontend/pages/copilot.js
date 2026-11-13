@@ -1,8 +1,9 @@
 import { api } from '../lib/api.js';
 import { aiModeNotice } from '../lib/insight.js';
 import { heatmap, pieChart } from '../lib/charts.js';
-import { badge, esc, html, humanise, raw, render, table, toast } from '../lib/ui.js';
+import { badge, esc, exact, html, humanise, raw, render, table, toast } from '../lib/ui.js';
 import { state } from '../app.js';
+import { openReport } from '../lib/report.js';
 
 /**
  * Copilot.
@@ -44,7 +45,17 @@ export async function copilot(root) {
   // general assistant, so the specialism was invisible at the point of use.
   const plane = await api.get('/v1/ai/control-plane').catch(() => null);
   const contracts = plane?.engineContracts ?? {};
+  // The platform's own step-by-step guide — how CONSTRUX works, end to end.
+  // Deterministic content from the server knowledge base, so it is here in full
+  // even on a deployment with no provider configured; the copilot above reasons
+  // over the same knowledge when a provider is live.
+  const guide = await api.get('/v1/guide/topics').catch(() => null);
   const phase = state.project?.phase;
+  // A provider is actually called only outside `local` mode. The paid
+  // plain-English explanation is offered only then — a button that would always
+  // refuse (because no provider is configured) is worse than no button, and the
+  // free grounded answer is there either way.
+  const providerLive = Boolean(plane && plane.mode && plane.mode !== 'local');
 
   const modes = Object.entries(contracts).map(([engine, contract]) => ({
     engine,
@@ -64,6 +75,9 @@ export async function copilot(root) {
         <div>
           <h1>Copilot</h1>
           <p>Grounded in this project's Golden Thread. It proposes commands rather than executing them, and every figure it quotes names the record it came from.</p>
+        </div>
+        <div class="actions">
+          <button class="btn quiet" id="report-problem">Report a problem</button>
         </div>
       </div>
 
@@ -87,6 +101,8 @@ export async function copilot(root) {
       <div class="chips" style="margin-bottom:20px" id="suggestions">
         ${SUGGESTIONS.map((s) => html`<button class="chip" data-q="${s}" style="cursor:pointer">${s}</button>`)}
       </div>
+
+      ${guidebookSection(guide)}
 
       ${copilotCharts(modes, phase)}
 
@@ -223,26 +239,108 @@ export async function copilot(root) {
         .map((line) => `<div>${escapeHtml(line)}</div>`)
         .join('');
 
-      pending.innerHTML = `${engine}${body}${grounding ? `<div style="margin-top:8px">${grounding}</div>` : ''}${chips ? `<div class="chips">${chips}</div>` : ''}`;
+      // The paid, plain-English rewrite — offered only where a provider can
+      // actually write it, and clearly marked as spending ACUs. The free answer
+      // above is always there; this is the "paid on request" half.
+      const explainChip = providerLive
+        ? `<button class="chip explain" data-explain="${escapeHtml(question)}">Explain this in plain English (uses ACUs)</button>`
+        : '';
+
+      // The honest "it struggled" control. Every answer carries it, because the
+      // one the platform most needs reported is the one that looked fine and was
+      // not. It hands the copilot's own question along so a person does not
+      // retype what they already asked.
+      const reportChip = `<button class="chip" data-report-stuck="${escapeHtml(question)}">This didn’t help — report it</button>`;
+
+      pending.innerHTML = `${engine}${body}${grounding ? `<div style="margin-top:8px">${grounding}</div>` : ''}${chips ? `<div class="chips">${chips}</div>` : ''}<div class="chips">${explainChip}${reportChip}</div>`;
     } catch (error) {
       pending.classList.add('err');
-      pending.textContent = error.message;
+      // The failure, and a one-press way to report it carrying the correlation
+      // id the developer needs — the person never has to see or copy it.
+      pending.innerHTML = `<div>${escapeHtml(error.message)}</div><div class="chips"><button class="chip" data-report-error="${escapeHtml(question)}" data-correlation="${escapeHtml(error.correlationId ?? '')}">Report this</button></div>`;
       toast('Copilot failed', error.message, 'err');
     }
     chat.scrollIntoView({ block: 'end' });
   }
 
+  // The paid plain-English rewrite of a question already answered for free. It
+  // spends the tenancy's own ACUs; the server reserves, runs and only then
+  // debits, and refuses before charging where no provider can write it.
+  async function explain(question, trigger) {
+    if (trigger) trigger.disabled = true;
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble ai';
+    bubble.textContent = 'Writing a plain-English explanation…';
+    chat.append(bubble);
+    bubble.scrollIntoView({ block: 'end' });
+    try {
+      const res = await api.post(`/v1/projects/${state.session.projectId}/ask/explain`, { question });
+      const paras = (res.explanation ?? []).map((line) => `<div>${escapeHtml(line)}</div>`).join('');
+      const spent = res.acuConsumed != null ? ` · spent ${escapeHtml(exact(res.acuConsumed))} ACU` : '';
+      bubble.innerHTML = `<div class="src" style="margin-bottom:7px"><b>Guide</b> · plain English${spent}</div>${paras}`;
+    } catch (error) {
+      bubble.classList.add('err');
+      bubble.textContent = error.message;
+      toast('Explanation unavailable', error.message, 'err');
+    }
+    if (trigger) trigger.disabled = false;
+    chat.scrollIntoView({ block: 'end' });
+  }
+
+  chat.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-explain]');
+    if (btn) {
+      explain(btn.dataset.explain, btn);
+      return;
+    }
+    const stuck = event.target.closest('[data-report-stuck]');
+    if (stuck) {
+      void openReport({
+        kind: 'STUCK',
+        screen: 'copilot',
+        question: stuck.dataset.reportStuck,
+        prefill: `I asked: "${stuck.dataset.reportStuck}". The answer did not help because `,
+      });
+      return;
+    }
+    const errored = event.target.closest('[data-report-error]');
+    if (errored) {
+      void openReport({
+        kind: 'ERROR',
+        screen: 'copilot',
+        question: errored.dataset.reportError,
+        correlationId: errored.dataset.correlation || undefined,
+        prefill: `The copilot errored when I asked: "${errored.dataset.reportError}".`,
+      });
+    }
+  });
+
+  document.getElementById('report-problem').addEventListener('click', () =>
+    openReport({ kind: 'FEEDBACK', screen: 'copilot' }),
+  );
   document.getElementById('ask').addEventListener('click', () => ask(input.value));
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') ask(input.value);
   });
-  document.getElementById('suggestions').addEventListener('click', (event) => {
+  // Delegated across the whole page, not just the suggestion row, so a
+  // "data-q" chip anywhere — a suggestion, or an "Explain this with AI" in the
+  // step-by-step guidebook below — asks the copilot the question it carries.
+  root.addEventListener('click', (event) => {
     const chip = event.target.closest('[data-q]');
     if (chip) ask(chip.dataset.q);
   });
 
-  // Open with something on screen rather than an empty panel.
-  await ask(SUGGESTIONS[0]);
+  // Open with the step a stuck person came in asking about, where the guided
+  // walkthrough sent them here with one; otherwise with a sensible default so
+  // the panel is never empty. The seed is read once and cleared, so a later
+  // visit to the Copilot does not resurrect an old question.
+  const seed = state.askSeed;
+  if (seed) {
+    state.askSeed = undefined;
+    await ask(seed);
+  } else {
+    await ask(SUGGESTIONS[0]);
+  }
 }
 
 /*
@@ -279,6 +377,66 @@ const escapeHtml = esc;
  * talking to you afterwards. The footnote says so, because a grid of lit and
  * unlit cells reads as "available" and "unavailable" unless it is told not to.
  */
+/**
+ * The step-by-step guidebook, from the platform's own knowledge base.
+ *
+ * This is the detailed "how CONSTRUX works" the copilot alone could never give:
+ * the copilot is grounded on project state and must invent no mechanics, so the
+ * screens, buttons and order live server-side as curated content and are shown
+ * here in full. It is deterministic — present on every deployment, provider or
+ * not — and each topic offers a one-press hand-off to the AI, which reasons over
+ * the same knowledge when a provider is live.
+ *
+ * Collapsed by default, grouped the way the work happens, so it reads as a
+ * walkthrough top to bottom and any one topic answers "how do I do this bit".
+ */
+function guidebookSection(guide) {
+  const groups = guide?.groups ?? [];
+  if (groups.length === 0) return '';
+  return html`<div class="card pad0" style="margin-bottom:20px">
+    <h2 style="padding:15px 17px 0">How CONSTRUX works — step by step</h2>
+    <p class="metric-sub" style="padding:4px 17px 0">
+      The whole road from an empty account to a won, delivered job. Every step names the screen and the button. Open
+      any step, follow it, or press <b>Explain this with AI</b> to have the copilot walk you through it in plain English.
+    </p>
+    <div style="padding:8px 17px 16px">
+      ${groups.map(
+        (group) => html`<div style="margin-top:10px">
+          <div style="font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3);margin-bottom:4px">
+            ${group.title}
+          </div>
+          ${group.topics.map(
+            (topic) => html`<details class="guide-topic" style="border-top:1px solid var(--line);padding:9px 0">
+              <summary style="cursor:pointer;font-weight:600;font-size:13.5px">${topic.title}</summary>
+              <div style="padding:7px 0 2px">
+                <div class="metric-sub" style="margin-bottom:7px">${topic.summary}</div>
+                <ol style="margin:0 0 8px;padding-left:20px;font-size:13px;line-height:1.5">
+                  ${topic.steps.map(
+                    (step) => html`<li style="margin-bottom:3px">${step.do}${
+                      step.detail ? html`<span class="metric-sub" style="display:block">${step.detail}</span>` : ''
+                    }</li>`,
+                  )}
+                </ol>
+                <div style="font-size:12.5px;margin-bottom:6px"><b>You get:</b> ${topic.youGet}</div>
+                ${
+                  (topic.watchOut ?? []).length > 0
+                    ? html`<div class="notice" style="margin-bottom:8px">
+                        ${topic.watchOut.map((w) => html`<div>⚠ ${w}</div>`)}
+                      </div>`
+                    : ''
+                }
+                <button class="chip" data-q="Walk me through this step by step, in plain English: ${topic.title}." style="cursor:pointer">
+                  Explain this with AI
+                </button>
+              </div>
+            </details>`,
+          )}
+        </div>`,
+      )}
+    </div>
+  </div>`;
+}
+
 function copilotCharts(modes, phase) {
   if (modes.length === 0) return '';
 

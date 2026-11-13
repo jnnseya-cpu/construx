@@ -59,11 +59,26 @@ export type CompanyProfile = {
   insurances: InsuranceCover[];
   accreditations: string[];
   references: CompanyReference[];
+  /**
+   * Whether the business holds enhanced DBS checks for personnel who enter
+   * occupied homes — a mandatory requirement on social-housing and adaptation
+   * work. Optional so profiles recorded before this field read it as absent
+   * rather than failing to load; the DBS probe treats absent as "not held".
+   */
+  dbs?: { held: boolean; detail?: string };
   /** Trades delivered in-house rather than bought. */
   selfDeliveredTrades: string[];
   targetMarginPercent: { min: number; max: number };
   /** Sites the business can run at once, and how many are already committed. */
   capacity: { concurrentProjects: number; committedProjects: number };
+  /**
+   * One-director business: every requirement and every return belongs to the
+   * owner, because there is one person wearing all the hats. With it set, the
+   * compliance matrix stops suggesting a role per category (QS, EPC, Safety…)
+   * that reads as work going to people who do not exist, and defaults the owner
+   * to OWNER instead. Absent is treated as a normal multi-role firm.
+   */
+  singleOwnerBids?: boolean;
 };
 
 export type OpportunityRequirements = {

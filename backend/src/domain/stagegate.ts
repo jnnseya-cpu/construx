@@ -1,7 +1,9 @@
 import { hashEvidence, hashState } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
-import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
+import { authorise, registerEvidence, runAI, write, type EngineContext } from '../engines/context.ts';
+import { expertBriefing, expertRole, type Discipline, type RibaStage } from '../ai/expertise.ts';
+import { CRITIQUE_SCHEMA, partitionByCritique, shapeCritiques } from '../ai/refine.ts';
 import { lookupEventType } from '../goldenthread/eventTypes.ts';
 import { replayProject } from '../goldenthread/replay.ts';
 import { constructabilityPosition, freezeBlockersFor } from './constructability.ts';
@@ -2118,6 +2120,399 @@ export function gateFor(ctx: EngineContext): GateReport {
   if (phase === 'COMMISSIONING') return evaluateCommissioningGate(ctx);
   if (phase === 'HANDOVER') return evaluateHandoverGate(ctx);
   return evaluateTenderGate(ctx);
+}
+
+// --- The gate narrative: a senior professional's read of the verdict --------
+
+/**
+ * The deterministic gate answers *whether* the seven clauses are met. It does
+ * not say what the verdict means to the person who must decide the gate — which
+ * of the outstanding clauses is the real risk, what a condition would have to
+ * cover, what would be reckless to pass. That read is the job of the senior
+ * professional who chairs the gate, and it is different at each stage: a concept
+ * gate is chaired with a development manager's eye, a construction gate with a
+ * project manager's, a handover gate with the operator's.
+ *
+ * `gateNarrative` is that read. It is grounded entirely on the deterministic
+ * report — the model is handed the clause results and told to reason only from
+ * them, name the clause behind every point, and invent no blocker the report
+ * does not carry. It writes no state and decides nothing: like the rest of the
+ * AI surface it proposes, and the gate decision stays a person's act under
+ * `decideGate`. The free, deterministic report always stands on its own; this is
+ * the paid expert read on top of it, and it refuses the local stand-in rather
+ * than charge for a synthetic one.
+ */
+
+/** Which professional chairs the gate at each phase, and the RIBA stage it sits at. */
+const GATE_EXPERT: Record<string, { discipline: Discipline; stage?: RibaStage }> = {
+  CONCEPT: { discipline: 'DEVELOPMENT_MANAGER', stage: 2 },
+  DESIGN: { discipline: 'DESIGN_MANAGER', stage: 4 },
+  TENDER: { discipline: 'COMMERCIAL_MANAGER' },
+  CONSTRUCTION: { discipline: 'PROJECT_MANAGER', stage: 5 },
+  COMMISSIONING: { discipline: 'COMMISSIONING', stage: 5 },
+  HANDOVER: { discipline: 'FACILITIES_MANAGER', stage: 6 },
+};
+
+function gateExpertFor(phase: string): { discipline: Discipline; stage?: RibaStage } {
+  return GATE_EXPERT[phase] ?? { discipline: 'COMMERCIAL_MANAGER' };
+}
+
+export type GateNarrativeRisk = {
+  /** The clause this risk rests on, or null where it spans the gate. */
+  clause: GateClause | null;
+  risk: string;
+  /** What in the report the risk is grounded in. */
+  basis: string;
+};
+
+export type GateNarrativeAction = {
+  clause: GateClause | null;
+  action: string;
+  why: string;
+};
+
+export type GateNarrative = {
+  /** False when no reasoning model could run — the deterministic report still stands. */
+  available: boolean;
+  phase: string;
+  /** Whether the deterministic gate passed, so the UI frames the read correctly. */
+  passed: boolean;
+  /** The professional the AI reasoned as, named for the person reading it. */
+  reviewedAs: string;
+  verdict: string;
+  risks: GateNarrativeRisk[];
+  toClose: GateNarrativeAction[];
+  acuConsumed: number;
+  note: string;
+};
+
+/**
+ * Shape and guard the model's output. Keeps only real risks and actions with a
+ * basis, binds any clause it names to a real `GATE_CLAUSE` (an invented clause
+ * becomes null rather than a plausible-looking authority), de-duplicates nothing
+ * — order carries the priority the professional set — and caps each list. Pure,
+ * so the guard is tested without a provider.
+ */
+export function shapeGateNarrative(output: Record<string, unknown>): {
+  verdict: string;
+  risks: GateNarrativeRisk[];
+  toClose: GateNarrativeAction[];
+} {
+  const asClause = (value: unknown): GateClause | null => {
+    const text = String(value ?? '').trim();
+    return (GATE_CLAUSE as readonly string[]).includes(text) ? (text as GateClause) : null;
+  };
+
+  const verdict = String((output as { verdict?: unknown }).verdict ?? '').trim();
+
+  const rawRisks = Array.isArray((output as { risks?: unknown }).risks) ? (output as { risks: unknown[] }).risks : [];
+  const risks: GateNarrativeRisk[] = [];
+  for (const entry of rawRisks) {
+    const row = (entry ?? {}) as Record<string, unknown>;
+    const risk = String(row.risk ?? '').trim();
+    const basis = String(row.basis ?? '').trim();
+    if (risk.length < 12) continue;
+    risks.push({ clause: asClause(row.clause), risk, basis });
+    if (risks.length >= 8) break;
+  }
+
+  const rawActions = Array.isArray((output as { toClose?: unknown }).toClose) ? (output as { toClose: unknown[] }).toClose : [];
+  const toClose: GateNarrativeAction[] = [];
+  for (const entry of rawActions) {
+    const row = (entry ?? {}) as Record<string, unknown>;
+    const action = String(row.action ?? '').trim();
+    const why = String(row.why ?? '').trim();
+    if (action.length < 8) continue;
+    toClose.push({ clause: asClause(row.clause), action, why });
+    if (toClose.length >= 8) break;
+  }
+
+  return { verdict, risks, toClose };
+}
+
+/**
+ * One flat finding for the verify-and-improve pass — a risk or a required action,
+ * carried together so an independent reviewer can mark the whole chaired read at
+ * once, then split back by kind.
+ */
+type GateFinding = { kind: 'risk' | 'action'; clause: GateClause | null; text: string; detail: string };
+
+const FINDINGS_SCHEMA = {
+  type: 'object',
+  properties: {
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['risk', 'action'] },
+          clause: { type: ['string', 'null'] },
+          text: { type: 'string' },
+          detail: { type: 'string' },
+        },
+        required: ['kind', 'text'],
+      },
+    },
+  },
+  required: ['findings'],
+} as const;
+
+/** Shape rewritten findings, binding any clause to a real one and dropping stubs. Pure. */
+export function shapeGateFindings(output: Record<string, unknown>): GateFinding[] {
+  const asClause = (value: unknown): GateClause | null => {
+    const text = String(value ?? '').trim();
+    return (GATE_CLAUSE as readonly string[]).includes(text) ? (text as GateClause) : null;
+  };
+  const raw = Array.isArray((output as { findings?: unknown }).findings) ? (output as { findings: unknown[] }).findings : [];
+  const out: GateFinding[] = [];
+  for (const entry of raw) {
+    const row = (entry ?? {}) as Record<string, unknown>;
+    const kind = String(row.kind ?? '').toLowerCase() === 'action' ? 'action' : 'risk';
+    const text = String(row.text ?? '').trim();
+    if (text.length < 8) continue;
+    out.push({ kind, clause: asClause(row.clause), text, detail: String(row.detail ?? '').trim() });
+  }
+  return out;
+}
+
+/**
+ * The verify-and-improve pass for the chaired read. The risks and required
+ * actions a first pass produced are marked by an independent reviewer — the
+ * person who must sign the gate decision on them — against the bar each actually
+ * has to clear: material, specific, tied to a clause the report marks not met or
+ * not assessable, and, for an action, actually actionable. What passes is kept;
+ * what is real but loose is rewritten to the fault named; what restates a clause
+ * without judgement, duplicates another, or claims a problem the results do not
+ * support is dropped. Best-effort: a failure mid-pass leaves the first read
+ * standing.
+ */
+async function refineGateNarrative(
+  ctx: EngineContext,
+  shaped: { risks: GateNarrativeRisk[]; toClose: GateNarrativeAction[] },
+  report: GateReport,
+  expert: { discipline: Discipline; stage?: RibaStage },
+): Promise<{ risks: GateNarrativeRisk[]; toClose: GateNarrativeAction[]; acuConsumed: number; droppedCount: number; sharpenedCount: number }> {
+  const findings: GateFinding[] = [
+    ...shaped.risks.map((r): GateFinding => ({ kind: 'risk', clause: r.clause, text: r.risk, detail: r.basis })),
+    ...shaped.toClose.map((a): GateFinding => ({ kind: 'action', clause: a.clause, text: a.action, detail: a.why })),
+  ];
+  if (findings.length === 0) {
+    return { risks: shaped.risks, toClose: shaped.toClose, acuConsumed: 0, droppedCount: 0, sharpenedCount: 0 };
+  }
+
+  const briefing = expertBriefing(expert.discipline, expert.stage === undefined ? {} : { stage: expert.stage });
+  const clausePayload = report.clauses.map((c) => ({ clause: c.clause, state: c.state, detail: c.detail, blocking: c.blocking }));
+
+  let acuConsumed = 0;
+
+  // 1. Critique — an independent reviewer marks each finding.
+  const critique = await runAI(ctx, {
+    engine: 'EXECUTIVE',
+    taskType: `stage_gate_critique:${report.phase}`,
+    capability: 'REASONING',
+    inputRefs: [{ refType: 'Project', refId: ctx.projectId }],
+    request: {
+      task:
+        `${briefing} ` +
+        'A first pass has chaired this gate and produced the risks and required actions below, each tied to a clause of ' +
+        'the seven-clause Definition of Done. Review them as the person who must sign the gate decision on them would — ' +
+        'you did not write them. For each, return its `index`, a `verdict`, and the `fault` in one sentence. KEEP one ' +
+        'that is material, specific, and tied to a real clause the report marks not met or not assessable. SHARPEN one ' +
+        'that is real but vague, generic, or — for an action — not actually actionable, and name what to tighten. DROP ' +
+        'one that is immaterial, duplicates another, merely restates a clause without adding judgement, or claims a ' +
+        'problem the clause results do not support.',
+      payload: {
+        phase: report.phase,
+        clauses: clausePayload,
+        findings: findings.map((f, index) => ({ index, kind: f.kind, clause: f.clause, text: f.text, detail: f.detail })),
+      },
+      responseSchema: CRITIQUE_SCHEMA,
+    },
+    toWrites: () => [],
+  });
+  acuConsumed += critique.acuConsumed;
+
+  const critiques = shapeCritiques(critique.output, findings.length);
+  const { keep, sharpen, droppedCount } = partitionByCritique(findings, critiques);
+
+  // 2. Improve — rewrite only what was faulted.
+  let sharpened: GateFinding[] = [];
+  if (sharpen.length > 0) {
+    const improve = await runAI(ctx, {
+      engine: 'EXECUTIVE',
+      taskType: `stage_gate_sharpen:${report.phase}`,
+      capability: 'REASONING',
+      inputRefs: [{ refType: 'Project', refId: ctx.projectId }],
+      request: {
+        task:
+          `${briefing} ` +
+          'Each finding below was judged real but not yet good enough, with the fault named. Rewrite each to fix exactly ' +
+          'that fault: make it specific, tie it to the clause it rests on, and — for an action — say what must be done ' +
+          'and what closing it requires, not just that it is outstanding. Keep each within what the clause results ' +
+          'support. Return `findings`: an array of { kind, clause, text, detail } in the same shape, keeping each ' +
+          'finding’s kind.',
+        payload: {
+          clauses: clausePayload,
+          toSharpen: sharpen.map((s) => ({ kind: s.item.kind, clause: s.item.clause, text: s.item.text, detail: s.item.detail, fault: s.fault })),
+        },
+        responseSchema: FINDINGS_SCHEMA,
+      },
+      toWrites: () => [],
+    });
+    acuConsumed += improve.acuConsumed;
+    sharpened = shapeGateFindings(improve.output);
+  }
+
+  const merged = [...keep, ...sharpened];
+  const risks = merged.filter((f) => f.kind === 'risk').slice(0, 8).map((f) => ({ clause: f.clause, risk: f.text, basis: f.detail }));
+  const toClose = merged.filter((f) => f.kind === 'action').slice(0, 8).map((f) => ({ clause: f.clause, action: f.text, why: f.detail }));
+  return { risks, toClose, acuConsumed, droppedCount, sharpenedCount: sharpen.length };
+}
+
+export async function gateNarrative(ctx: EngineContext): Promise<GateNarrative> {
+  // The deterministic report first — free, and the only thing the model may
+  // reason from. `gateFor` authorises the read through its evaluate function.
+  const report = gateFor(ctx);
+  const expert = gateExpertFor(report.phase);
+  const reviewedAs = expertRole(expert.discipline).title;
+
+  const clauses = report.clauses.map((clause) => ({
+    clause: clause.clause,
+    title: clause.title,
+    state: clause.state,
+    detail: clause.detail,
+    blocking: clause.blocking,
+  }));
+
+  try {
+    const result = await runAI(ctx, {
+      engine: 'EXECUTIVE',
+      taskType: `stage_gate_narrative:${report.phase}`,
+      capability: 'REASONING',
+      inputRefs: [{ refType: 'Project', refId: ctx.projectId }],
+      request: {
+        task:
+          `${expertBriefing(expert.discipline, expert.stage === undefined ? {} : { stage: expert.stage })} ` +
+          'You are chairing the stage-gate review for this phase. The platform has already checked the seven-clause ' +
+          'Definition of Done mechanically; its result is supplied. Give the senior professional’s read of it. In one ' +
+          'or two sentences say where the gate genuinely stands — not a restatement of the pass/fail count, but what the ' +
+          'verdict means for committing the next stage. Then list the material risks this gate turns on, each tied to ' +
+          'the clause and the blocking item it rests on. Then list what must be closed before the gate can pass, in ' +
+          'priority order, each with why it matters. Reason only from the clause results supplied: name the clause ' +
+          'behind every point, invent no blocker the report does not carry, and raise nothing the facts do not support. ' +
+          'If every clause is met, say so plainly and name only the residual watch-items the report marks not-assessable.',
+        payload: {
+          phase: report.phase,
+          passed: report.passed,
+          summary: report.summary,
+          failed: report.failed,
+          unassessable: report.unassessable,
+          clauses,
+        },
+        responseSchema: {
+          type: 'object',
+          properties: {
+            verdict: { type: 'string' },
+            risks: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  clause: { type: ['string', 'null'] },
+                  risk: { type: 'string' },
+                  basis: { type: 'string' },
+                },
+                required: ['risk', 'basis'],
+              },
+            },
+            toClose: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  clause: { type: ['string', 'null'] },
+                  action: { type: 'string' },
+                  why: { type: 'string' },
+                },
+                required: ['action', 'why'],
+              },
+            },
+          },
+          required: ['verdict', 'risks', 'toClose'],
+        },
+      },
+      requireModel: {
+        code: 'NO_REASONING_PROVIDER',
+        message:
+          'This deployment is running the local stand-in, which reasons about nothing. A gate review that a person ' +
+          'leans on to commit a stage has to come from a model that actually read the verdict — configure a reasoning ' +
+          'provider and set AI_MODE=production. The seven-clause result stands on its own without it.',
+      },
+      // Advisory: it writes no state. The gate decision is a person's act.
+      toWrites: () => [],
+    });
+
+    const shaped = shapeGateNarrative(result.output);
+
+    // Verify and improve: the first read's risks and required actions are marked
+    // by an independent reviewer and the weak ones sharpened or dropped before a
+    // person leans on them to sign the gate. Best-effort: if it cannot run, the
+    // first read still stands.
+    let risks = shaped.risks;
+    let toClose = shaped.toClose;
+    let refineAcu = 0;
+    let droppedCount = 0;
+    let sharpenedCount = 0;
+    let refined = false;
+    try {
+      const refinement = await refineGateNarrative(ctx, shaped, report, expert);
+      risks = refinement.risks;
+      toClose = refinement.toClose;
+      refineAcu = refinement.acuConsumed;
+      droppedCount = refinement.droppedCount;
+      sharpenedCount = refinement.sharpenedCount;
+      refined = refinement.acuConsumed > 0;
+    } catch {
+      // A provider or wallet failure mid-review: keep the first read.
+    }
+
+    const reviewedNote = refined && (droppedCount > 0 || sharpenedCount > 0)
+      ? ` An independent review dropped ${droppedCount} and sharpened ${sharpenedCount} of the findings before this reached you.`
+      : '';
+
+    return {
+      available: true,
+      phase: report.phase,
+      passed: report.passed,
+      reviewedAs,
+      verdict: shaped.verdict,
+      risks,
+      toClose,
+      acuConsumed: result.acuConsumed + refineAcu,
+      note: (report.passed
+        ? 'Every clause the platform can check is met. This is the chair’s read of the residual judgement — the gate ' +
+          'decision remains a person’s act.'
+        : 'This is the chair’s read of the deterministic gate result. It proposes; passing or holding the gate remains ' +
+          'a person’s act, recorded with its rationale and any time-bound conditions.') + reviewedNote,
+    };
+  } catch (error) {
+    if (error instanceof DomainError && error.code === 'NO_REASONING_PROVIDER') {
+      return {
+        available: false,
+        phase: report.phase,
+        passed: report.passed,
+        reviewedAs,
+        verdict: '',
+        risks: [],
+        toClose: [],
+        acuConsumed: 0,
+        note:
+          'The expert gate review needs a reasoning AI provider, and none is configured on this deployment (or the ' +
+          'wallet is empty). Nothing was charged. The seven-clause Definition of Done above stands on its own.',
+      };
+    }
+    throw error;
+  }
 }
 
 // --- The decision -----------------------------------------------------------

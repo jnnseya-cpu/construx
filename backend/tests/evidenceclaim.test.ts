@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { before, describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import * as evidence from '../src/domain/evidenceclaim.ts';
+import * as radar from '../src/domain/radar.ts';
 import * as itt from '../src/domain/itt.ts';
 import * as bidresponse from '../src/domain/bidresponse.ts';
 import { ROUTES } from '../src/api/routes.ts';
@@ -189,6 +190,20 @@ describe('the register is judged against a day, not against today', () => {
     assert.match(register.summary, /lapse within 60 days/);
   });
 
+  it('falls back to today rather than crashing on an absent, empty or malformed day', () => {
+    // A pack whose tender return date is not set yet carries an empty returnBy,
+    // and the red-team review slices that to '' and passes it here. '' is not
+    // undefined, so it once reached new Date(NaN).toISOString() and threw
+    // RangeError: Invalid time value, 500ing the whole review. An unknown day is
+    // today, never a crash — and the same guard hardens the ?asAt= query param.
+    const today = new Date().toISOString().slice(0, 10);
+    assert.equal(evidence.evidenceRegister(asQS(), '').asAt, today);
+    assert.equal(evidence.evidenceRegister(asQS(), 'not-a-date').asAt, today);
+    assert.equal(evidence.evidenceRegister(asQS(), undefined).asAt, today);
+    // A real date is still honoured.
+    assert.equal(evidence.evidenceRegister(asQS(), '2026-03-01').asAt, '2026-03-01');
+  });
+
   it('keeps a refusal on the record and will not verify over it', () => {
     const doomed = evidence.assertClaim(asQS(), {
       kind: 'CASE_STUDY',
@@ -306,5 +321,130 @@ describe('the submission refuses evidence that lapses before it is read', () => 
     // And ready once the evidence is out of the way, so the refusal above is
     // this one thing rather than a check that never passes.
     assert.equal(bidresponse.bidCompleteness(answered, [], []).ready, true);
+  });
+});
+
+describe('a one-director firm attests its own claim, and the record says so', () => {
+  // Holds BUSINESS_DEVELOPMENT U — the owner's own facts, including the
+  // single-director switch, are set from the governance seat the seed used.
+  const asAdmin = () => platform.context(seed.users.admin!.auth, `${seed.tenantId}-governance`, { source: 'WEB' });
+
+  /** Turn the single-director switch on or off without disturbing the rest of the profile. */
+  const setSingleOwner = (on: boolean): void => {
+    const profile = radar.companyProfile(asAdmin());
+    radar.setCompanyProfile(asAdmin(), { ...profile, singleOwnerBids: on });
+  };
+
+  // This block is the last in the file precisely because it flips a shared fact.
+  // It turns the switch on for its own tests and off again after, so the
+  // segregation tests above — which must see a normal multi-role firm — are
+  // never reached with it set.
+  after(() => setSingleOwner(false));
+
+  it('still refuses a self-check while the firm is not a declared one-director business', () => {
+    const claim = evidence.assertClaim(asQS(), {
+      kind: 'CERTIFICATE',
+      claim: 'We hold a current asbestos awareness certificate for all site operatives',
+      sourceHash: `sha256:${'c'.repeat(64)}`,
+    });
+    const error = throwsCode(
+      () => evidence.verifyClaim(asQS(), claim.id, { method: 'Read it myself and it looks right' }),
+      'SELF_VERIFICATION_REFUSED',
+    );
+    assert.match(String(error.message), /turn on single-director mode/);
+  });
+
+  it('lets the owner attest their own claim once single-director mode is on, and marks it attested', () => {
+    setSingleOwner(true);
+
+    const claim = evidence.assertClaim(asQS(), {
+      kind: 'ACCREDITATION',
+      claim: 'The business is registered with the Gas Safe Register under number 123456',
+      sourceHash: `sha256:${'d'.repeat(64)}`,
+    });
+
+    const attested = evidence.verifyClaim(asQS(), claim.id, {
+      method: 'Compared against the Gas Safe registration certificate held on file, in my own name as sole director',
+    });
+
+    // Approved and usable — but recorded as the owner's own word, not an
+    // independent check. The flag is what later reads lean on to show it
+    // honestly rather than passing it off as segregated verification.
+    assert.equal(attested.status, 'APPROVED');
+    assert.equal(attested.selfAttested, true);
+    assert.equal(attested.verifiedBy, seed.users.qs!.auth.actorId);
+    assert.equal(attested.assertedBy, attested.verifiedBy);
+
+    // The event is the distinct one, so the audit trail never calls a
+    // self-attestation an independent verification.
+    const events = platform.ledger.eventsForEntity({ refType: 'EvidenceClaim', refId: claim.id });
+    assert.equal(events[events.length - 1]!.eventType, 'EVIDENCE_CLAIM_SELF_ATTESTED');
+
+    // It stands in the register and counts as approved on the day, like any
+    // other approved claim — the honesty is in how it got there, not in
+    // withholding it.
+    const register = evidence.evidenceRegister(asQS());
+    const row = register.claims.find((entry) => entry.id === claim.id);
+    assert.equal(row?.standing, 'APPROVED');
+    assert.equal(row?.selfAttested, true);
+  });
+
+  it('records a second, independent check as a verification, not an attestation', () => {
+    setSingleOwner(true);
+
+    // Even in single-director mode, when somebody else does do the check it is
+    // the real thing and must not be stamped as self-attested. The exception
+    // widens who may check; it does not relabel a genuine second pair of eyes.
+    const claim = evidence.assertClaim(asQS(), {
+      kind: 'INSURANCE',
+      claim: 'Our employers liability cover is £5,000,000 for any one occurrence',
+      sourceHash: `sha256:${'9'.repeat(64)}`,
+    });
+
+    const verified = evidence.verifyClaim(asOwner(), claim.id, {
+      method: 'Compared against the certificate of employers liability insurance issued by the broker',
+    });
+
+    assert.equal(verified.status, 'APPROVED');
+    assert.ok(!verified.selfAttested, 'an independent check is not a self-attestation');
+    assert.notEqual(verified.verifiedBy, verified.assertedBy);
+    const events = platform.ledger.eventsForEntity({ refType: 'EvidenceClaim', refId: claim.id });
+    assert.equal(events[events.length - 1]!.eventType, 'EVIDENCE_CLAIM_VERIFIED');
+  });
+});
+
+describe('a document is filed once and linked to the requirements it answers', () => {
+  const PI_HASH = `sha256:${'a1'.repeat(32)}`;
+  let claimId: string;
+
+  before(() => {
+    claimId = evidence.assertClaim(asQS(), {
+      kind: 'INSURANCE',
+      claim: 'Professional indemnity insurance of £10m, held and current',
+      sourceHash: PI_HASH,
+    }).id;
+  });
+
+  it('exposes the link route', () => {
+    assert.ok(
+      ROUTES.some((route) => route.method === 'POST' && route.pattern === '/v1/evidence/claims/:claimId/link'),
+      'POST /v1/evidence/claims/:claimId/link has no route',
+    );
+  });
+
+  it('adds requirement references to the claim, and is idempotent on one already covered', () => {
+    const linked = evidence.linkClaim(asQS(), { claimId, references: ['18.4', '18.1-18.3'] });
+    assert.deepEqual(linked.covers, ['18.4', '18.1-18.3']);
+    // A document filed once answers the same clause on the next bid: linking a
+    // new reference adds it; one already covered is left as it is.
+    const again = evidence.linkClaim(asQS(), { claimId, references: ['18.4', '7.1'] });
+    assert.deepEqual(again.covers, ['18.4', '18.1-18.3', '7.1']);
+    const events = platform.ledger.eventsForEntity({ refType: 'EvidenceClaim', refId: claimId });
+    assert.equal(events[events.length - 1]!.eventType, 'EVIDENCE_CLAIM_LINKED');
+  });
+
+  it('refuses an empty link, and one that changes nothing', () => {
+    throwsCode(() => evidence.linkClaim(asQS(), { claimId, references: [] }), 'LINK_EMPTY');
+    throwsCode(() => evidence.linkClaim(asQS(), { claimId, references: ['18.4'] }), 'LINK_UNCHANGED');
   });
 });

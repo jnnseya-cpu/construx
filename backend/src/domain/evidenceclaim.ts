@@ -2,6 +2,7 @@ import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
+import { companyProfile } from './radar.ts';
 
 /**
  * The evidence registry — `L7.2`, `RSP-001`, `GE-EV-01`.
@@ -116,6 +117,19 @@ export type EvidenceClaim = {
   verifiedAt?: string;
   /** How it was checked — "compared against the insurer's schedule", not "yes". */
   verificationMethod?: string;
+  /**
+   * True where the person who checked the document is the same one who asserted
+   * it — an owner of a one-director firm, who has nobody else to ask.
+   *
+   * Recorded rather than hidden, because the honest answer to "was this
+   * independently verified" is no, and a claim that let a self-check pass for an
+   * independent one would be the fabrication the whole register exists to stop.
+   * The claim still counts as approved — the document is real and the owner
+   * stands behind it — but the record says plainly that the check and the claim
+   * are the same hand, so a reader can weigh it for what it is. Only reachable
+   * when the company has declared itself a one-director business.
+   */
+  selfAttested?: boolean;
   rejectedBy?: string;
   rejectedAt?: string;
   rejectedReason?: string;
@@ -247,6 +261,67 @@ export function assertClaim(
 }
 
 /**
+ * Link a held claim to the requirements it answers on a tender.
+ *
+ * A claim is filed once — the company's PI certificate, its MD's CV — and lives
+ * on the tenancy, not on a bid. What differs from one tender to the next is which
+ * of *that* tender's requirements the document answers, and until now there was
+ * no way to record it: a claim asserted with no coverage stayed uncovered, the
+ * matrix proposed a match nobody could confirm, and the red team reported
+ * "evidence nothing answers" against a document that was sitting in the register.
+ * This is the confirm. The references are added to the claim's coverage; it
+ * carries them to every bid that shares the reference, which is what makes a
+ * document filed once answer the same clause on every tender that asks it.
+ *
+ * `ESTIMATE_TENDER` `C`: clerical and reversible, the same standing as asserting.
+ */
+export function linkClaim(ctx: EngineContext, input: { claimId: string; references: string[] }): EvidenceClaim {
+  authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireClaim(ctx, input.claimId);
+  const claim = record.state as unknown as EvidenceClaim;
+  if (claim.status === 'REJECTED') {
+    throw new DomainError(
+      'CLAIM_REJECTED_NOT_LINKABLE',
+      `${claim.reference} was refused by a reviewer. Link better evidence to the requirement, not this.`,
+      409,
+    );
+  }
+
+  const additions = input.references.map((r) => r.trim()).filter((r) => r.length > 0);
+  if (additions.length === 0) {
+    throw new DomainError('LINK_EMPTY', 'Name at least one requirement reference this document answers.', 422, [
+      { field: 'references', message: 'At least one reference' },
+    ]);
+  }
+
+  const covers = [...claim.covers];
+  let added = 0;
+  for (const reference of additions) {
+    if (!covers.includes(reference)) {
+      covers.push(reference);
+      added += 1;
+    }
+  }
+  if (added === 0) {
+    throw new DomainError(
+      'LINK_UNCHANGED',
+      `${claim.reference} already answers ${additions.length === 1 ? 'that requirement' : 'those requirements'}. There is nothing to add.`,
+      409,
+    );
+  }
+
+  const linked: EvidenceClaim = { ...claim, covers };
+  write(ctx, {
+    eventType: 'EVIDENCE_CLAIM_LINKED',
+    entity: { refType: 'EvidenceClaim', refId: claim.id },
+    nextState: linked as unknown as Record<string, unknown>,
+  });
+
+  return linked;
+}
+
+/**
  * Check that the document says what the claim says.
  *
  * `ESTIMATE_TENDER` `A`, `aiAllowed: false`, and the asserter may not do it.
@@ -273,13 +348,23 @@ export function verifyClaim(
     );
   }
 
-  // Segregation. One person attaching a certificate and then declaring it
-  // proves the sentence is not a check, it is the same opinion written twice.
-  if (claim.assertedBy === ctx.auth.actorId) {
+  // Segregation, with one honest exception.
+  //
+  // One person attaching a certificate and then declaring it proves the sentence
+  // is not a check — it is the same opinion written twice. So a self-check is
+  // refused, UNLESS the company has declared itself a one-director business, in
+  // which case there is genuinely nobody else to ask. Then the owner may attest
+  // their own claim, and the record says so: `selfAttested` is stamped below, the
+  // check and the claim are named as the same hand, and nothing pretends an
+  // independent verification happened. A firm with more than one person gets the
+  // refusal unchanged — segregation is available to them, so it is required.
+  const selfChecked = claim.assertedBy === ctx.auth.actorId;
+  if (selfChecked && companyProfile(ctx).singleOwnerBids !== true) {
     throw new DomainError(
       'SELF_VERIFICATION_REFUSED',
       `${claim.reference} was asserted by you. Somebody else has to be the one who says the document proves the claim, ` +
-        'because a check done by the person being checked is not a check.',
+        'because a check done by the person being checked is not a check. If you are a one-director business with ' +
+        'nobody else to ask, turn on single-director mode in the company facts and record this as your own attestation.',
     );
   }
 
@@ -309,10 +394,14 @@ export function verifyClaim(
     verifiedBy: ctx.auth.actorId,
     verifiedAt: new Date().toISOString(),
     verificationMethod: method,
+    // Stamped only on a genuine self-check, which the branch above has already
+    // confined to a declared one-director business. The flag travels with the
+    // claim, so the register and any later read show it for what it is.
+    ...(selfChecked ? { selfAttested: true } : {}),
   };
 
   write(ctx, {
-    eventType: 'EVIDENCE_CLAIM_VERIFIED',
+    eventType: selfChecked ? 'EVIDENCE_CLAIM_SELF_ATTESTED' : 'EVIDENCE_CLAIM_VERIFIED',
     entity: { refType: 'EvidenceClaim', refId: claimId },
     nextState: verified as unknown as Record<string, unknown>,
   });
@@ -386,7 +475,17 @@ const LAPSE_WINDOW_DAYS = 60;
 export function evidenceRegister(ctx: EngineContext, asAt?: string): EvidenceRegister {
   authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
 
-  const day = asAt ?? new Date().toISOString().slice(0, 10);
+  // The day the register is judged against. Defaults to today when `asAt` is
+  // absent — and also when it is present but not a real date. A pack whose tender
+  // return date has not been set yet carries an empty `returnBy`, and
+  // `challengeSubmission` slices that to '' and passes it here; '' is not
+  // `undefined`, so it slipped past a bare `??` and reached `new Date(NaN)` below,
+  // whose `.toISOString()` throws `RangeError: Invalid time value` and 500s the
+  // whole red-team review. An unknown day is today, never a crash — which also
+  // hardens the `?asAt=` query parameter the API exposes against a bad value.
+  const today = new Date().toISOString().slice(0, 10);
+  const candidate = asAt === undefined ? '' : asAt.slice(0, 10);
+  const day = candidate !== '' && !Number.isNaN(Date.parse(`${candidate}T00:00:00Z`)) ? candidate : today;
   const claims = claimsOf(ctx)
     .map((claim) => ({ ...claim, standing: standingOf(claim, day) }))
     .sort((a, b) => (b.assertedAt ?? '').localeCompare(a.assertedAt ?? ''));

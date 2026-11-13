@@ -348,6 +348,13 @@ export const DOCUMENT_KIND = [
   'MODEL',
   'SCHEDULE',
   'CORRESPONDENCE',
+  /**
+   * The invitation to tender and the documents that state what the buyer
+   * scores — instructions to tenderers, a quality questionnaire. Its own kind
+   * because it was filed as CORRESPONDENCE for want of one, and the file table
+   * then told a bidder their ITT was "correspondence".
+   */
+  'INVITATION',
   'UNKNOWN',
 ] as const;
 export type DocumentKind = (typeof DOCUMENT_KIND)[number];
@@ -434,13 +441,25 @@ const KIND_SIGNALS: ReadonlyArray<{
     name: /[-_](RP|RI|SU)[-_]/,
   },
   {
+    kind: 'REPORT',
+    says: 'the filename says report, survey or investigation',
+    name: /(^|[-_\s.])(report|survey|investigation|pci)([-_\s.]|$)/i,
+  },
+  {
+    kind: 'REPORT',
+    says: 'the text is a site or ground investigation, a survey, or the pre-construction information',
+    content: /\b(ground investigation|site investigation|borehole|trial pits?|geotechnical|pre-construction information|condition survey|topographical survey)\b/i,
+  },
+  {
     kind: 'DRAWING',
     says: 'the filename is a drawing reference',
     // The boundary includes a space. Construction filenames are full of them —
     // "Wall Foundation Detail.pdf" has a space before the word that types it,
     // so requiring a dash or an underscore missed exactly the files this rule
     // was written for.
-    name: /(^|[-_\s])(dwg|drg|drawing|ga|plan|layout|section|elevation|detail)([-_\s]|\.|$)/i,
+    // Plurals too: a tender pack's drawing volume is "Volume 3 - Drawings.pdf",
+    // which the singular-only pattern read as nothing at all.
+    name: /(^|[-_\s])(dwgs?|drgs?|drawings?|ga|plans?|layouts?|sections?|elevations?|details?)([-_\s]|\.|$)/i,
   },
   {
     kind: 'CALCULATION',
@@ -450,7 +469,13 @@ const KIND_SIGNALS: ReadonlyArray<{
   {
     kind: 'DRAWING',
     says: 'the text carries a scale, a revision or a title block',
-    content: /\b(scale\s*1\s*[:/]\s*\d|do not scale|title block|rev(ision)?\s*[a-z0-9]{1,3}\b)/i,
+    // The revision alternative requires a revision *code* (a letter or two then
+    // digits, like P02 or C1), not the bare word "revision". The old
+    // `rev(ision)?\s*[a-z0-9]{1,3}` matched "revision of", "revision to" and
+    // "revision history" — words that appear in the prose of an ITT, a contract
+    // and a schedule of rates — and was a large part of why documents that merely
+    // mention drawings were typed as drawings themselves.
+    content: /\b(scale\s*1\s*[:/]\s*\d|do not scale|title block|rev(?:ision)?\.?\s*[a-z]{0,2}\d{1,3}\b)/i,
   },
   { kind: 'SPECIFICATION', says: 'the filename says specification', name: /(spec|specification|nbs)/i },
   {
@@ -495,6 +520,21 @@ const KIND_SIGNALS: ReadonlyArray<{
   },
   { kind: 'MODEL', says: 'the extension is a model format', name: /\.(ifc|rvt|nwd|nwc|dgn|skp)$/i },
   { kind: 'SCHEDULE', says: 'the extension is a spreadsheet', name: /\.(xlsx|xls|csv)$/i },
+  // A spreadsheet is a schedule of data, never a drawing. The MIME type is a
+  // second, authoritative signal beside the extension, so a pricing schedule
+  // that quotes drawing revisions in its item descriptions ("foundation to
+  // R4780 rev P02") cannot be out-scored into DRAWING by that one incidental
+  // marker — reported on SHDC's Appendix B pricing schedule, typed "drawing"
+  // and offered "measure quantities".
+  {
+    kind: 'SCHEDULE',
+    says: 'the file is a spreadsheet',
+    types: [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+      'text/csv',
+    ],
+  },
   { kind: 'SCHEDULE', says: 'the text is delimited into columns', content: /^[^\n]*,[^\n]*,[^\n]*,/ },
   {
     kind: 'CORRESPONDENCE',
@@ -505,6 +545,53 @@ const KIND_SIGNALS: ReadonlyArray<{
     kind: 'CORRESPONDENCE',
     says: 'the text is written as a letter',
     content: /\b(dear sir|yours faithfully|we write to|further to your)\b/i,
+  },
+  /*
+   * A tender invitation — the instructions to tenderers, the ITT itself.
+   *
+   * This file set had no rule for the one document a tender is read FROM, so an
+   * ITT that quotes drawing revisions and scales (as every ITT does — "drawings
+   * R4780 rev P02 at scale 1:50 are provided") was out-scored by those
+   * incidental drawing markers and typed DRAWING. The screen then told the
+   * bidder the invitation "states no tender requirements" and offered to measure
+   * quantities off it, steering them away from the reasoning read that produces
+   * the compliance matrix.
+   *
+   * Four specific signals, so a genuine ITT fires several and comfortably
+   * out-scores the one stray drawing marker, while a real drawing (which carries
+   * none of these phrases) is untouched. Mapped to INVITATION, which is not in
+   * CANNOT_BE_AN_INVITATION, so the file is read as an invitation rather than
+   * measured.
+   */
+  {
+    kind: 'INVITATION',
+    says: 'the filename names an invitation to tender',
+    name: /(^|[-_\s])(itt|invitation[-_\s]?to[-_\s]?tender|tender[-_\s]?invitation)([-_\s]|\.|$)/i,
+  },
+  {
+    kind: 'INVITATION',
+    says: 'the text is an invitation to tender — the invitation, instructions to tenderers',
+    content: /\b(invitation to tender|instructions? to tenderers?)\b/i,
+  },
+  {
+    kind: 'INVITATION',
+    says: 'the text sets a tender return — a submission deadline or closing date',
+    content: /\b(return (?:your )?(?:tender|submission|response) by|tender (?:response )?deadline|closing date for (?:tenders|submissions)|deadline for (?:tender )?(?:returns|submissions))\b/i,
+  },
+  {
+    kind: 'INVITATION',
+    says: 'the text states how the tender is evaluated — award or evaluation criteria',
+    content: /\b(evaluation (?:criteria|methodology)|award criteria|quality questionnaire|most economically advantageous)\b/i,
+  },
+  {
+    // Conwy's Volume 2 — "Contract Data & Quality Questionnaire", holding Q1 to
+    // Q7 — tied one signal each with "specification" and lost the tie, so the
+    // document the bid is scored on was offered as "this is a specification".
+    // A stated word limit per answer is what a scored questionnaire says and a
+    // specification does not.
+    kind: 'INVITATION',
+    says: 'the text sets a word limit for answers — a scored questionnaire',
+    content: /\b(?:no more than|maximum (?:of )?|not (?:to )?exceed(?:ing)?|up to)\s*[\d,]+\s*words\b|\bword (?:limit|count) of\b/i,
   },
 ];
 
@@ -528,7 +615,9 @@ export function classify(input: {
   };
 
   const name = input.filename ?? '';
-  const text = (input.text ?? '').slice(0, 32 * 1024);
+  // 128KB rather than 32: Conwy's questionnaire names its "Instructions to
+  // Tenderers" at 39KB, past the old cut. A regex over 128KB is microseconds.
+  const text = (input.text ?? '').slice(0, 128 * 1024);
 
   for (const rule of KIND_SIGNALS) {
     if (rule.types && input.actualType && rule.types.includes(input.actualType)) note(rule.kind, rule.says);

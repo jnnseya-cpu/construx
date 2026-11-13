@@ -510,6 +510,33 @@ button { font: inherit; }
 .user-chip .rl { font-size: 10px; color: var(--text-3); }
 
 .view { padding: 28px 24px 64px; flex: 1; }
+
+/* Guided walkthrough — the next-step strip the shell mounts above every view,
+   on every screen, from an empty account onward. Reuses the design tokens; no
+   new colours. Accent-washed so it reads as chrome rather than a second card. */
+.guide-strip { padding: 11px 24px; background: var(--orange-wash); border-bottom: 1px solid var(--orange-line); }
+.guide-main { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.guide-tag { flex: none; }
+.guide-say { flex: 1 1 320px; min-width: 0; font-size: 13px; color: var(--text); line-height: 1.5; }
+.guide-sub { color: var(--text-2); }
+.guide-go { flex: none; }
+.guide-help { flex: none; background: transparent; border: 1px solid var(--orange-line); color: var(--text); }
+.guide-help:hover { background: var(--orange-wash); filter: none; }
+.guide-all { margin-top: 8px; }
+.guide-all > summary { cursor: pointer; font-size: 12px; color: var(--text-3); list-style: none; user-select: none; width: fit-content; }
+.guide-all > summary::-webkit-details-marker { display: none; }
+.guide-all > summary:hover { color: var(--text-2); }
+.guide-all[open] > summary { margin-bottom: 8px; }
+.guide-list { display: flex; flex-direction: column; background: var(--carbon); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; }
+.guide-row { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; padding: 8px; }
+.guide-row + .guide-row { border-top: 1px solid var(--line); }
+.guide-row-lbl { font-size: 12.5px; color: var(--text); min-width: 0; }
+.guide-row-at { font-size: 11.5px; color: var(--text-3); white-space: nowrap; flex: none; text-align: right; }
+@media (max-width: 640px) {
+  .guide-strip { padding: 10px 16px; }
+  .guide-go { width: 100%; }
+  .guide-row-at { display: none; }
+}
 .view-head { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
 /* The page title in the condensed face, so a screen has two voices: a heading
    that is narrow and set tight, and a body that is open. One family at four

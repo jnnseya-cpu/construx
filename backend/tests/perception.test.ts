@@ -13,6 +13,7 @@ import type {
 } from '../src/ai/providers/types.ts';
 import { ingestFile, ingestedFiles, ingestionPosition } from '../src/evidence/pipeline.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
+import { readPdfText } from '../src/evidence/pdftext.ts';
 import * as perception from '../src/engines/perception.ts';
 import { registerDrawing } from '../src/engines/bim.ts';
 import type { EngineContext } from '../src/engines/context.ts';
@@ -552,6 +553,110 @@ describe('a scan is transcribed by a model and confirmed into the ingestion reco
  * Declared after use on purpose — it is the least interesting thing in the file
  * and reads as noise at the top.
  */
+/** A four-page PDF, a distinct word on each, standing in for a bundled drawing set. */
+function fourPagePdf(): Buffer {
+  const pageStream = (word: string): string => {
+    const content = `BT /F1 12 Tf 72 700 Td (Sheet ${word}) Tj ET`;
+    return `<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`;
+  };
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R] /Count 4 /MediaBox [0 0 595 842] /Resources << /Font << /F1 7 0 R >> >> >>',
+    '<< /Type /Page /Parent 2 0 R /Contents 8 0 R >>',
+    '<< /Type /Page /Parent 2 0 R /Contents 9 0 R >>',
+    '<< /Type /Page /Parent 2 0 R /Contents 10 0 R >>',
+    '<< /Type /Page /Parent 2 0 R /Contents 11 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+    pageStream('alpha'),
+    pageStream('bravo'),
+    pageStream('charlie'),
+    pageStream('delta'),
+  ];
+  let out = '%PDF-1.5\n';
+  const offsets: number[] = [];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(out, 'latin1'));
+    out += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(out, 'latin1');
+  out +=
+    `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n` +
+    offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('') +
+    `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
+describe('a take-off reads a page range out of a bundle', () => {
+  const PDF = fourPagePdf();
+  const PDF_HASH = hashBytes(PDF);
+  const TAKEOFF = { items: [{ description: 'Mass concrete to foundations', unit: 'm3', quantity: 12 }] };
+
+  before(async () => {
+    await buildFixture(multimodalStub(TAKEOFF));
+    registerEvidenceFor(ctxFor('qs'), PDF_HASH, 'TENDER_DOCUMENT');
+    store.put(seed.tenantId, PDF_HASH, PDF, 'application/pdf');
+  });
+
+  it('sends only the selected pages to the provider', async () => {
+    lastRequest = undefined;
+    await perception.extract(ctxFor('qs'), store, { hash: PDF_HASH, task: 'DRAWING_TAKEOFF', pages: { from: 2, to: 3 } });
+    const seen = lastRequest as ProviderRequest | undefined;
+    assert.ok(seen?.media, 'the provider was never handed the file');
+    assert.equal(seen.media.pages, 2, 'the whole bundle was sent instead of the page range');
+    const reading = readPdfText(Buffer.from(seen.media.base64, 'base64'));
+    assert.equal(reading.pages, 2);
+    assert.match(reading.text, /bravo/);
+    assert.match(reading.text, /charlie/);
+    assert.doesNotMatch(reading.text, /alpha|delta/);
+    // The source hash still names the file the pages came from.
+    assert.equal(seen.media.hash, PDF_HASH);
+    assert.deepEqual((seen.payload as { pages?: unknown }).pages, { from: 2, to: 3 });
+  });
+
+  it('sends the whole file when no range is given', async () => {
+    lastRequest = undefined;
+    await perception.extract(ctxFor('qs'), store, { hash: PDF_HASH, task: 'DRAWING_TAKEOFF' });
+    const seen = lastRequest as ProviderRequest | undefined;
+    assert.equal(seen?.media?.pages, 4);
+  });
+
+  it('refuses a range outside the document without charging for it', async () => {
+    const before = platform.wallet(seed.tenantId).snapshot();
+    await rejectsCode(
+      () => perception.extract(ctxFor('qs'), store, { hash: PDF_HASH, task: 'DRAWING_TAKEOFF', pages: { from: 3, to: 9 } }),
+      'PERCEPTION_PAGE_RANGE',
+    );
+    const after = platform.wallet(seed.tenantId).snapshot();
+    assert.equal(after.heldMinor, before.heldMinor);
+    assert.equal(after.balanceMinor, before.balanceMinor);
+  });
+
+  it('refuses a page range on a file that is not a PDF', async () => {
+    registerEvidenceFor(ctxFor('qs'), DRAWING_HASH, 'DRAWING_FILE');
+    store.put(seed.tenantId, DRAWING_HASH, DRAWING, 'image/png');
+    await rejectsCode(
+      () => perception.extract(ctxFor('qs'), store, { hash: DRAWING_HASH, task: 'DRAWING_TAKEOFF', pages: { from: 1, to: 1 } }),
+      'PERCEPTION_PAGE_RANGE',
+    );
+  });
+
+  it('scans the bundle into sections without charging', async () => {
+    const before = platform.wallet(seed.tenantId).snapshot();
+    const scan = await perception.scanBundle(ctxFor('qs'), store, PDF_HASH);
+    assert.equal(scan.pageCount, 4);
+    assert.ok(scan.sections.length >= 1, 'the scan found no sections to measure');
+    assert.ok(scan.sections.every((section) => section.toPage >= section.fromPage));
+    const after = platform.wallet(seed.tenantId).snapshot();
+    assert.equal(after.heldMinor, before.heldMinor, 'a scan reads only and must not reserve');
+    assert.equal(after.balanceMinor, before.balanceMinor, 'a scan reads only and must not charge');
+  });
+
+  it('refuses to scan a file that is not a PDF', async () => {
+    // DRAWING_HASH is already a registered image from the page-range cases above.
+    await rejectsCode(() => perception.scanBundle(ctxFor('qs'), store, DRAWING_HASH), 'PERCEPTION_NOT_A_BUNDLE');
+  });
+});
+
 function registerEvidenceFor(ctx: EngineContext, hash: string, type: string): void {
   ctx.ledger.commit({
     tenantId: ctx.tenantId,
@@ -572,3 +677,106 @@ function registerEvidenceFor(ctx: EngineContext, hash: string, type: string): vo
     },
   });
 }
+
+describe('reading a buyer pricing schedule into the bill', () => {
+  // The stub is deliberately made to return a rate and a price it must not —
+  // the whole safety property is that the bill takes the quantities and leaves
+  // the money, because a generic rate against a civils item loses the bid.
+  const BOQ_OUTPUT = {
+    // The buyer names the method of measurement; the reader quotes it and must
+    // not let a civils bill fall through to the NRM2 building default.
+    methodOfMeasurement: 'Method of Measurement for Highway Works',
+    items: [
+      { reference: '601.2', description: 'Boring raking holes not exceeding 10m depth', unit: 'm', quantity: 400, section: 'CC 601 Earthworks', rate: 147, price: 58800 },
+      { reference: '491.1', description: 'Random rubble stone cladding in M6 mortar', unit: 'm3', quantity: 15, section: 'CC 491 Masonry', rate: 770 },
+    ],
+    omitted: [],
+  };
+  const SCHEDULE = Buffer.from('%PDF-1.4 pricing schedule bytes', 'utf8');
+  const SCHEDULE_HASH = hashBytes(SCHEDULE);
+
+  before(async () => {
+    await buildFixture(multimodalStub(BOQ_OUTPUT));
+    registerEvidenceFor(ctxFor('qs'), SCHEDULE_HASH, 'CORRESPONDENCE');
+    store.put(seed.tenantId, SCHEDULE_HASH, SCHEDULE, 'application/pdf');
+  });
+
+  it('reads the schedule as items a person confirms, and writes nothing to the bill until they do', async () => {
+    const before = platform.ledger.list(projectId, 'BoQItem').length;
+    const result = await perception.extract(ctxFor('qs'), store, { hash: SCHEDULE_HASH, task: 'PRICE_LIST_BOQ' });
+    assert.equal(result.task, 'PRICE_LIST_BOQ');
+    assert.equal((result.extraction.items as unknown[]).length, 2);
+    assert.equal(
+      platform.ledger.list(projectId, 'BoQItem').length,
+      before,
+      'a reading reached the bill without a person confirming it',
+    );
+  });
+
+  it('confirming writes the buyer items into the bill, reference-tagged — and never the rate the model returned', async () => {
+    const { draftId } = await perception.extract(ctxFor('qs'), store, { hash: SCHEDULE_HASH, task: 'PRICE_LIST_BOQ' });
+    const pkg = platform.ledger.list(projectId, 'ScopePackage')[0]!;
+    const confirmed = await perception.confirm(ctxFor('qs'), {
+      draftId,
+      packageId: String(pkg.refId),
+      costCodePrefix: 'BOQ',
+    });
+    const boqItemIds = (confirmed.result as { boqItemIds: string[] }).boqItemIds;
+    assert.equal(boqItemIds.length, 2, 'the confirmed schedule did not become two measured items');
+
+    const items = platform.ledger.list(projectId, 'BoQItem').map((r) => r.state);
+    const boring = items.find((i) => String(i.description ?? '').includes('601.2'));
+    assert.ok(boring, 'the buyer item reference was not kept on the bill line');
+    assert.equal(boring!.quantity, 400);
+    assert.equal(boring!.unit, 'm');
+    // The civils method of measurement the document named reaches the line as a
+    // short tag — not the NRM2 building default.
+    assert.equal(boring!.measurementRule, 'MMHW', 'a civils bill was left tagged with the NRM2 default');
+    // The money the model returned must not have reached the bill.
+    assert.ok(!/"(rate|price|sellMinor|priceMinor)"/i.test(JSON.stringify(boring)), 'a rate the model returned reached the bill');
+  });
+
+  it('a person can override the method of measurement the reader quoted', async () => {
+    const { draftId } = await perception.extract(ctxFor('qs'), store, { hash: SCHEDULE_HASH, task: 'PRICE_LIST_BOQ' });
+    const pkg = platform.ledger.list(projectId, 'ScopePackage')[0]!;
+    const confirmed = await perception.confirm(ctxFor('qs'), {
+      draftId,
+      packageId: String(pkg.refId),
+      costCodePrefix: 'CES',
+      measurementRule: 'CESMM4',
+    });
+    const ids = new Set((confirmed.result as { boqItemIds: string[] }).boqItemIds);
+    const written = platform.ledger
+      .list(projectId, 'BoQItem')
+      .map((r) => r.state)
+      .filter((i) => ids.has(String(i.id)));
+    assert.ok(written.length > 0, 'the override confirmation wrote nothing');
+    assert.ok(
+      written.every((i) => i.measurementRule === 'CESMM4'),
+      'the method the person chose did not win over the one the reader read',
+    );
+  });
+
+  it('normalises the standard UK methods and never guesses one', () => {
+    assert.equal(perception.normaliseMethodOfMeasurement('Method of Measurement for Highway Works'), 'MMHW');
+    assert.equal(perception.normaliseMethodOfMeasurement('MMHW Series 600'), 'MMHW');
+    assert.equal(perception.normaliseMethodOfMeasurement('CESMM4'), 'CESMM4');
+    assert.equal(perception.normaliseMethodOfMeasurement('CESMM 3'), 'CESMM3');
+    assert.equal(perception.normaliseMethodOfMeasurement('cesmm'), 'CESMM');
+    assert.equal(perception.normaliseMethodOfMeasurement('NRM2'), 'NRM2');
+    // Nothing stated is nothing invented — the take-off keeps its own default.
+    assert.equal(perception.normaliseMethodOfMeasurement(null), undefined);
+    assert.equal(perception.normaliseMethodOfMeasurement('  '), undefined);
+    // A method the platform has no tag for is honoured, not discarded.
+    assert.equal(perception.normaliseMethodOfMeasurement('Bespoke schedule of rates'), 'Bespoke schedule of rates');
+  });
+
+  it('is a civil-engineering reading task in the catalogue, carrying no money in its schema', () => {
+    const def = (perception.PERCEPTION_TASKS as Record<string, { responseSchema: unknown }>).PRICE_LIST_BOQ;
+    assert.ok(def, 'PRICE_LIST_BOQ is not registered');
+    assert.ok(
+      !/"(rate|price|amount|total|cost|minor)"/i.test(JSON.stringify(def.responseSchema)),
+      'the BoQ reading schema invites a money figure',
+    );
+  });
+});

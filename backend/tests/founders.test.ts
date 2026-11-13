@@ -81,6 +81,21 @@ describe('an administrator alone is locked out of delivery', () => {
       (error: Error & { code?: string }) => error.code === 'SELF_ROLE_CHANGE',
     );
   });
+
+  it('has the one deliberate carve-out: commissioning, so an admin can run the Grid playbook without a second identity', () => {
+    // A small firm where the administrator is also the person delivering the HV
+    // grid connection must be able to open and work a Grid Connection AI
+    // engagement (QUALITY_COMMISSIONING C/U/A) on the admin role alone. This is a
+    // scoped exception to read-only-on-delivery, not a general opening of it:
+    // the other delivery areas above stay read-only.
+    const admin = platform.user(trappedAdmin);
+    assert.equal(rolesAllow(admin.roles, 'QUALITY_COMMISSIONING', 'C'), true, 'open an engagement');
+    assert.equal(rolesAllow(admin.roles, 'QUALITY_COMMISSIONING', 'U'), true, 'run and validate its steps');
+    assert.equal(rolesAllow(admin.roles, 'QUALITY_COMMISSIONING', 'A'), true, 'decide its gates');
+    // Still scoped: the carve-out is commissioning only.
+    assert.equal(rolesAllow(admin.roles, 'DESIGN_INFORMATION', 'C'), false);
+    assert.equal(rolesAllow(admin.roles, 'WORKPACKAGES_TASKS', 'C'), false);
+  });
 });
 
 describe('the founding administrators become owners', () => {

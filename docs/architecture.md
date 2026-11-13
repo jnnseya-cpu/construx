@@ -13,7 +13,7 @@
                               │
         ┌─────────────────────┼─────────────────────┐
         │                     │                     │
-   Domain commands      Eight AI engines      Audit & replay
+   Domain commands      Nine AI engines      Audit & replay
         │                     │                     │
         └──────────┬──────────┴──────────┬──────────┘
                    │                     │

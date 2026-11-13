@@ -277,6 +277,14 @@ def('procurement.rfq_issued', 'RFQ issued', 'RFQ issued: {{item}}', 'INFO', [E, 
 def('procurement.bid_received', 'Bid received', 'Bid received for {{item}}', 'INFO', [I]);
 def('procurement.bid_accepted', 'Bid accepted', 'Your bid was accepted', 'SUCCESS', [E, I]);
 def('procurement.bid_rejected', 'Bid rejected', 'Bid outcome for {{item}}', 'INFO', [E, I]);
+// The tender return clock. Fired by the deadline-reminder sweep a set number of
+// days before an invitation's return deadline, to the company's own people, so
+// a bid is not lost on the one thing pricing skill cannot save — the date. Not
+// mandatory: a person who has decided they are not chasing it may mute it, and a
+// commercial reminder a user cannot switch off is a reminder they learn to
+// ignore. Default routing is email and in-app, which is what "send the reminder
+// email" asks for.
+def('tender.deadline_approaching', 'Tender deadline approaching', '{{reference}} closes in {{days}} — {{title}}', 'WARNING', [E, I]);
 def('contract.created', 'Contract created', 'Contract created: {{item}}', 'INFO', [I]);
 def('contract.pending_signature', 'Contract pending signature', 'Signature needed: {{item}}', 'WARNING', [E, I, P]);
 def('contract.signed', 'Contract signed', 'Contract signed: {{item}}', 'SUCCESS', [E, I]);
@@ -330,6 +338,7 @@ def('executive.alert', 'Executive alert', 'Executive alert', 'CRITICAL', [E, I, 
 
 // ----------------------------------------------------------- Support & Success
 group('SUPPORT_SUCCESS');
+def('support.report_filed', 'Problem reported', '{{reporter}} reported a problem — {{kind}} on {{screen}}', 'WARNING', [E, I]);
 def('support.ticket_created', 'Ticket created', 'Support ticket {{number}} created', 'INFO', [E, I]);
 def('support.ticket_assigned', 'Ticket assigned', 'Ticket {{number}} assigned', 'INFO', [I]);
 def('support.ticket_updated', 'Ticket updated', 'Update on ticket {{number}}', 'INFO', [E, I]);

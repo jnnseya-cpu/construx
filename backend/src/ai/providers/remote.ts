@@ -838,6 +838,11 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
     return priceFor(modelClass, inputTokens, Math.ceil(inputTokens / 4));
   }
 
+  /** The rate at a given input size, for cheapest-provider routing. Same basis as the estimate above. */
+  costAtTokensMinor(inputTokens: number): number {
+    return priceFor(this.#defaultModelClass(), inputTokens, Math.ceil(inputTokens / 4));
+  }
+
   async execute(request: ProviderRequest): Promise<ProviderResponse> {
     if (this.#apiKey === '') {
       throw new DomainError('AI_PROVIDER_UNCONFIGURED', `${this.name} API key is not configured`, 503);

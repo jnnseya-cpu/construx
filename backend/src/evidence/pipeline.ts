@@ -968,6 +968,67 @@ export async function ingestionPosition(ctx: EngineContext, store: EvidenceStore
  * traceable to the bytes exactly as the multimodal one is — which is what makes
  * this a second road to the same place rather than a way round the record.
  */
+/**
+ * The tender pack as text: every ingested document on this project that
+ * yielded readable text, labelled with its filename and what it was read as.
+ *
+ * One definition for every reader of the whole pack — the clarification check
+ * and the whole-pack reading — so they read the same documents in the same
+ * order and name them the same way.
+ */
+export function packDocuments(
+  ctx: EngineContext,
+): Array<{ ingestionId: string; label: string; kind: string; text: string }> {
+  return ingestedFiles(ctx)
+    .filter((file) => file.status === 'INGESTED')
+    .map((file) => ({
+      ingestionId: file.ingestionId,
+      label: file.filename ?? file.classification?.kind ?? file.hash.slice(0, 8),
+      kind: String(file.classification?.kind ?? 'UNKNOWN'),
+      text: String((file.extraction as { text?: unknown } | undefined)?.text ?? '').trim(),
+    }))
+    .filter((doc) => doc.text.length > 0);
+}
+
+/**
+ * The tender pack as one text: each document under a heading naming it, the
+ * invitation documents first and then the rest in the order their names give
+ * (Volume 1 before Volume 2), so the same pack always reads the same way.
+ *
+ * `maxCharacters` keeps whole documents in that order while they fit and names
+ * the ones left out, rather than cutting a document mid-sentence.
+ */
+export function packText(
+  ctx: EngineContext,
+  options: { maxCharacters?: number } = {},
+): {
+  text: string;
+  files: Array<{ ingestionId: string; filename: string; kind: string; characters: number }>;
+  omitted: string[];
+} {
+  const docs = packDocuments(ctx).sort(
+    (a, b) =>
+      Number(b.kind === 'INVITATION') - Number(a.kind === 'INVITATION') ||
+      a.label.localeCompare(b.label, 'en', { numeric: true }),
+  );
+  const parts: string[] = [];
+  const files: Array<{ ingestionId: string; filename: string; kind: string; characters: number }> = [];
+  const omitted: string[] = [];
+  let length = 0;
+  for (const doc of docs) {
+    const part = `=== Document: ${doc.label} (${doc.kind.toLowerCase()}) ===\n${doc.text}`;
+    const added = part.length + (parts.length > 0 ? 2 : 0);
+    if (options.maxCharacters !== undefined && length + added > options.maxCharacters) {
+      omitted.push(doc.label);
+      continue;
+    }
+    parts.push(part);
+    length += added;
+    files.push({ ingestionId: doc.ingestionId, filename: doc.label, kind: doc.kind, characters: doc.text.length });
+  }
+  return { text: parts.join('\n\n'), files, omitted };
+}
+
 export async function ittFromFile(
   ctx: EngineContext,
   input: { ingestionId: string },

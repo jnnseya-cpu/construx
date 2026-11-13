@@ -10,6 +10,8 @@ import { sendMail, type SmtpOptions } from '../messaging/smtp.ts';
 import { PLATFORM_TENANT_ID, type Platform } from '../platform.ts';
 import type { RequestContext } from '../api/middleware.ts';
 import { hyperlink, postUrl, SHARE_CHANNELS, shareTargets, wordsOf } from './article.ts';
+import { marketingDemand } from '../domain/trend/signal.ts';
+import { opportunityForTopic, preferredTopic } from '../domain/trend/retarget.ts';
 import {
   BLOG_PROJECT_ID,
   type BlogPost,
@@ -189,7 +191,7 @@ export const TOPICS: readonly Topic[] = [
           'insurer, a certifier — can check it against what was issued, with no account and no relationship to ' +
           'anybody involved.',
         'The API is documented for anyone who would rather read the event catalogue than a brochure, and it sets out ' +
-          'the eight engines and the stage gates they sit behind.',
+          'the nine engines and the stage gates they sit behind.',
         'Platform status is a public page rather than a support ticket, which is the same argument in a smaller frame: ' +
           'a claim anybody can check is worth more than a claim anybody has to accept.',
         'If the design of the ledger interests you more than the pitch does, the engineering notes on this site are ' +
@@ -1235,6 +1237,15 @@ export type MarketingRelease = {
   failed: Distribution[];
   skipped: Array<{ channel: DistributionChannel; because: string }>;
   note: string;
+  /**
+   * The invisible Trend Intelligence decision, where the control layer was on and there
+   * was a choice to make. It is the audit answer to "why this topic today": the area whose
+   * demand drove it, the demand score, and the topic the written order would otherwise have
+   * taken. `applied` is true only when demand actually changed the choice; when it is
+   * false the layer was consulted and agreed with the baseline. Absent when the layer is
+   * off or there was nothing to choose between.
+   */
+  retarget?: { applied: boolean; chosenTopic: string; area: string; demandScore: number; defaultTopic: string };
 };
 
 export function releaseDay(now: Date = new Date()): string {
@@ -1270,7 +1281,32 @@ export async function runDailyRelease(
   if (existing) return { ...existing, alreadyRun: true };
 
   const library = allTopics(platform);
-  const next = library.find((topic) => postForTopic(platform, topic) === undefined);
+  const uncovered = library.filter((topic) => postForTopic(platform, topic) === undefined);
+  // The invisible Trend Intelligence retarget: by default the release keeps its written
+  // order (the first uncovered topic), but when the control layer is on it prefers the
+  // uncovered topic whose capability area carries the most live demand in the platform's
+  // own recent activity. It only reorders what the automation already writes — same
+  // topics, same checks, same approvals — and falls back to the first when no area shows
+  // live demand, so a quiet signal never changes anything.
+  let next = uncovered[0];
+  let retarget: MarketingRelease['retarget'];
+  if (config.ops.trendRetargetEnabled && uncovered.length > 1) {
+    const nowMs = (options.now ?? new Date()).getTime();
+    const since = new Date(nowMs - 77 * 24 * 60 * 60 * 1000).toISOString(); // ~11 weeks of closed windows
+    const demand = marketingDemand(platform.ledger.events({ from: since }), new Date(nowMs).toISOString());
+    const preferred = preferredTopic(uncovered, demand);
+    if (preferred) {
+      const opp = opportunityForTopic(preferred, demand);
+      retarget = {
+        applied: preferred.id !== uncovered[0]!.id,
+        chosenTopic: preferred.id,
+        area: opp?.topicId ?? '',
+        demandScore: Math.round((opp?.score ?? 0) * 100) / 100,
+        defaultTopic: uncovered[0]!.id,
+      };
+      next = preferred;
+    }
+  }
   let published: MarketingRelease['published'] = null;
   let note: string;
   let sent: Distribution[] = [];
@@ -1322,6 +1358,7 @@ export async function runDailyRelease(
     failed,
     skipped,
     note: note.trim(),
+    ...(retarget ? { retarget } : {}),
   };
 
   platform.ledger.commit({

@@ -118,6 +118,28 @@ describe('the right client is on the document', () => {
     assert.equal(exports.branding('tenant-1', 'project-with-no-client').clientName, 'Meridian Infrastructure Ltd');
   });
 
+  it('lets a project without its own logo inherit the tenancy\'s mark', () => {
+    // "Our account has a logo, so why isn't it on the document." A project that
+    // set a name but no logo went out unmarked, because project branding
+    // replaced the tenancy's wholesale. The identity it set still wins; only the
+    // logo is inherited, and only because the project has none of its own.
+    const exports = new ExportService(new GoldenThreadLedger());
+    exports.setBranding('tenant-1', branding({ clientName: 'Meridian Infrastructure Ltd', logoRef: 'data:image/png;base64,AAAA' }));
+    exports.setBranding('tenant-1', branding({ clientName: 'Northgate Developments plc' }), 'project-northgate');
+
+    const resolved = exports.branding('tenant-1', 'project-northgate');
+    assert.equal(resolved.clientName, 'Northgate Developments plc', 'the project identity must still win');
+    assert.equal(resolved.logoRef, 'data:image/png;base64,AAAA', 'the account logo was not inherited');
+  });
+
+  it('does not override a project\'s own logo with the tenancy\'s', () => {
+    const exports = new ExportService(new GoldenThreadLedger());
+    exports.setBranding('tenant-1', branding({ logoRef: 'data:image/png;base64,TENANT' }));
+    exports.setBranding('tenant-1', branding({ clientName: 'Northgate Developments plc', logoRef: 'data:image/png;base64,PROJECT' }), 'p-1');
+
+    assert.equal(exports.branding('tenant-1', 'p-1').logoRef, 'data:image/png;base64,PROJECT', 'a project\'s own mark was overwritten');
+  });
+
   it('keeps one tenancy\'s project branding out of another\'s reach', () => {
     // Keyed by tenancy and project together. A map keyed on a bare project id
     // would let a guessed id read another company's client identity.

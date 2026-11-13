@@ -3,6 +3,7 @@ import { ulid } from '../core/ids.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
 import { liveProjects } from './structure.ts';
+import { measurementPosition } from './measurement.ts';
 import { config } from '../config.ts';
 import {
   estimateProgrammeDuration,
@@ -914,17 +915,85 @@ export function runRateCardImport(
  * market-researched or resource-loaded programme, which only a planner builds.
  * The two declared assumptions it rests on live in `config.programme`, not here.
  */
+/**
+ * The two figures the duration estimate rests on, read off the priced bill.
+ *
+ * It was the one input the person had to type back in by hand — the measured
+ * works total and how many trade phases the bill spans — both of which the
+ * measurement already holds the moment the bill is priced. This reads them so
+ * the estimate can be a single press against the bill rather than a form:
+ *
+ *   - `netMeasuredMinor` — the direct cost of the measured works, summed across
+ *     the project's priced schedules. Direct cost only, before preliminaries,
+ *     risk, overhead and profit, which is exactly what the estimate wants.
+ *   - `tradeGroups` — the number of distinct work-section codes that carry a
+ *     priced line, across those schedules. A bill split into sub-structure,
+ *     superstructure, finishes and externals is four phases that cannot all run
+ *     at once, which is the sequence floor the estimate reconciles against.
+ *
+ * `null` when nothing is priced yet — there is no bill to read a duration off,
+ * and saying so is better than proposing a fortnight from a zero.
+ */
+export type ProgrammeDurationBasis = {
+  netMeasuredMinor: number;
+  tradeGroups: number;
+  currency: string;
+  /** How many priced schedules the figures were summed across. */
+  fromSchedules: number;
+};
+
+export function programmeDurationBasis(ctx: EngineContext): ProgrammeDurationBasis | null {
+  const position = measurementPosition(ctx);
+  const priced = position.schedules.filter((schedule) => schedule.directCostMinor > 0);
+  if (priced.length === 0) return null;
+
+  const netMeasuredMinor = priced.reduce((sum, schedule) => sum + schedule.directCostMinor, 0);
+  const codes = new Set<string>();
+  for (const schedule of priced) {
+    for (const section of schedule.sections) {
+      if (section.priced > 0) codes.add(section.code);
+    }
+  }
+  const project = ctx.ledger.get({ refType: 'Project', refId: ctx.projectId });
+  return {
+    netMeasuredMinor,
+    // At least one: a priced bill is at least one phase even where the
+    // references carry no section code to group by.
+    tradeGroups: Math.max(1, codes.size),
+    currency: String(project?.state.currency ?? 'GBP'),
+    fromSchedules: priced.length,
+  };
+}
+
 export function proposeProgrammeDuration(
   ctx: EngineContext,
-  input: { netMeasuredMinor: number; tradeGroups: number; complexity?: DurationComplexity },
+  input: { netMeasuredMinor?: number; tradeGroups?: number; complexity?: DurationComplexity },
 ): ProgrammeDurationEstimate {
   authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
-  if (!Number.isFinite(input.netMeasuredMinor) || input.netMeasuredMinor < 0) {
+
+  // Omitted figures are read off the priced bill — the "auto-fill" path, where
+  // the estimate is a single press and the person never retypes what the
+  // measurement already holds. A figure the caller did pass wins, so an
+  // estimator who wants to try a different works value or phase count still can.
+  const basis =
+    input.netMeasuredMinor === undefined || input.tradeGroups === undefined ? programmeDurationBasis(ctx) : null;
+  const netMeasuredMinor = input.netMeasuredMinor ?? basis?.netMeasuredMinor;
+  const tradeGroups = input.tradeGroups ?? basis?.tradeGroups;
+
+  if (netMeasuredMinor === undefined || tradeGroups === undefined) {
+    throw new DomainError(
+      'MEASURED_WORKS_NOT_PRICED',
+      'The duration is estimated from the measured works, and no bill is priced yet. Price the bill first, or enter the measured-works value and the number of trade phases.',
+      409,
+    );
+  }
+  if (!Number.isFinite(netMeasuredMinor) || netMeasuredMinor < 0) {
     throw new DomainError('MEASURED_VALUE_INVALID', 'The measured-works value is the figure the estimate is built on; it cannot be negative.');
   }
+
   return estimateProgrammeDuration({
-    netMeasuredMinor: input.netMeasuredMinor,
-    tradeGroups: input.tradeGroups,
+    netMeasuredMinor,
+    tradeGroups,
     complexity: input.complexity,
     weeklyThroughputMinor: config.programme.weeklyThroughputMinor,
     minWeeksPerSequenceStep: config.programme.minWeeksPerSequenceStep,

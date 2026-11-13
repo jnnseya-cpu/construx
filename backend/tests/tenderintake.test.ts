@@ -274,6 +274,31 @@ describe('tender intake · the deliverable register', () => {
     );
   });
 
+  it('preserves the bidder’s assignments across a re-read instead of wiping them', () => {
+    const ctx = pipelineCtx('qs');
+    const { invitationId } = record(ctx, opportunity(ctx));
+    // Read once: a mandatory return with nothing assigned yet (owner, internal
+    // date and source are the bidder's, never in the buyer's document).
+    extract(ctx, invitationId, [{ reference: 'D-01', title: 'Pricing schedule', mandatory: true }]);
+    // The bidder owns it.
+    tenderintake.assignDeliverable(ctx, invitationId, {
+      reference: 'D-01',
+      owner: 'QS',
+      internalDueBy: '2027-03-09',
+      source: { document: 'Instructions to Tenderers', clause: '4.2' },
+    });
+    // Read again — a refresh of the buyer's side, same reference, no assignment.
+    extract(ctx, invitationId, [{ reference: 'D-01', title: 'Pricing schedule (rev B)', mandatory: true }]);
+
+    const back = tenderintake
+      .tenderPosition(ctx, invitationId, { today: '2027-01-11' })
+      .returns.find((d) => d.reference === 'D-01')!;
+    assert.equal(back.owner, 'QS', 'the owner survived the re-read');
+    assert.equal(back.internalDueBy, '2027-03-09', 'our internal date survived the re-read');
+    assert.ok(back.source?.document, 'the source survived the re-read');
+    assert.equal(back.title, 'Pricing schedule (rev B)', 'the buyer-side title still refreshed');
+  });
+
   it('raises a critical clarification for an internal date after the return', () => {
     const ctx = pipelineCtx('qs');
     const { invitationId } = record(ctx, opportunity(ctx));
@@ -336,12 +361,22 @@ describe('tender intake · giving a read return its owner and our date', () => {
       { reference: 'APP2', title: 'Order form, signed', mandatory: true, signatureRequired: true, source: { document: 'ITT', clause: '4.2' } },
     ]);
     assert.equal(read.blockers.length, 2, 'a reading filed returns that were somehow already complete');
-    throwsCode(
-      () => business.decideBidNoBid(asOwner(), opportunityId, { bid: true, rationale: 'We want it' }),
-      'TENDER_DELIVERABLES_INCOMPLETE',
-    );
 
-    // The door. One assignment per return, and the blockers fall as they go.
+    // The decision to bid is a commercial go/no-go, taken from the score and
+    // what the tender asks for. A read invitation with returns still to assign
+    // does not block it: the commitment is recorded and the returns it still
+    // owes are carried on the decision, so who produces each one is planned
+    // after the business has said it is bidding — not before.
+    const decision = business.decideBidNoBid(asOwner(), opportunityId, {
+      bid: true,
+      rationale: 'Four years of the same work for the same client, and the rates hold.',
+    });
+    assert.equal(decision.stage, 'BID');
+    assert.equal(decision.outstandingReturns.length, 2, 'the decision did not carry the returns still to assign');
+
+    // The door. One assignment per return, and the blockers fall as they go —
+    // this is the planning that follows the commitment, and it is what the
+    // submission gate will check before anything goes out.
     const first = tenderintake.assignDeliverable(ctx, invitationId, { reference: 'APP5', owner: 'QS', internalDueBy: '2027-03-09' });
     assert.equal(first.blockers.length, 1, 'assigning one return cleared the wrong number of blockers');
     assert.equal(first.assigned.owner, 'QS');
@@ -352,13 +387,6 @@ describe('tender intake · giving a read return its owner and our date', () => {
 
     const second = tenderintake.assignDeliverable(ctx, invitationId, { reference: 'APP2', owner: 'PM', internalDueBy: '2027-03-05' });
     assert.deepEqual(second.blockers, [], 'the register is complete and the gate still reports a blocker');
-
-    // And now the decision the reading made impossible.
-    const decision = business.decideBidNoBid(asOwner(), opportunityId, {
-      bid: true,
-      rationale: 'Four years of the same work for the same client, and the rates hold.',
-    });
-    assert.equal(decision.stage, 'BID');
 
     // Both returns are on the register once, with everything the gate asks for.
     const position = tenderintake.tenderPosition(ctx, invitationId, { today: '2027-01-11' });
@@ -441,15 +469,18 @@ describe('tender intake · giving a read return its owner and our date', () => {
 
 // ── The bid approval gate ───────────────────────────────────────────────────
 describe('tender intake · the gate in front of a decision to bid', () => {
-  it('refuses to record a bid while a mandatory deliverable has no owner', () => {
+  it('records a bid with returns still to assign, and carries them as outstanding', () => {
+    // The decision is a commercial go/no-go, not a production sign-off. A read
+    // invitation whose returns have no owner yet does not block it: assigning
+    // who produces each return is the planning that follows the commitment, and
+    // the submission gate — not this one — is what refuses an incomplete pack.
     const opportunityId = opportunity(asOwner());
     const { invitationId } = record(asQS(), opportunityId);
     extract(asQS(), invitationId, [{ reference: 'D-01', title: 'Employer’s liability certificate', mandatory: true }]);
 
-    throwsCode(
-      () => business.decideBidNoBid(asOwner(), opportunityId, { bid: true, rationale: 'Good client, right size' }),
-      'TENDER_DELIVERABLES_INCOMPLETE',
-    );
+    const decision = business.decideBidNoBid(asOwner(), opportunityId, { bid: true, rationale: 'Good client, right size' });
+    assert.equal(decision.stage, 'BID');
+    assert.ok(decision.outstandingReturns.length > 0, 'the unassigned return was not carried onto the decision');
   });
 
   it('refuses to record a bid on an invitation nobody has read', () => {
@@ -458,7 +489,7 @@ describe('tender intake · the gate in front of a decision to bid', () => {
 
     const error = throwsCode(
       () => business.decideBidNoBid(asOwner(), opportunityId, { bid: true, rationale: 'Looks straightforward' }),
-      'TENDER_DELIVERABLES_INCOMPLETE',
+      'TENDER_NOT_READ',
     );
     assert.match(String(error.message), /has not been read/);
   });
@@ -502,6 +533,83 @@ describe('tender intake · the gate in front of a decision to bid', () => {
       rationale: 'Relationship bid, no formal ITT',
     });
     assert.equal(decision.stage, 'BID');
+  });
+});
+
+// ── The conditional bid — the third decision ─────────────────────────────────
+describe('tender intake · a conditional bid', () => {
+  const commitment = {
+    condition: 'Can an approved HV switching contractor meet the outage dates?',
+    owner: 'Commercial manager',
+    spendCapMinor: 200_000,
+    killDate: '2027-01-15',
+  };
+
+  it('records limited work to a condition, with owner, cap and kill date, before the invitation is read', () => {
+    // The point of a conditional bid is to authorise the work that resolves an
+    // open question, so it is not held behind the invitation being fully read.
+    const opportunityId = opportunity(asOwner());
+    const { invitationId } = record(asQS(), opportunityId); // recorded, deliberately not read
+
+    const decision = business.decideBidNoBid(asOwner(), opportunityId, {
+      bid: true,
+      rationale: 'Worth pursuing if the switching contractor can hold the dates',
+      conditional: commitment,
+    });
+
+    assert.equal(decision.stage, 'BID');
+    assert.equal(decision.conditional, true);
+
+    const state = platform.ledger.require({ refType: 'TenderInvitation', refId: invitationId }).state;
+    assert.ok(state, 'the invitation is still on file');
+    const dec = platform.ledger.require({ refType: 'Opportunity', refId: opportunityId }).state.decision as {
+      conditional?: boolean;
+      conditionalCommitment?: { condition: string; owner: string; spendCapMinor: number; killDate: string };
+    };
+    assert.equal(dec.conditional, true);
+    assert.equal(dec.conditionalCommitment?.owner, 'Commercial manager');
+    assert.equal(dec.conditionalCommitment?.spendCapMinor, 200_000);
+    assert.equal(dec.conditionalCommitment?.killDate, '2027-01-15');
+    assert.match(dec.conditionalCommitment?.condition ?? '', /switching contractor/);
+  });
+
+  it('refuses a conditional bid with no cap — an open-ended "look into it" is what it replaces', () => {
+    const opportunityId = opportunity(asOwner());
+    throwsCode(
+      () =>
+        business.decideBidNoBid(asOwner(), opportunityId, {
+          bid: true,
+          rationale: 'Investigate',
+          conditional: { ...commitment, spendCapMinor: 0 },
+        }),
+      'CONDITION_CAP_REQUIRED',
+    );
+  });
+
+  it('refuses a conditional bid with no kill date', () => {
+    const opportunityId = opportunity(asOwner());
+    throwsCode(
+      () =>
+        business.decideBidNoBid(asOwner(), opportunityId, {
+          bid: true,
+          rationale: 'Investigate',
+          conditional: { ...commitment, killDate: '' },
+        }),
+      'CONDITION_KILL_DATE_REQUIRED',
+    );
+  });
+
+  it('refuses a conditional commitment attached to a no-bid', () => {
+    const opportunityId = opportunity(asOwner(), flat(2));
+    throwsCode(
+      () =>
+        business.decideBidNoBid(asOwner(), opportunityId, {
+          bid: false,
+          rationale: 'Declining',
+          conditional: commitment,
+        }),
+      'CONDITIONAL_REQUIRES_BID',
+    );
   });
 });
 
@@ -741,6 +849,46 @@ describe('tender intake · the tender programme, back-planned', () => {
     assert.match(String(error.message), /business days? remain/);
     assert.match(String(error.message), new RegExp(String(tenderintake.BID_SPINE_MINIMUM_DAYS)));
     assert.match(String(error.message), /will not compress it silently/);
+    // It offered "record the decision to bid on a compressed programme
+    // knowingly", and there is no such decision anywhere on the platform: a way
+    // forward that leads nowhere. It now names only what can actually be done.
+    assert.doesNotMatch(String(error.message), /compressed programme knowingly/);
+    assert.match(String(error.message), /not held up by it/);
+  });
+
+  it('builds a compressed programme when a person asks for one and says why, and marks every short stage', () => {
+    // Conwy's real window: four working days. The refusal now offers this, and
+    // it is never applied silently — no reason, no compression.
+    const invitationId = bidding('2027-01-15T12:00');
+    throwsCode(() => tenderintake.generateBidProgramme(asQS(), invitationId, { from: '2027-01-11' }), 'TENDER_WINDOW_TOO_SHORT');
+    throwsCode(() => tenderintake.generateBidProgramme(asQS(), invitationId, { from: '2027-01-11', compression: { reason: '   ' } }), 'TENDER_WINDOW_TOO_SHORT');
+
+    const programme = tenderintake.generateBidProgramme(asQS(), invitationId, {
+      from: '2027-01-11',
+      compression: { reason: 'Found the tender late; prices from our own rates, no enquiries out' },
+    });
+    assert.equal(programme.availableBusinessDays, 4);
+    assert.equal(programme.milestones.reduce((sum, m) => sum + m.businessDays, 0), 4, 'the days that exist, all of them and no more');
+    assert.equal(programme.milestones.length, tenderintake.BID_SPINE.length, 'every stage is still on it');
+    assert.ok(programme.milestones.some((m) => m.belowMinimum), 'the short stages say so');
+    assert.ok(programme.milestones.every((m) => m.belowMinimum === (m.businessDays < tenderintake.BID_SPINE.find((st) => st.key === m.key)!.minDays)));
+    assert.equal(programme.milestones.at(-1)!.finish <= programme.submissionDay, true, 'it still finishes by the submission day');
+    assert.equal(programme.compression?.normalMinimumDays, tenderintake.BID_SPINE_MINIMUM_DAYS);
+    assert.match(programme.compression?.reason ?? '', /Found the tender late/);
+    assert.ok(programme.compression?.acceptedBy);
+
+    // A full-length window is never marked compressed, reason or not.
+    const normal = tenderintake.generateBidProgramme(asQS(), bidding('2027-03-12T12:00'), { from: '2027-01-11', compression: { reason: 'not needed' } });
+    assert.equal(normal.compression, undefined);
+    assert.ok(normal.milestones.every((m) => m.belowMinimum === undefined));
+  });
+
+  it('refuses outright when no working day remains, compressed or not', () => {
+    const invitationId = bidding('2027-01-11T12:00');
+    throwsCode(
+      () => tenderintake.generateBidProgramme(asQS(), invitationId, { from: '2027-01-11', compression: { reason: 'Last minute' } }),
+      'TENDER_WINDOW_CLOSED',
+    );
   });
 
   it('builds work packages from the deliverables, each with its earliest date', () => {
@@ -861,5 +1009,87 @@ describe('tender intake · the board and the event catalogue', () => {
     assert.equal(lookupEventType('TENDER_REQUIREMENTS_EXTRACTED')!.aiAllowed, true);
     assert.equal(lookupEventType('TENDER_RECEIVED')!.aiAllowed, false);
     assert.equal(lookupEventType('BID_NO_BID_DECIDED')!.aiAllowed, false);
+  });
+});
+
+// ── Bulk-fill the return register — the one-director path ─────────────────────
+describe('tender intake · assigning every blocking return at once', () => {
+  it('fills owner, date and source on the mandatory returns still missing one, defaulting source to the invitation', () => {
+    const ctx = pipelineCtx('qs');
+    const { invitationId } = record(ctx, opportunity(ctx));
+    // Three bare mandatory returns and one optional one.
+    extract(ctx, invitationId, [
+      { reference: 'R-01', title: 'Procurement questionnaire', mandatory: true },
+      { reference: 'R-02', title: 'Non-collusion certificate', mandatory: true },
+      { reference: 'R-03', title: 'Pricing schedule', mandatory: true },
+      { reference: 'R-04', title: 'Nice to have', mandatory: false },
+    ]);
+
+    const result = tenderintake.assignDeliverablesBulk(ctx, invitationId, {
+      owner: 'OWNER',
+      internalDueBy: '2027-01-10',
+      // No source given — it must default to the invitation these were read from.
+    });
+    assert.equal(result.assigned, 3, 'the three blocking mandatory returns were not all filled');
+    assert.deepEqual(result.blockers, [], 'the register still blocks after a bulk fill');
+
+    const position = tenderintake.tenderPosition(ctx, invitationId, { today: '2026-12-01' });
+    const r1 = position.returns.find((d) => d.reference === 'R-01')!;
+    assert.equal(r1.owner, 'OWNER');
+    assert.equal(r1.internalDueBy, '2027-01-10');
+    assert.match(String(r1.source?.document ?? ''), /Invitation to tender/);
+    // The optional return is left untouched — no owner invented for it.
+    const r4 = position.returns.find((d) => d.reference === 'R-04')!;
+    assert.equal(r4.owner, undefined);
+  });
+
+  it('leaves a return that already has an owner and date alone, and refuses when nothing is missing', () => {
+    const ctx = pipelineCtx('qs');
+    const { invitationId } = record(ctx, opportunity(ctx));
+    extract(ctx, invitationId, [complete('D-01', 'Already complete'), { reference: 'D-02', title: 'Bare', mandatory: true }]);
+
+    const result = tenderintake.assignDeliverablesBulk(ctx, invitationId, { owner: 'OWNER', internalDueBy: '2027-01-10' });
+    assert.equal(result.assigned, 1, 'the already-complete return was touched');
+
+    const position = tenderintake.tenderPosition(ctx, invitationId, { today: '2026-12-01' });
+    // The complete one kept the owner it was given, not overwritten with OWNER.
+    assert.equal(position.returns.find((d) => d.reference === 'D-01')!.owner, 'QS');
+
+    throwsCode(
+      () => tenderintake.assignDeliverablesBulk(ctx, invitationId, { owner: 'OWNER', internalDueBy: '2027-01-10' }),
+      'NOTHING_TO_ASSIGN',
+    );
+  });
+
+  it('refuses a bulk fill that would leave every return still blocking on a missing date, instead of reporting a hollow success', () => {
+    // The real defect behind "I keep assigning returns and the gate never
+    // clears": the bulk door fills the source (it defaults to the invitation)
+    // and the owner, so a run with no internal date changed something and read
+    // as a success — yet every mandatory return still lacked its date and still
+    // blocked the submission. The gate stayed at the same number with nothing
+    // explaining why. The bulk door must now refuse and name the missing date.
+    const ctx = pipelineCtx('qs');
+    const { invitationId } = record(ctx, opportunity(ctx));
+    extract(ctx, invitationId, [
+      { reference: 'R-01', title: 'Procurement questionnaire', mandatory: true },
+      { reference: 'R-02', title: 'Non-collusion certificate', mandatory: true },
+    ]);
+
+    throwsCode(
+      // Owner given, no internal date — the shape the modal allowed before.
+      () => tenderintake.assignDeliverablesBulk(ctx, invitationId, { owner: 'OWNER' }),
+      'BULK_ASSIGN_INCOMPLETE',
+    );
+
+    // Nothing was written: the returns are untouched, not half-assigned.
+    const stuck = tenderintake.tenderPosition(ctx, invitationId, { today: '2026-12-01' });
+    assert.equal(stuck.returns.find((d) => d.reference === 'R-01')!.owner, undefined, 'a refused bulk fill still wrote a partial assignment');
+    assert.equal(stuck.returns.find((d) => d.reference === 'R-01')!.source, undefined, 'a refused bulk fill still defaulted the source');
+
+    // Supplying the date clears all of them in one act, and the register no
+    // longer blocks — the gate can pass.
+    const done = tenderintake.assignDeliverablesBulk(ctx, invitationId, { owner: 'OWNER', internalDueBy: '2027-01-10' });
+    assert.equal(done.assigned, 2);
+    assert.deepEqual(done.blockers, [], 'the register still blocks after the date was supplied');
   });
 });

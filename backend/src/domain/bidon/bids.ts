@@ -3419,12 +3419,14 @@ export function renderPack(
   bidId: string,
   format: 'DOCX' | 'XLSX' | 'TEXT',
   /**
-   * The branding to put on a DOCX, resolved by the caller.
+   * The branding to put on the exported pack, resolved by the caller.
    *
    * Passed in rather than looked up, because how a tenancy's branding is
    * resolved is the export service's business and this module should not know
-   * it. Unused by the other two formats: a spreadsheet goes back in the
-   * buyer's own template and portal text carries no formatting at all.
+   * it. The DOCX and the XLSX both carry it — the mark, the brand colour and the
+   * legal footer — so a spreadsheet pack is the tenancy's own instrument like
+   * the other formats; only the portal text, which carries no formatting at all,
+   * leaves it unused.
    */
   branding: ClientBranding,
   options: {
@@ -3636,7 +3638,11 @@ export function renderPack(
     return {
       reference: bid.reference,
       format,
-      content: Buffer.from(renderXlsx(sheets)).toString('base64'),
+      // Branded like the PDF and the Word pack: a cover carrying the mark, the
+      // issuing name in the brand colour and the legal footer, and that colour
+      // on every section's header row — woven in without moving a data cell, so
+      // the buyer's numbering and section order are untouched.
+      content: Buffer.from(renderXlsx(sheets, branding)).toString('base64'),
       contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       filename: marked(`${bid.reference}-${bid.scheme.toLowerCase()}.xlsx`),
       sections,

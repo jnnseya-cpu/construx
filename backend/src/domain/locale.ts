@@ -284,6 +284,23 @@ export type Jurisdiction = {
  * registration, place of supply and the nature of the work, and is an
  * accountant's job rather than a construction platform's.
  */
+/**
+ * The region each jurisdiction the platform holds rules for sits in, as the
+ * two-letter continent code a portfolio and a project carry.
+ *
+ * One table. It was written out twice — in sign-up and in collection — and the
+ * console needed it a third time to default a new portfolio's region and
+ * country to the company's own instead of the first entry in the list
+ * (Afghanistan, for a company registered in England).
+ */
+export const REGION_OF_JURISDICTION: Record<string, 'EU' | 'AM' | 'AF' | 'AS' | 'OC' | 'AN'> = {
+  GB: 'EU',
+  IE: 'EU',
+  AE: 'AS',
+  ZA: 'AF',
+  US: 'AM',
+};
+
 export const JURISDICTIONS: Record<string, Jurisdiction> = {
   GB: {
     code: 'GB',

@@ -43,7 +43,8 @@ export type Engine =
   | 'BIM_TWIN'
   | 'CONTRACTS_CLAIMS'
   | 'HANDOVER_OM'
-  | 'EXECUTIVE';
+  | 'EXECUTIVE'
+  | 'GUIDE';
 
 /**
  * The routing matrix. Perception observes the physical world; reasoning decides
@@ -81,6 +82,10 @@ export const ROUTING_MATRIX: Record<Engine, { perception: string[]; reasoning: s
   EXECUTIVE: {
     perception: [],
     reasoning: ['Portfolio scenario modelling', 'Executive briefing'],
+  },
+  GUIDE: {
+    perception: [],
+    reasoning: ['Plain-English explanation of a platform step', 'How-to guidance'],
   },
 };
 
@@ -197,6 +202,15 @@ export const ENGINE_CONTRACTS: Record<Engine, EngineContract> = {
     activeInPhases: ALL_PHASES,
     inputs: ['Every project position', 'Agent findings', 'Wallet and commercial state'],
     outputs: ['Ranked actions with reasons', 'Portfolio exposure'],
+  },
+  GUIDE: {
+    name: 'Guide',
+    purpose: 'Explain the step you are on in plain English and the exact action to take in the platform',
+    // Everywhere: a person can be stuck on any screen at any phase, and the
+    // guided walkthrough that calls this runs from an empty account onward.
+    activeInPhases: ALL_PHASES,
+    inputs: ['Where this job is on the guided journey', 'The step you are stuck on', 'What the platform has already recorded'],
+    outputs: ['A plain-English explanation of the step', 'The next action, named as the button that does it'],
   },
 };
 
@@ -315,6 +329,21 @@ export type CostQuote = {
   availableMinor: number;
   balanceAfterMinor: number;
   affordable: boolean;
+  /**
+   * The account is exempt: nothing is taken from its wallet, so the charge is
+   * truly nil. Said outright, with `providerCostMinor` beside it, because "£0.00"
+   * alone read as "this AI is free" — and the provider is paid either way, by
+   * whoever operates the platform.
+   */
+  exempt: boolean;
+  /** What the provider is estimated to be paid for this run, in minor units, before any multiplier. */
+  providerCostMinor: number;
+  /**
+   * Where a FLOOR estimate was sized from the actual material the run will
+   * send — the file's own text — rather than from an empty request. Absent
+   * where nothing was known about the input.
+   */
+  sizedFromTokens?: number;
   /** Present where the action cannot proceed, with the reason it cannot. */
   blockedReason?: string;
   /**
@@ -666,8 +695,12 @@ export class AIOrchestrator {
     if (cleared.length === 0) {
       throw new DomainError(
         'AI_CLEARANCE_REQUIRED',
-        `This request carries ${sensitivity} material and no configured AI provider is cleared to receive it. ` +
-          `Clear a provider in AI_PROVIDER_CLEARANCE once the contract with that vendor permits it.`,
+        `This request carries ${sensitivity} material and no configured AI provider is cleared to receive it ` +
+          `(configured here: ${chain.map((adapter) => `${adapter.name} cleared to ${clearanceFor(adapter.name)}`).join(', ')}). ` +
+          `Once the contract with a vendor permits it, set it in the server's environment — for example ` +
+          `AI_PROVIDER_CLEARANCE=${chain[0]?.name ?? 'OPENAI'}:${sensitivity} — and restart the server; the setting is read when it starts. ` +
+          'Nothing was sent and nothing was charged. Without AI: type the compliance matrix in, write the answers ' +
+          'yourself, and use "Check the pack — free, no AI" before issuing.',
         // 403, not 503. Nothing is broken and retrying will not help: the
         // platform is refusing on purpose, and a client that reads this as an
         // outage will keep trying.
@@ -705,9 +738,31 @@ export class AIOrchestrator {
      * tried" is not a reason to do nothing. Health is the condition; having
      * had a turn is only a preference between the healthy.
      */
-    const healthy =
-      fits.find((adapter) => !avoid.includes(adapter.name) && adapter.healthy()) ??
-      fits.find((adapter) => adapter.healthy());
+    /*
+     * Cheapest-first, when the deployment asks for it.
+     *
+     * The order the chain is tried in is a deliberate choice on most
+     * deployments, so it stands by default. With `AI_SELECT_CHEAPEST` the
+     * candidates are instead ranked by estimated cost at this input size — the
+     * cheapest cleared, healthy, large-enough vendor takes the call. The two
+     * preferences that already matter are preserved: health is a condition, and
+     * a vendor already tried for this piece of work is passed over where another
+     * is available, so cheapest-first does not trap an escalating draft on the
+     * one weak model the red team just rejected. A vendor that publishes no rate
+     * (the local stand-in) sorts last, never ahead of a priced one.
+     */
+    const byCheapest = (pool: AIProviderAdapter[]): AIProviderAdapter[] =>
+      config.ai.selectCheapest
+        ? [...pool].sort(
+            (a, b) =>
+              (a.costAtTokensMinor?.(inputTokens) ?? Number.POSITIVE_INFINITY) -
+              (b.costAtTokensMinor?.(inputTokens) ?? Number.POSITIVE_INFINITY),
+          )
+        : pool;
+
+    const untried = byCheapest(fits.filter((adapter) => !avoid.includes(adapter.name) && adapter.healthy()));
+    const anyHealthy = byCheapest(fits.filter((adapter) => adapter.healthy()));
+    const healthy = untried[0] ?? anyHealthy[0];
     if (healthy) return healthy;
 
     throw new DomainError('AI_UNAVAILABLE', 'No healthy AI provider is available for this capability', 503);
@@ -823,6 +878,13 @@ export class AIOrchestrator {
      * are all decided against what will really be spent.
      */
     passes?: number;
+    /**
+     * The text the run will send, where the caller knows it — a held file's
+     * extracted text. Priced by the adapter's own estimator, the same one the
+     * reservation uses, so a sixty-page invitation is not quoted as an empty
+     * request. Ignored once the action has measured runs to go on.
+     */
+    inputText?: string;
   }): CostQuote {
     // Derived once and used twice: the adapter chosen must be one cleared for
     // this material, and the disclosure below has to name the same level the
@@ -833,7 +895,8 @@ export class AIOrchestrator {
 
     // The floor: what the adapter charges for this capability with nothing to
     // read. Every real call costs at least this and almost always more.
-    const floorRawMinor = adapter.estimateCostMinor({ task: input.taskType, payload: {} });
+    const sized = typeof input.inputText === 'string' && input.inputText.length > 0;
+    const floorRawMinor = adapter.estimateCostMinor({ task: input.taskType, payload: sized ? { text: input.inputText } : {} });
 
     const basis: QuoteBasis = observed.length > 0 ? 'MEASURED' : 'FLOOR';
     const passes = Math.max(1, Math.round(input.passes ?? 1));
@@ -859,6 +922,9 @@ export class AIOrchestrator {
       availableMinor: priced.availableMinor,
       balanceAfterMinor: Math.max(0, priced.availableMinor - priced.chargeMinor),
       affordable: priced.blockedReason === undefined,
+      exempt: input.wallet.unmetered() !== null,
+      providerCostMinor: estimatedRawCostMinor,
+      ...(sized && basis === 'FLOOR' ? { sizedFromTokens: Math.ceil(input.inputText!.length / CHARS_PER_TOKEN) } : {}),
       blockedReason: priced.blockedReason,
       blockedBy: priced.blockedBy,
       capBreach: priced.capBreach,
@@ -1081,6 +1147,8 @@ export class AIOrchestrator {
   /** Operator view of the control plane. Deliberately excludes model identifiers for end users. */
   controlPlaneStatus(): {
     mode: string;
+    /** How a call picks among the cleared, healthy, large-enough vendors. */
+    routing: { mode: 'CHEAPEST' | 'CONFIGURED_ORDER'; selectCheapest: boolean };
     reasoning: { provider: AIProvider; healthy: boolean };
     perception: { provider: AIProvider; healthy: boolean };
     /**
@@ -1176,6 +1244,18 @@ export class AIOrchestrator {
 
     return {
       mode: config.ai.mode,
+      /**
+       * How a call picks among the cleared, healthy, large-enough vendors.
+       *
+       * Published so an operator can confirm from inside the platform which mode
+       * is live, rather than reading `AI_SELECT_CHEAPEST` off the container.
+       * `CONFIGURED_ORDER` tries the chain as set; `CHEAPEST` ranks by estimated
+       * cost at the measured input size and takes the lowest.
+       */
+      routing: {
+        mode: config.ai.selectCheapest ? 'CHEAPEST' : 'CONFIGURED_ORDER',
+        selectCheapest: config.ai.selectCheapest,
+      },
       reasoning: { provider: this.#reasoning.name, healthy: this.#reasoning.healthy() },
       perception: { provider: this.#perception.name, healthy: this.#perception.healthy() },
       embedding: this.#embedding

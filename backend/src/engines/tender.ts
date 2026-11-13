@@ -1,3 +1,4 @@
+import { expertBriefing, expertPersona } from '../ai/expertise.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
@@ -13,7 +14,7 @@ import {
   type PenaltyProfile,
   type SubmissionInput,
 } from './maths/bidScoring.ts';
-import { costHead, priceEstimate, reprice, type CostModelInput, type PricedEstimate } from './maths/costModel.ts';
+import { costHead, priceEstimate, reprice, type CostHead, type CostModelInput, type PricedEstimate } from './maths/costModel.ts';
 import {
   cashflowScoreFor,
   modelFunding,
@@ -46,6 +47,44 @@ export type TakeoffItem = {
   sourceSheet?: string;
   measurementRule?: string;
 };
+
+/*
+ * A package is filed under a free-typed name, so two readings of the same job
+ * entered at different times can end up under names that read identically but
+ * differ by a dash variant, a stray or non-breaking space, or a capital. The
+ * bill then holds two packages for one job and an estimate, which prices one
+ * package at a time, silently drops half the lines. `normaliseKey` collapses the
+ * differences that are invisible to a human reading the name.
+ */
+function normaliseKey(value: string): string {
+  return value
+    // Every dash variant — hyphen, figure dash, en, em, horizontal bar, minus —
+    // reads as the same stroke on screen.
+    .replace(/[-‒–—―−]/g, '-')
+    // Any run of whitespace, including the non-breaking space, is one space.
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * The exact package id an input should be filed under.
+ *
+ * If the name given matches a package that already holds a live measured line —
+ * after normalising the differences a human cannot see — the existing id is
+ * returned so the two never fork into separate packages. Otherwise the trimmed
+ * name is taken as given, which is how a genuinely new package is opened.
+ */
+export function resolvePackageId(ctx: EngineContext, requested: string): string {
+  const want = normaliseKey(requested);
+  if (!want) return requested.trim();
+  for (const record of ctx.ledger.list(ctx.projectId, 'BoQItem')) {
+    if (String(record.state.status ?? 'LIVE') === 'SUPERSEDED') continue;
+    const existing = String(record.state.packageId ?? '');
+    if (existing && normaliseKey(existing) === want) return existing;
+  }
+  return requested.trim();
+}
 
 /**
  * Retire a package's measure, because it is no longer what the job is.
@@ -121,6 +160,153 @@ export function supersedeMeasure(
 }
 
 /**
+ * Retire named measured lines, rather than a whole package.
+ *
+ * `supersedeMeasure` retires everything in a package, which is right when a
+ * drawing is reissued and the package is measured again. It is too blunt for the
+ * other case: a bill where a few lines are stale — an empty placeholder left
+ * behind when the real line was measured under a different code, or a line
+ * entered twice — and the rest of the package is exactly the measure. Once a job
+ * is consolidated into one package, retiring the package to clear six bad lines
+ * would take the forty good ones with it.
+ *
+ * Same event and same rule as the package-level retirement: the items stay on
+ * the chain, marked no longer the measure, with a reason and a name against them.
+ * Nothing is deleted.
+ */
+export function supersedeItems(
+  ctx: EngineContext,
+  input: { boqItemIds: string[]; reason: string },
+): { superseded: string[] } {
+  authorise(ctx, 'BOQ_TAKEOFF', 'U');
+
+  const reason = input.reason.trim();
+  if (reason.length < 5) {
+    throw new DomainError(
+      'SUPERSEDE_REASON_REQUIRED',
+      'Say why these lines no longer stand. Somebody reading the bill in a year needs to know whether they were ' +
+        'duplicates, placeholders or re-scoped — the three lead to different questions.',
+      422,
+    );
+  }
+
+  const wanted = new Set(input.boqItemIds);
+  if (wanted.size === 0) {
+    throw new DomainError('NO_ITEMS_SELECTED', 'Pick at least one line to retire.', 422);
+  }
+
+  const live = ctx.ledger
+    .list(ctx.projectId, 'BoQItem')
+    .filter((record) => wanted.has(record.refId) && String(record.state.status ?? 'LIVE') !== 'SUPERSEDED');
+
+  if (live.length === 0) {
+    throw new DomainError(
+      'NOTHING_TO_SUPERSEDE',
+      'None of those lines still stands. Nothing to retire.',
+      409,
+    );
+  }
+
+  const supersededAt = new Date().toISOString();
+  for (const record of live) {
+    write(ctx, {
+      eventType: 'BOQITEM_SUPERSEDED',
+      entity: { refType: 'BoQItem', refId: record.refId },
+      nextState: {
+        ...record.state,
+        status: 'SUPERSEDED',
+        supersededAt,
+        supersededBy: ctx.auth.actorId,
+        supersededReason: reason,
+      },
+    });
+  }
+
+  return { superseded: live.map((record) => record.refId) };
+}
+
+/**
+ * Move every live measured line from one package into another.
+ *
+ * The package an item is filed under is a free-typed name, and two readings of
+ * the same job — one confirmed off a model, one keyed by hand — can be filed
+ * under names that read identically but differ by a character a human cannot
+ * see. The bill then holds two packages for one job, and because an estimate
+ * prices one package at a time, a line in the second package is left out of the
+ * price with nothing to show it is missing.
+ *
+ * `resolvePackageId` stops this happening going forward; this repairs a bill
+ * where it already has. The items keep their quantities and cost codes and are
+ * re-filed under the destination package, with a reason and a name against the
+ * move. Nothing is created and nothing is destroyed — the same append-only rule
+ * as every other act on the bill.
+ */
+export function movePackageMeasure(
+  ctx: EngineContext,
+  input: { fromPackageId: string; toPackageId: string; reason: string },
+): { moved: string[]; fromPackageId: string; toPackageId: string } {
+  // Re-filing what the bill already holds. Not `C` — no new measure is created —
+  // and not `D`, because nothing is destroyed.
+  authorise(ctx, 'BOQ_TAKEOFF', 'U');
+
+  const reason = input.reason.trim();
+  if (reason.length < 5) {
+    throw new DomainError(
+      'MOVE_REASON_REQUIRED',
+      'Say why these lines are moving package. Somebody reading the bill in a year needs to know whether two readings ' +
+        'of one job were merged or a line was genuinely re-scoped — the two lead to different questions.',
+      422,
+    );
+  }
+
+  // Snap the destination to the exact id it already uses, so moving into a
+  // package does not itself open a third one by a hair's-width difference.
+  const to = resolvePackageId(ctx, input.toPackageId);
+  const from = input.fromPackageId.trim();
+
+  if (normaliseKey(from) === normaliseKey(to)) {
+    throw new DomainError(
+      'SAME_PACKAGE',
+      'The source and destination are the same package. There is nothing to move.',
+      409,
+    );
+  }
+
+  const live = ctx.ledger
+    .list(ctx.projectId, 'BoQItem')
+    .filter(
+      (record) =>
+        String(record.state.packageId ?? '') === from && String(record.state.status ?? 'LIVE') !== 'SUPERSEDED',
+    );
+
+  if (live.length === 0) {
+    throw new DomainError(
+      'NOTHING_TO_MOVE',
+      `${from} holds no measured item that still stands. Nothing to move.`,
+      409,
+    );
+  }
+
+  const movedAt = new Date().toISOString();
+  for (const record of live) {
+    write(ctx, {
+      eventType: 'BOQITEM_REPACKAGED',
+      entity: { refType: 'BoQItem', refId: record.refId },
+      nextState: {
+        ...record.state,
+        packageId: to,
+        repackagedAt: movedAt,
+        repackagedFrom: from,
+        repackagedBy: ctx.auth.actorId,
+        repackagedReason: reason,
+      },
+    });
+  }
+
+  return { moved: live.map((record) => record.refId), fromPackageId: from, toPackageId: to };
+}
+
+/**
  * Drawing-to-estimate bridge: extract measurable quantities from 2D sheets or a
  * model. Most contractors still price from 2D long before a model is usable, so
  * this path is first-class rather than a fallback.
@@ -164,6 +350,12 @@ export async function runTakeoff(
   if (input.items.length === 0) {
     throw new DomainError('TAKEOFF_EMPTY', 'A take-off must contain at least one measured item');
   }
+
+  // File these lines under the package they belong to. If the name given reads
+  // the same as a package already measured — bar a dash, a stray space or a
+  // capital — the existing id is reused, so one job never splits into two
+  // packages that an estimate would then price one at a time.
+  input.packageId = resolvePackageId(ctx, input.packageId);
 
   const takeoffId = ulid();
   const evidence = registerEvidence(ctx, {
@@ -366,12 +558,163 @@ export function buildEstimate(
       exclusions: priced.exclusions,
       warnings: priced.warnings,
       breakdown,
+      // The fixed and provisional sums carried after margin, normalised — read by
+      // the quotation and the pricing schedule so the measured lines are
+      // apportioned the works total only and these sit beside them, not inside.
+      fixedSums: priced.fixedSums,
       totalMinor: priced.tenderTotalMinor,
       marginPercent: priced.marginPercent,
     },
   });
 
   return { estimateId, totalMinor: priced.tenderTotalMinor, breakdown, priced };
+}
+
+/**
+ * The construction cost heads a professional-services fee bid does not carry.
+ *
+ * A consultancy priced by day-rate has its own labour (DIRECT_WORKS) and its
+ * margin (OVERHEAD, PROFIT, taken from the rates or added on top); every other
+ * head — materials, plant, prelims by the week, site management, insurance on a
+ * contract value, testing, commissioning — belongs to a construction job and not
+ * to a fee. They are *excluded* with a plain reason rather than priced at nought,
+ * because a nought against waste is a job with no waste, and the cost model is
+ * built to refuse exactly that: a head neither priced nor excluded is an omission.
+ */
+const FEE_BID_EXCLUDED_HEADS: ReadonlyArray<Exclude<CostHead, 'DIRECT_WORKS' | 'OVERHEAD' | 'PROFIT'>> = [
+  'SUBCONTRACT', 'MATERIALS', 'PLANT', 'PRELIMINARIES', 'SITE_MANAGEMENT', 'TEMPORARY_WORKS',
+  'INSURANCE', 'DESIGN', 'PROFESSIONAL_FEES', 'TESTING', 'COMMISSIONING', 'WASTE', 'LOGISTICS',
+  'HEALTH_AND_SAFETY', 'QUALITY', 'RISK', 'INFLATION',
+];
+
+export type DayRateResource = {
+  role: string;
+  /**
+   * The number of days of this role the fee covers. Optional: a framework/DPS
+   * submission is a **schedule of rates** — the bidder tenders the day-rates and
+   * the buyer applies them to its own call-off volumes, so there are no committed
+   * day counts to state. When omitted the line is priced as one person-day at the
+   * rate (so the rate itself is what the pricing schedule carries), and the
+   * estimate records that it is a rate schedule, not an extended fee.
+   */
+  days?: number;
+  dayRateMinor: number;
+};
+export type DayRateScheduleInput = {
+  /** The package the fee lines are filed under; defaults to "Professional services". */
+  packageName?: string;
+  resources: DayRateResource[];
+  /** Expenses the fee does not mark up — travel, printing, sub-consultants at cost. */
+  disbursements?: Array<{ label: string; amountMinor: number }>;
+  basisOfEstimate?: string;
+  /** The day-rate is usually all-in, so both default to zero; set them to add a markup. */
+  overheadPercent?: number;
+  profitPercent?: number;
+};
+
+/**
+ * Price a bid as a **schedule of rates** — a professional-services fee, built
+ * from resource lines (a role, the days, the day-rate) rather than a measured
+ * construction bill.
+ *
+ * It is the one honest way a consultancy bidding a DPS prices its work, and the
+ * platform had no path to it: the pricing road ran drawings → measured bill →
+ * twenty construction heads, none of which a fee bid has. Rather than a parallel
+ * pricing engine, this reuses the two steps a construction bid already uses — it
+ * files the resource lines as a by-hand person take-off (so they appear on the
+ * bill and in the pricing schedule exactly like any other line), then prices
+ * them through the same cost model: own labour at the day-rates, every
+ * construction head excluded, and disbursements carried as fixed sums added after
+ * margin and never marked up. The result is an ordinary complete estimate, from
+ * which the existing quotation, pricing schedule, Appendix B export and PDF all
+ * work unchanged.
+ */
+export async function priceDayRateSchedule(
+  ctx: EngineContext,
+  input: DayRateScheduleInput,
+): Promise<{ estimateId: string; totalMinor: number; packageId: string; boqItemIds: string[] }> {
+  authorise(ctx, 'ESTIMATE_TENDER', 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const resources = input.resources ?? [];
+  if (resources.length === 0) {
+    throw new DomainError('FEE_SCHEDULE_EMPTY', 'A fee schedule needs at least one resource line — a role, the days, and the day-rate.');
+  }
+  for (const r of resources) {
+    if (!r.role || r.role.trim().length === 0) {
+      throw new DomainError('FEE_ROLE_MISSING', 'Every fee line needs a role.');
+    }
+    // Days are optional (a rate card states none); when given they must be real.
+    if (r.days !== undefined && (!Number.isFinite(r.days) || r.days <= 0)) {
+      throw new DomainError('FEE_DAYS_INVALID', `${r.role}: the number of days must be greater than zero.`);
+    }
+    if (!Number.isFinite(r.dayRateMinor) || r.dayRateMinor <= 0) {
+      throw new DomainError('FEE_RATE_INVALID', `${r.role}: the day-rate must be greater than zero.`);
+    }
+  }
+
+  // A line with no day count is a rate-card line, priced at one person-day so the
+  // rate is what the schedule carries. If every line is like that, the result is
+  // a schedule of rates rather than an extended fee — said plainly on the basis so
+  // the total (the sum of the rates) is never mistaken for a committed price.
+  const daysFor = (r: DayRateResource): number => r.days ?? 1;
+  const isRateCard = resources.every((r) => r.days === undefined);
+
+  const packageName = input.packageName && input.packageName.trim().length > 0 ? input.packageName.trim() : 'Professional services';
+
+  // File the resource lines as a by-hand person take-off. `runTakeoff` resolves
+  // the package id into its input object in place, so it is read back after.
+  const takeoffInput = {
+    packageId: packageName,
+    sources: [{ discipline: packageName, sheetId: 'Fee schedule' }] as TakeoffSource[],
+    items: resources.map((r) => ({ description: r.role.trim(), unit: 'person-day', quantity: daysFor(r), sourceSheet: 'Fee schedule' })),
+    costCodePrefix: 'FEE',
+    measuredBy: 'PERSON' as const,
+  };
+  const takeoff = await runTakeoff(ctx, takeoffInput);
+  const packageId = takeoffInput.packageId;
+
+  const overheadPercent = input.overheadPercent ?? 0;
+  const profitPercent = input.profitPercent ?? 0;
+
+  // Every construction head is excluded; overhead and profit are excluded too
+  // when the rate is all-in (the usual case — a day-rate already carries them),
+  // and priced only where the bidder sets an explicit markup. Without this, a nil
+  // margin leaves both heads at zero *and* expected, which the model would (
+  // rightly, in general) report as an omission and mark the estimate incomplete.
+  const exclusions: Array<{ head: CostHead; reason: string }> = FEE_BID_EXCLUDED_HEADS.map((head) => ({
+    head,
+    reason: 'Professional-services fee priced by day-rate; this construction head does not apply.',
+  }));
+  if (overheadPercent === 0) exclusions.push({ head: 'OVERHEAD', reason: 'Overhead is carried within the day-rate, not added as a separate head.' });
+  if (profitPercent === 0) exclusions.push({ head: 'PROFIT', reason: 'Profit is carried within the day-rate, not added as a separate head.' });
+
+  const estimate = buildEstimate(ctx, {
+    packageId,
+    durationWeeks: 1,
+    lines: resources.map((r, index) => ({
+      boqItemId: takeoff.boqItemIds[index],
+      description: r.role.trim(),
+      unit: 'person-day',
+      quantity: daysFor(r),
+      // Own time is own labour: it prices into DIRECT_WORKS, the only works head
+      // a fee bid carries.
+      labourRateMinor: r.dayRateMinor,
+    })),
+    exclusions,
+    margin: { overheadPercent, profitPercent },
+    ...(input.disbursements && input.disbursements.length > 0
+      ? { fixedSums: input.disbursements.map((d) => ({ label: d.label, amountMinor: d.amountMinor })) }
+      : {}),
+    basisOfEstimate:
+      input.basisOfEstimate && input.basisOfEstimate.trim().length > 0
+        ? input.basisOfEstimate.trim()
+        : isRateCard
+          ? 'Schedule of rates — day-rates tendered per person-day; not extended to committed day counts. Applied by the buyer to its own call-off volumes.'
+          : 'Professional-services fee, priced by resource and day-rate.',
+    assumptions: [],
+  });
+
+  return { estimateId: estimate.estimateId, totalMinor: estimate.totalMinor, packageId, boqItemIds: takeoff.boqItemIds };
 }
 
 /**
@@ -611,6 +954,7 @@ export async function respondToTender(
     inputRefs: input.enquiry.documents.map((d) => d.ref).filter((r): r is EntityRef => r !== undefined),
     request: {
       task:
+        `${expertPersona('BID_MANAGER')} ` +
         'Draft the qualifications, exclusions, tender queries and covering letter for this bid. ' +
         'Do not state, adjust or infer any price: the commercial figures are fixed and supplied.',
       payload: {
@@ -798,7 +1142,10 @@ export async function composeTenderPackage(
     capability: 'REASONING',
     inputRefs: input.documents.map((d) => d.ref),
     request: {
-      task: 'Assess enquiry package completeness and draft the enquiry cover letter',
+      task:
+        `${expertPersona('QUANTITY_SURVEYOR')} ` +
+        'Assess this enquiry package for completeness — everything a subcontractor needs to price it accurately and ' +
+        'nothing that leaves a gap to be argued later — and draft the enquiry cover letter.',
       payload: {
         packageId: input.packageId,
         scopeNarrative: input.scopeNarrative,
@@ -861,7 +1208,10 @@ export async function analyseReturns(
     capability: 'REASONING',
     inputRefs: input.returns.map((r) => ({ refType: 'SupplierSubmission', refId: r.submissionId })),
     request: {
-      task: 'Characterise tender return variance and rank commercial exposure',
+      task:
+        `${expertBriefing('COMMERCIAL_MANAGER')} ` +
+        'Characterise the variance across these tender returns and rank the commercial exposure. Separate a keen price ' +
+        'from an error or a qualification that moves the risk, and say which differences would actually bite on award.',
       payload: { rfqId: input.rfqId, findings, returnCount: input.returns.length },
     },
     toWrites: (output) =>

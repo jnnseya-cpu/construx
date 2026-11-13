@@ -6,6 +6,7 @@ import { config } from '../config.ts';
 import type { EvidenceStore } from '../evidence/store.ts';
 import { findByHash } from '../evidence/registry.ts';
 import { extractText } from '../evidence/ingest.ts';
+import { extractPdfPages, PdfPageError, scanPdfBundle, type BundleScan } from '../evidence/pdftext.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
 import type { Engine } from '../ai/orchestrator.ts';
 import { submitProgress } from '../domain/progressverification.ts';
@@ -15,10 +16,18 @@ import { captureSiteObservation } from './planning.ts';
 import { raiseNCR } from './quality.ts';
 import { logSafetyObservation } from './safety.ts';
 import { runTakeoff } from './tender.ts';
-import { analyseITT, type CommercialTerms, type ITTRequirement } from '../domain/itt.ts';
+import {
+  analyseITT,
+  mergeCommercialTerms,
+  mergeRequirements,
+  requirementsFromMatrix,
+  type CommercialTerms,
+  type ITTRequirement,
+  type MatrixLine,
+} from '../domain/itt.ts';
 import { BRIEF_ITEMS, recordFact } from '../domain/etablix/brief.ts';
 import { requireModule } from '../identity/modules.ts';
-import { extractRequirements, type SubmissionChannel } from '../domain/tenderintake.ts';
+import { bindAnalysis, extractRequirements, type SubmissionChannel, type TenderDeliverable } from '../domain/tenderintake.ts';
 import { recordModelReading } from '../evidence/pipeline.ts';
 
 /**
@@ -98,6 +107,7 @@ import { recordModelReading } from '../evidence/pipeline.ts';
 export type PerceptionTask =
   | 'TITLE_BLOCK'
   | 'DRAWING_TAKEOFF'
+  | 'PRICE_LIST_BOQ'
   | 'ITT_REQUIREMENTS'
   | 'VOICE_NOTE'
   | 'PROGRESS_FROM_IMAGES'
@@ -370,6 +380,71 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
   },
 
   /**
+   * Read the buyer's own bill of quantities / pricing schedule into the bill.
+   *
+   * The take-off above measures the drawings. But a civils tender — MMHW, CESMM —
+   * arrives with a priced schedule the buyer has already written: every work item,
+   * its unit and its quantity, waiting for a rate. Measuring the drawing for a job
+   * like that is the wrong source and reads as dimensions, not quantities; the
+   * right source is the schedule itself. This reads it, so the estimator does not
+   * retype sixty lines by hand.
+   *
+   * **It reads quantities, never money.** The schema carries no rate and no price,
+   * and the prompt forbids inventing one, because a generic rate against a civils
+   * item is exactly how a bid is won at a loss. The model structures the BoQ; the
+   * estimator and their subcontractors price it. The confirmed items land in the
+   * bill unpriced, ready for "Price the bill".
+   */
+  PRICE_LIST_BOQ: {
+    engine: 'TENDER',
+    taskType: 'boq_price_list_extraction',
+    area: 'BOQ_TAKEOFF',
+    // What `runTakeoff` requires.
+    code: 'C',
+    label: 'Read a pricing schedule (Bill of Quantities)',
+    accepts: IMAGE_OR_PDF,
+    acceptsLabel: 'the buyer’s pricing schedule as a PDF or scan',
+    // A pricing schedule is words and numbers; most arrive as a Word or PDF the
+    // platform has already ingested, or pasted out of a portal.
+    acceptsText: true,
+    prompt:
+      'Read this bill of quantities or pricing schedule. List every priced work item exactly as the document states ' +
+      'it: its item number or reference, its full description, its unit of measurement, and its quantity. Keep the ' +
+      'section or work-group heading each item sits under as `section`, and any note on what the item covers as ' +
+      '`coverage`. Quote the document; do not summarise, reorder or merge items, and omit nothing it states — list ' +
+      'what you omitted and why. Report the quantity and the unit only. NEVER report, infer, carry forward or invent ' +
+      'a rate, a price, a total or any money figure of any kind — pricing is the estimator’s, not yours. ' +
+      'State the method of measurement the document names for the bill — for example "NRM2", "CESMM4", or the ' +
+      '"Method of Measurement for Highway Works" — as `methodOfMeasurement`, exactly as the document writes it. ' +
+      'If the document does not name one, return null. Do not infer it from the item numbering or the kind of work.',
+    responseSchema: {
+      type: 'object',
+      properties: {
+        methodOfMeasurement: { type: ['string', 'null'] },
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              reference: { type: ['string', 'null'] },
+              description: { type: 'string' },
+              unit: { type: 'string' },
+              quantity: { type: 'number' },
+              section: { type: ['string', 'null'] },
+              coverage: { type: ['string', 'null'] },
+            },
+            required: ['description', 'unit', 'quantity'],
+          },
+        },
+        omitted: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['items'],
+    },
+    usable: (extraction) => Array.isArray(extraction.items) && extraction.items.length > 0,
+    absent: 'bill of quantities items',
+  },
+
+  /**
    * Read the invitation to tender itself.
    *
    * The take-off above measures the drawings that come *with* an ITT. This
@@ -419,17 +494,37 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       'evidence demanded, and any date earlier than the return. Where the document states how long the answer ' +
       'may be — a word count, a page count, a number of sides of A4 — report it as `wordLimit` or `pageLimit` ' +
       'with the wording it is stated in, because anything past a stated limit is usually not read at all. ' +
-      'Report no limit where none is stated rather than a conventional one. Separately list every deliverable that must be ' +
+      'Report no limit where none is stated rather than a conventional one. Where the document has a quality ' +
+      'questionnaire or method-statement questions that the evaluator marks, list each question as its own ' +
+      'requirement: its reference as numbered (e.g. "Q1"), the full question text verbatim, its own weighting, and ' +
+      'its word or page limit — these are the answers the bid is scored on, so none may be missed or merged. A ' +
+      'weighting is the marks for that one question, never the overall quality/price split; the split and the ' +
+      'scoring rules are not questions and carry no weighting. Notes printed on drawings (dimensions in metres, ' +
+      'read in conjunction with…) are not requirements; leave them out. Separately list every deliverable that must be ' +
       'returned, with its format, page limit, whether a signature or bond is required, and the channel it goes ' +
       'back through. Report the commercial terms it states — contract form, liquidated damages, bond, ' +
-      'retention, payment period, design liability. Quote the document rather than summarising it, and omit ' +
-      'anything it does not state rather than inferring it; list what you omitted and why.',
+      'retention, payment period, design liability. Report the invitation\'s own dates as the document states ' +
+      'them: the return deadline as `returnByLocal` (YYYY-MM-DDTHH:MM, the wall-clock time printed), the time zone ' +
+      'as `returnTimeZone` (an IANA name such as Europe/London, and only where the document names a zone or a ' +
+      'country\'s time — otherwise null), the last date for questions as `clarificationLocal`, a site visit as ' +
+      '`siteVisitLocal`, the issue date as `issuedOn`, and how the return is made as `returnChannel`. For every ' +
+      'requirement and every deliverable give `sourceQuote`: a short passage copied character for character from ' +
+      'the document that states it, so a person can find it. Where the text is several documents, each begins with ' +
+      'a "=== Document:" line; a requirement in one may be explained in another, so read them together. Quote the ' +
+      'document rather than summarising it, and omit anything it does not state rather than inferring it; list what ' +
+      'you omitted and why.',
     responseSchema: {
       type: 'object',
       properties: {
         reference: { type: ['string', 'null'] },
         clientName: { type: ['string', 'null'] },
         returnBy: { type: ['string', 'null'] },
+        returnByLocal: { type: ['string', 'null'] },
+        returnTimeZone: { type: ['string', 'null'] },
+        clarificationLocal: { type: ['string', 'null'] },
+        siteVisitLocal: { type: ['string', 'null'] },
+        issuedOn: { type: ['string', 'null'] },
+        returnChannel: { type: ['string', 'null'], enum: ['PORTAL', 'EMAIL', 'PHYSICAL', 'HAND_DELIVERY', null] },
         requirements: {
           type: 'array',
           items: {
@@ -459,6 +554,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
               wordLimit: { type: ['number', 'null'] },
               pageLimit: { type: ['number', 'null'] },
               limitStatedAs: { type: ['string', 'null'] },
+              sourceQuote: { type: ['string', 'null'] },
             },
             required: ['reference', 'category', 'requirement', 'mandatory', 'evidenceRequired'],
           },
@@ -477,6 +573,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
               signatureRequired: { type: ['boolean', 'null'] },
               bondRequired: { type: ['boolean', 'null'] },
               channel: { type: ['string', 'null'], enum: ['PORTAL', 'EMAIL', 'PHYSICAL', 'HAND_DELIVERY', null] },
+              sourceQuote: { type: ['string', 'null'] },
             },
             required: ['reference', 'title', 'mandatory'],
           },
@@ -877,10 +974,39 @@ export type PerceptionDraft = {
  * no provider that can see it. A caller who is going to be refused should not
  * pay for the privilege.
  */
+/**
+ * Map a held PDF bundle into sections, so the take-off can be pointed at the ones
+ * that hold drawings instead of at a 360-page whole.
+ *
+ * It reads and charges nothing — no provider is called. The person still chooses
+ * what to measure; this only finds the candidates, from the file's own bookmarks
+ * where it has them, so nobody hunts page numbers in a bundle by hand.
+ */
+export async function scanBundle(ctx: EngineContext, store: EvidenceStore, hash: string): Promise<BundleScan> {
+  authorise(ctx, 'BOQ_TAKEOFF', 'R', { lifecyclePhase: currentPhase(ctx) });
+
+  const record = findByHash(ctx.ledger, ctx.tenantId, hash);
+  if (!record) {
+    throw new DomainError('PERCEPTION_EVIDENCE_UNKNOWN', 'No evidence record in this tenancy references that hash', 404);
+  }
+  if (!(await store.holds(ctx.tenantId, hash))) {
+    throw new DomainError(
+      'PERCEPTION_FILE_NOT_HELD',
+      'The platform holds the hash of this evidence but not the file, so it cannot be scanned.',
+      409,
+    );
+  }
+  const file = await store.fetch(ctx.tenantId, hash);
+  if (file.contentType !== 'application/pdf') {
+    throw new DomainError('PERCEPTION_NOT_A_BUNDLE', `A bundle scan reads a PDF; this evidence is ${file.contentType}.`, 415);
+  }
+  return scanPdfBundle(file.bytes);
+}
+
 export async function extract(
   ctx: EngineContext,
   store: EvidenceStore,
-  input: { hash: string; task: PerceptionTask },
+  input: { hash: string; task: PerceptionTask; pages?: { from: number; to: number } },
 ): Promise<{ draftId: string; task: PerceptionTask; extraction: Record<string, unknown>; confidence?: number; acuConsumed: number }> {
   const definition = PERCEPTION_TASKS[input.task];
   if (!definition) throw new DomainError('PERCEPTION_TASK_UNKNOWN', `No perception task "${input.task}"`);
@@ -911,10 +1037,32 @@ export async function extract(
       415,
     );
   }
-  if (file.bytes.length > config.ai.perceptionMaxBytes) {
+  // A page range carves the wanted pages out of a bundle before anything is
+  // sent — the real case being a 360-page "tender documentation" PDF whose three
+  // structural sheets a model cannot find, and whose whole is refused on its
+  // token count. The slice is what travels and what is sized; the source hash
+  // still names the file it came from.
+  let mediaBytes = file.bytes;
+  if (input.pages) {
+    if (file.contentType !== 'application/pdf') {
+      throw new DomainError(
+        'PERCEPTION_PAGE_RANGE',
+        `A page range can only be taken from a PDF; this evidence is ${file.contentType}.`,
+        422,
+      );
+    }
+    try {
+      mediaBytes = extractPdfPages(file.bytes, input.pages.from, input.pages.to);
+    } catch (error) {
+      if (error instanceof PdfPageError) throw new DomainError('PERCEPTION_PAGE_RANGE', error.message, 422);
+      throw error;
+    }
+  }
+  if (mediaBytes.length > config.ai.perceptionMaxBytes) {
     throw new DomainError(
       'PERCEPTION_FILE_TOO_LARGE',
-      `A file over ${Math.round(config.ai.perceptionMaxBytes / 1_048_576)}MB cannot be sent to a provider in one request.`,
+      `A file over ${Math.round(config.ai.perceptionMaxBytes / 1_048_576)}MB cannot be sent to a provider in one request.` +
+        (input.pages ? '' : ' A bundle this size is read a page range at a time.'),
       413,
     );
   }
@@ -941,12 +1089,17 @@ export async function extract(
     request: {
       task: definition.prompt,
       // The hash travels in the payload as well as on the media, so the answer
-      // is traceable to the exact bytes that produced it.
-      payload: { evidenceHash: input.hash, contentType: file.contentType },
+      // is traceable to the exact bytes that produced it — and, where a page
+      // range was taken, which pages of that file it was read from.
+      payload: {
+        evidenceHash: input.hash,
+        contentType: file.contentType,
+        ...(input.pages ? { pages: input.pages } : {}),
+      },
       responseSchema: definition.responseSchema,
       media: {
         contentType: file.contentType,
-        base64: file.bytes.toString('base64'),
+        base64: mediaBytes.toString('base64'),
         hash: input.hash,
         /*
          * Pages, where the file has them.
@@ -968,7 +1121,7 @@ export async function extract(
          */
         ...(file.contentType === 'application/pdf'
           ? (() => {
-              const pages = extractText(file.bytes, file.contentType).pages;
+              const pages = extractText(mediaBytes, file.contentType).pages;
               return pages ? { pages } : {};
             })()
           : {}),
@@ -1037,9 +1190,17 @@ export const PASTED_TEXT_MAX = 400_000;
  * The route declares it and the engine charges it, both from here, so the
  * quote and the charge that follows it cannot name different things.
  */
-export function textTaskType(task: PerceptionTask, source: 'PASTED' | 'INGESTED_FILE'): string {
-  return `${PERCEPTION_TASKS[task].taskType}_${source === 'PASTED' ? 'pasted' : 'file_text'}`;
+export function textTaskType(task: PerceptionTask, source: TextSource): string {
+  return `${PERCEPTION_TASKS[task].taskType}_${source === 'PASTED' ? 'pasted' : source === 'TENDER_PACK' ? 'pack' : 'file_text'}`;
 }
+
+/**
+ * Where a text reading's words came from. `TENDER_PACK` is every document on
+ * the tender read together in one run — the ITT, the questionnaire, the price
+ * list, the reports — because a requirement in one is often only understood
+ * against another, and reading them one at a time lost that.
+ */
+export type TextSource = 'PASTED' | 'INGESTED_FILE' | 'TENDER_PACK';
 
 /**
  * Read an invitation the platform was given as *text* rather than as a file.
@@ -1071,14 +1232,29 @@ export async function extractFromText(
     task: PerceptionTask;
     text: string;
     /** Where the text came from, said on the record rather than inferred. */
-    source: 'PASTED' | 'INGESTED_FILE';
+    source: TextSource;
     /** The file the text was read out of, where there was one. */
     documentHash?: string;
     evidenceId?: string;
     /** What to call it on the screen: a filename, or what the analyst pasted it from. */
     label: string;
+    /** The documents a whole-pack reading was made from, kept on the draft so it says what it read. */
+    packFiles?: ReadonlyArray<{ ingestionId: string; filename: string; kind: string; characters: number }>;
+    /**
+     * Checks run on the reading before anybody is shown it, kept on the draft.
+     * Code, not a model: a reading is a draft until a person confirms it, and
+     * these tell the person where to look first.
+     */
+    check?: (extraction: Record<string, unknown>) => unknown;
   },
-): Promise<{ draftId: string; task: PerceptionTask; extraction: Record<string, unknown>; confidence?: number; acuConsumed: number }> {
+): Promise<{
+  draftId: string;
+  task: PerceptionTask;
+  extraction: Record<string, unknown>;
+  confidence?: number;
+  acuConsumed: number;
+  checks?: unknown;
+}> {
   const definition = PERCEPTION_TASKS[input.task];
   if (!definition) throw new DomainError('PERCEPTION_TASK_UNKNOWN', `No perception task "${input.task}"`);
   if (!definition.acceptsText) {
@@ -1123,9 +1299,12 @@ export async function extractFromText(
     input.evidenceId !== undefined
       ? { refType: 'EvidenceItem' as const, refId: input.evidenceId }
       : registerEvidence(ctx, {
-          type: 'PASTED_INVITATION',
+          type: input.source === 'TENDER_PACK' ? 'TENDER_PACK_TEXT' : 'PASTED_INVITATION',
           hash: documentHash,
-          description: `Invitation text (${text.length} characters): ${input.label}`,
+          description:
+            input.source === 'TENDER_PACK'
+              ? `The tender pack read together (${text.length} characters): ${input.label}`
+              : `Invitation text (${text.length} characters): ${input.label}`,
         });
 
   const draftId = ulid();
@@ -1159,7 +1338,7 @@ export async function extractFromText(
       message:
         'This deployment is running the local stand-in, which reads nothing. What it returns is a fixed answer, not a ' +
         'reading of your document, and filing it would put words on the record that no model produced. Configure a ' +
-        'reasoning provider and set AI_MODE=live; "Call each provider now" on AI Engine says which are answering.',
+        'reasoning provider and set AI_MODE=production; "Call each provider now" on AI Engine says which are answering.',
     },
     toWrites: (output, confidence) => [
       {
@@ -1178,6 +1357,8 @@ export async function extractFromText(
           textSource: input.source,
           textLabel: input.label,
           textLength: text.length,
+          ...(input.packFiles ? { packFiles: input.packFiles } : {}),
+          ...(input.check ? { checks: input.check(underExpectedKey(definition.responseSchema, output)) } : {}),
           extraction: underExpectedKey(definition.responseSchema, output),
           confidence,
           status: 'DRAFT',
@@ -1232,10 +1413,11 @@ export async function extractFromText(
     extraction,
     confidence: result.output.confidence as number | undefined,
     acuConsumed: result.acuConsumed,
+    ...(input.check ? { checks: input.check(extraction) } : {}),
   };
 }
 
-function requireDraft(ctx: EngineContext, draftId: string): PerceptionDraft {
+export function requireDraft(ctx: EngineContext, draftId: string): PerceptionDraft {
   const record = ctx.ledger.get({ refType: 'PerceptionDraft', refId: draftId });
   if (!record || record.tenantId !== ctx.tenantId) {
     throw new DomainError('PERCEPTION_DRAFT_NOT_FOUND', `No perception draft ${draftId}`, 404);
@@ -1261,9 +1443,18 @@ function requireDraft(ctx: EngineContext, draftId: string): PerceptionDraft {
 export type ConfirmInput = {
   draftId: string;
   corrections?: Record<string, unknown>;
-  /** DRAWING_TAKEOFF. */
+  /** DRAWING_TAKEOFF, PRICE_LIST_BOQ. */
   packageId?: string;
   costCodePrefix?: string;
+  /**
+   * The method of measurement this take-off or bill is drawn to — the person's
+   * confirmation of what the document stated (or their own, where it stated
+   * nothing). NRM2 is the platform default for building work; a civils bill
+   * measured to CESMM or the Highway Works method must carry its own method
+   * rather than be mislabelled by the default. Supplied per-item rules win over
+   * it; where neither is given the platform default stands.
+   */
+  measurementRule?: string;
   /**
    * ITT_REQUIREMENTS — the invitation this reading belongs to, and the two
    * commercial figures no invitation states about the bidder.
@@ -1295,6 +1486,35 @@ export type ConfirmInput = {
   inspectionId?: string;
 };
 
+/**
+ * The method of measurement a bill is drawn to is a label the buyer states, not
+ * one the platform may infer. NRM2 is the building default; a civils bill
+ * measured to the Highway Works method (MMHW) or to CESMM must not be
+ * mislabelled NRM2 because the take-off left the field blank. This maps the
+ * method a reader quoted — or a person chose — onto the short tag the bill
+ * carries, and recognises only the standard UK methods. A method the document
+ * actually names but this does not have a tag for is carried through trimmed,
+ * not discarded and not guessed at; an empty or absent value returns nothing,
+ * so the take-off keeps the platform default.
+ */
+export function normaliseMethodOfMeasurement(stated: string | null | undefined): string | undefined {
+  if (stated == null) return undefined;
+  const text = String(stated).trim();
+  if (!text) return undefined;
+  const compact = text.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if (compact.includes('highwayworks') || compact.includes('mmhw') || compact.includes('mchw')) return 'MMHW';
+  if (compact.includes('cesmm') || compact.includes('civilengineeringstandardmethod')) {
+    const edition = text.match(/cesmm\s*([34])/i)?.[1];
+    return edition ? `CESMM${edition}` : 'CESMM';
+  }
+  if (compact.includes('nrm2') || compact.includes('newrulesofmeasurement2')) return 'NRM2';
+  if (compact.includes('smm7')) return 'SMM7';
+  if (compact.includes('pomi') || compact.includes('principlesofmeasurement')) return 'POM(I)';
+  // The document named a method the platform has no short tag for. Honour what
+  // it said rather than guess — trimmed and capped so it reads as a line tag.
+  return text.length > 40 ? text.slice(0, 40).trim() : text;
+}
+
 export async function confirm(
   ctx: EngineContext,
   input: ConfirmInput,
@@ -1305,6 +1525,12 @@ export async function confirm(
   authorise(ctx, definition.area, definition.code, { lifecyclePhase: currentPhase(ctx) });
 
   const extraction = { ...draft.extraction, ...(input.corrections ?? {}) };
+  // The method of measurement the person confirmed, or failing that the one the
+  // reader quoted from the document. It tags each measured line; where it
+  // resolves to nothing, `runTakeoff` keeps the platform default (NRM2).
+  const scheduleRule = normaliseMethodOfMeasurement(
+    input.measurementRule ?? (extraction.methodOfMeasurement as string | null | undefined),
+  );
   let result: Record<string, unknown>;
 
   if (draft.task === 'TITLE_BLOCK') {
@@ -1334,7 +1560,9 @@ export async function confirm(
       unit: String(item.unit ?? ''),
       quantity: Number(item.quantity ?? 0),
       sourceSheet: item.sourceSheet ? String(item.sourceSheet) : undefined,
-      measurementRule: item.measurementRule ? String(item.measurementRule) : undefined,
+      // A rule the reader put on the item itself wins; the schedule's method is
+      // the fallback, so a civils take-off is not left tagged NRM2 by default.
+      measurementRule: item.measurementRule ? String(item.measurementRule) : scheduleRule,
     }));
     const takeoff = await runTakeoff(ctx, {
       packageId: input.packageId,
@@ -1354,15 +1582,58 @@ export async function confirm(
       ...(draft.confidence === undefined ? {} : { confidence: draft.confidence }),
     });
     result = { takeoffId: takeoff.takeoffId, boqItemIds: takeoff.boqItemIds };
-  } else if (draft.task === 'ITT_REQUIREMENTS') {
-    if (!input.invitationId || input.estimatedValueMinor === undefined || input.durationWeeks === undefined) {
+  } else if (draft.task === 'PRICE_LIST_BOQ') {
+    if (!input.packageId || !input.costCodePrefix) {
       throw new DomainError(
         'PERCEPTION_TARGET_REQUIRED',
-        'A read invitation is filed against the invitation it came from, and needs the value this business ' +
-          'expects to price and the duration it is priced over. Neither is stated in an ITT about the bidder, ' +
-          'so neither is read from one.',
+        'A confirmed bill of quantities has to be filed against a package, under a cost code prefix.',
       );
     }
+    const items = (extraction.items as Array<Record<string, unknown>>).map((item) => ({
+      // The buyer's item reference is kept at the front of the description, so the
+      // bill maps back to the Price List line for line when it is priced and
+      // transcribed into the buyer's own schedule. Unit and quantity are the
+      // buyer's, untouched. No rate is read — the schema carries none.
+      description: [item.reference ? String(item.reference).trim() : '', String(item.description ?? '').trim()]
+        .filter(Boolean)
+        .join(' — ') || String(item.description ?? ''),
+      unit: String(item.unit ?? ''),
+      quantity: Number(item.quantity ?? 0),
+      // The section the item sits under on the schedule, kept as the "sheet" it
+      // was read from — a BoQ has no drawing, and this is its traceable origin.
+      sourceSheet: item.section ? String(item.section).trim() : undefined,
+      // The method of measurement the bill is drawn to, so a civils schedule is
+      // tagged MMHW/CESMM rather than taking the building default. Absent, the
+      // take-off keeps NRM2.
+      ...(scheduleRule ? { measurementRule: scheduleRule } : {}),
+    }));
+    const takeoff = await runTakeoff(ctx, {
+      packageId: input.packageId,
+      sources: [
+        {
+          discipline: 'BILL_OF_QUANTITIES',
+          ...(draft.evidenceHash ? { sheetId: draft.evidenceHash } : {}),
+        },
+      ],
+      items,
+      costCodePrefix: input.costCodePrefix,
+      measuredBy: 'MODEL_CONFIRMED',
+      ...(draft.confidence === undefined ? {} : { confidence: draft.confidence }),
+    });
+    result = { takeoffId: takeoff.takeoffId, boqItemIds: takeoff.boqItemIds };
+  } else if (draft.task === 'ITT_REQUIREMENTS') {
+    if (!input.invitationId) {
+      throw new DomainError(
+        'PERCEPTION_TARGET_REQUIRED',
+        'A read invitation is filed against the invitation it came from. Choose which invitation this reading ' +
+          'belongs to.',
+      );
+    }
+    // The value and duration are no longer required here. The matrix needs
+    // neither, and an estimator cannot give a contract value before the take-off.
+    // Where they are given the commercial-term exposures are sized against them;
+    // where they are not, the terms are still read and the cash figures are sized
+    // later, once the job is priced.
 
     const read = extraction as {
       reference?: unknown;
@@ -1431,20 +1702,52 @@ export async function confirm(
     // The analyst, exactly as a person typing the requirements in would reach
     // it — same authorisation, same ACU cost, same tests. The reading is what
     // changed; nothing about how a matrix is produced did.
+    // One matrix per tender. A second reading of the same invitation — its ITT,
+    // then its questionnaire, then its social-value appendix — adds its
+    // requirements to the matrix already on the tender rather than minting a
+    // separate analysis per document, which is how a tender ended up with a
+    // dozen fragments nobody could price from. The requirements already on the
+    // tender are recovered from its bound matrix and the new ones merged in by
+    // reference; a reading that states commercial terms replaces them, one that
+    // states none keeps what the tender held.
+    const invitationRecord = ctx.ledger.require({ refType: 'TenderInvitation', refId: input.invitationId });
+    const priorAnalysisId = invitationRecord.state.analysisId as string | undefined;
+    let mergedRequirements = requirements;
+    let mergedTerms = commercial;
+    // The tender's own identity — the reference, client and return date it is
+    // known by. On a first reading these come from the document (or the
+    // invitation when the document did not state one). On a re-read they are
+    // kept from the matrix already on the tender: the second, third and fourth
+    // documents of one ITT are appendices and questionnaires with their own
+    // titles, and letting the last one read win renamed the whole matrix after
+    // "Appendix 3a". A later reading still *updates* a blank identity — it only
+    // cannot overwrite one the tender already carries.
+    let tenderReference = String(read.reference ?? invitationRecord.state.reference ?? '');
+    let tenderClient = String(read.clientName ?? 'Not stated in the invitation');
+    let tenderReturnBy = String(read.returnBy ?? '');
+    if (priorAnalysisId) {
+      const prior = ctx.ledger.get({ refType: 'ITTAnalysis', refId: priorAnalysisId });
+      if (prior && prior.tenantId === ctx.tenantId) {
+        const priorMatrix = (prior.state.matrix as MatrixLine[] | undefined) ?? [];
+        mergedRequirements = mergeRequirements(requirementsFromMatrix(priorMatrix), requirements);
+        mergedTerms = mergeCommercialTerms(prior.state.commercialTerms as CommercialTerms | undefined, commercial);
+        const priorReference = String(prior.state.reference ?? '').trim();
+        const priorClient = String(prior.state.clientName ?? '').trim();
+        const priorReturnBy = String(prior.state.returnBy ?? '').trim();
+        if (priorReference) tenderReference = priorReference;
+        if (priorClient && priorClient !== 'Not stated in the invitation') tenderClient = priorClient;
+        if (priorReturnBy) tenderReturnBy = priorReturnBy;
+      }
+    }
+
     const analysis = analyseITT(ctx, {
-      // The invitation's own reference when the document did not state one
-      // legibly. It is the same record either way, so the matrix binds to it.
-      reference: String(
-        read.reference ??
-          ctx.ledger.require({ refType: 'TenderInvitation', refId: input.invitationId }).state.reference ??
-          '',
-      ),
-      clientName: String(read.clientName ?? 'Not stated in the invitation'),
-      returnBy: String(read.returnBy ?? ''),
-      estimatedValueMinor: input.estimatedValueMinor,
-      durationWeeks: input.durationWeeks,
-      requirements,
-      terms: commercial,
+      reference: tenderReference,
+      clientName: tenderClient,
+      returnBy: tenderReturnBy,
+      ...(input.estimatedValueMinor === undefined ? {} : { estimatedValueMinor: input.estimatedValueMinor }),
+      ...(input.durationWeeks === undefined ? {} : { durationWeeks: input.durationWeeks }),
+      requirements: mergedRequirements,
+      terms: mergedTerms,
       ...(input.targetMarginPercent !== undefined ? { targetMarginPercent: input.targetMarginPercent } : {}),
     });
 
@@ -1464,14 +1767,30 @@ export async function confirm(
       ...(deliverable.channel ? { channel: String(deliverable.channel) as SubmissionChannel } : {}),
     }));
 
+    // Keep every deliverable already on the tender — the owner, date and source
+    // a person assigned included — and add only the ones this reading found that
+    // are not already there. A re-read of the pack never wipes an assignment.
+    const existingDeliverables = (invitationRecord.state.deliverables as TenderDeliverable[] | undefined) ?? [];
+    const mergedDeliverables = [...existingDeliverables];
+    const seenDeliverables = new Set(existingDeliverables.map((entry) => entry.reference));
+    for (const deliverable of deliverables) {
+      if (seenDeliverables.has(deliverable.reference)) continue;
+      seenDeliverables.add(deliverable.reference);
+      mergedDeliverables.push(deliverable);
+    }
+
+    // Bind the merged matrix to the tender either way: with the return register
+    // when there is one, or on its own when the reading was requirements only
+    // (a questionnaire, an appendix) — so the next reading can merge into it.
     const extracted =
-      deliverables.length > 0
-        ? extractRequirements(ctx, input.invitationId, { deliverables, analysisId: analysis.analysisId })
+      mergedDeliverables.length > 0
+        ? extractRequirements(ctx, input.invitationId, { deliverables: mergedDeliverables, analysisId: analysis.analysisId })
         : undefined;
+    if (!extracted) bindAnalysis(ctx, input.invitationId, analysis.analysisId);
 
     result = {
       analysisId: analysis.analysisId,
-      requirements: requirements.length,
+      requirements: mergedRequirements.length,
       deliverables: extracted?.deliverables ?? 0,
       // Named rather than counted. A mandatory requirement with no evidence
       // behind it ends the bid, and a barred term ends it before pricing
@@ -1812,6 +2131,16 @@ export function drafts(ctx: EngineContext): PerceptionDraft[] {
 export function perceptionCapability(ctx: EngineContext): {
   available: boolean;
   reason?: string;
+  /**
+   * Whether text the platform has read itself can be read by a model here.
+   *
+   * A different question from `available`, which is about *seeing* a file.
+   * Reading an invitation's text — one file, a pasted page, the whole pack —
+   * needs a reasoning provider, not a vision one, and a deployment with only
+   * the first had every reading button switched off behind "AI reading is not
+   * available", including the ones that would have worked.
+   */
+  textReading: { available: boolean; reason?: string };
   tasks: Array<{
     task: PerceptionTask;
     label: string;
@@ -1832,9 +2161,22 @@ export function perceptionCapability(ctx: EngineContext): {
     reason = 'No healthy perception provider is available.';
   }
 
+  // The local stand-in is the one adapter that sends nothing anywhere, and it
+  // reads nothing either: `requireModel` refuses its answer. So a reasoning
+  // provider that transmits is the test for a model that can read text.
+  let textReading: { available: boolean; reason?: string };
+  try {
+    textReading = ctx.orchestrator.adapterFor('REASONING').transmits
+      ? { available: true }
+      : { available: false, reason: 'No reasoning provider is configured on this deployment, so no model can read the text.' };
+  } catch {
+    textReading = { available: false, reason: 'No healthy reasoning provider is available.' };
+  }
+
   return {
     available,
     reason,
+    textReading,
     tasks: Object.entries(PERCEPTION_TASKS).map(([task, definition]) => ({
       task: task as PerceptionTask,
       label: definition.label,

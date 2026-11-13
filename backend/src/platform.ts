@@ -2,8 +2,9 @@ import { AIOrchestrator } from './ai/orchestrator.ts';
 import { EvidenceStore } from './evidence/store.ts';
 import { SigningAuthority } from './signing/signature.ts';
 import { ExportService } from './export/exporter.ts';
-import { allocateDocumentNumber, issuerProfile } from './group/profile.ts';
-import { groupOf } from './group/directory.ts';
+import { allocateDocumentNumber, isAuthoredRule, issuerProfile } from './group/profile.ts';
+import { groupOf, groupOfTenant } from './group/directory.ts';
+import { primaryCompanyOf } from './group/onboarding.ts';
 import { SyncEngine } from './field/sync.ts';
 import { ACUWallet, TRIAL_GRANT_NOTE, type ACUCaps, type ACUEntry , type WalletSignal } from './billing/acu.ts';
 import { statfsSync } from 'node:fs';
@@ -65,6 +66,8 @@ import {
   type CustomRole,
 } from './identity/customroles.ts';
 import { MODULES, grantRef, isModuleId, moduleRequiresAgreement, type ModuleGrant, type ModuleId , grantLifecycle } from './identity/modules.ts';
+import { GRID_MODULE_KEY, type ProviderStatus } from './billing/addon.ts';
+import { addonGrantRef, type AddonGrantRecord } from './billing/addongrant.ts';
 import {
   clearCredential,
   confirmEnvironmentGone,
@@ -380,6 +383,14 @@ export class Platform {
    */
   readonly #moduleGrants = new Map<string, ModuleGrant>();
 
+  /**
+   * The Platform-Admin provisions for the commercial add-ons, keyed by
+   * `${moduleKey}:${tenantId}`. Like `#moduleGrants` this is the operator's
+   * record about a customer and lives on the platform tenancy; the customer
+   * reads only the entitlement derived from it. See `billing/addongrant.ts`.
+   */
+  readonly #addonGrants = new Map<string, AddonGrantRecord>();
+
   constructor(
     orchestrator = new AIOrchestrator(),
     evidence = new EvidenceStore(),
@@ -428,8 +439,12 @@ export class Platform {
     // §8.3). The profile lives in the group module; the exporter only asks.
     this.exports.useIssuerProfiles({
       profileVersionOf: (tenantId) => issuerProfile(this, tenantId).version,
-      allocateReference: (auth, documentType) =>
-        issuerProfile(this, auth.tenantId).numberingRules[documentType] ? allocateDocumentNumber(this, auth, documentType).number : undefined,
+      allocateReference: (auth, documentType) => {
+        const rule = issuerProfile(this, auth.tenantId).numberingRules[documentType];
+        if (!rule) return undefined;
+        const { number, seq } = allocateDocumentNumber(this, auth, documentType);
+        return { number, seq, authored: isAuthoredRule(rule, this.exports.brandingIfConfigured(auth.tenantId)) };
+      },
     });
       return position.mayExport
         ? { permitted: true }
@@ -3006,6 +3021,98 @@ export class Platform {
   }
 
   /**
+   * Provision (or re-provision) a commercial add-on for a tenant: the Platform-Admin
+   * grant, the verified billing-provider status and the paid seat quantity. The
+   * operator-side half of the three states — written on the platform tenancy, never
+   * the customer's, for the same reason `setModuleGrant` is. The named seats are a
+   * separate, tenant-side act; this only sets how many have been paid for.
+   *
+   * It takes a provider status rather than deriving one: the status is a fact from
+   * verified provisioning or reconciliation, which this records. It never activates
+   * an add-on from a client assertion, and a decrease below the seats already
+   * assigned is refused so a provision cannot strand a live seat (spec A05).
+   */
+  setAddonGrant(input: {
+    tenantId: string;
+    moduleKey?: string;
+    adminGrant: boolean;
+    providerStatus: ProviderStatus;
+    paidQuantity: number;
+    priceVersion?: string;
+    decidedBy: string;
+  }): AddonGrantRecord {
+    const moduleKey = input.moduleKey ?? GRID_MODULE_KEY;
+    if (!Number.isInteger(input.paidQuantity) || input.paidQuantity < 1) {
+      throw new DomainError('BAD_SEAT_QUANTITY', 'paidQuantity must be an integer of at least 1 (the base seat)');
+    }
+    // The tenancy has to exist, for the same reason a module grant's does: a typo
+    // in a tenant id would write a provision against a company that does not exist.
+    this.tenant(input.tenantId);
+
+    // A decrease that would strand assignments is refused. The seats live on the
+    // customer's own ledger, so they are counted there.
+    const activeSeats = this.ledger
+      .listByTenant(input.tenantId, 'AddonSeat')
+      .map((r) => r.state as { moduleKey: string; active: boolean })
+      .filter((s) => s.moduleKey === moduleKey && s.active).length;
+    if (input.paidQuantity < activeSeats) {
+      throw new DomainError(
+        'SEAT_CAPACITY_EXCEEDED',
+        `${activeSeats} seats are assigned; unassign ${activeSeats - input.paidQuantity} before reducing to ${input.paidQuantity}`,
+      );
+    }
+
+    const ref = addonGrantRef(moduleKey, input.tenantId);
+    const existing = this.#addonGrants.get(ref);
+    // Re-provisioning the same grant, status and quantity is idempotent — it
+    // returns the existing record rather than writing a no-op event (which the
+    // ledger refuses) with only a new timestamp to distinguish it. Mirrors
+    // `setModuleGrant`; without it a reconciliation that re-asserts the current
+    // state would error instead of being the safe no-op it is.
+    const priceVersion = input.priceVersion ?? existing?.priceVersion ?? 'v1';
+    if (
+      existing &&
+      existing.adminGrant === input.adminGrant &&
+      existing.providerStatus === input.providerStatus &&
+      existing.paidQuantity === input.paidQuantity &&
+      existing.priceVersion === priceVersion
+    ) {
+      return existing;
+    }
+    const record: AddonGrantRecord = {
+      moduleKey,
+      tenantId: input.tenantId,
+      adminGrant: input.adminGrant,
+      providerStatus: input.providerStatus,
+      paidQuantity: input.paidQuantity,
+      priceVersion,
+      updatedBy: input.decidedBy,
+      updatedAt: new Date().toISOString(),
+    };
+    this.#addonGrants.set(ref, record);
+
+    this.ledger.commit({
+      // On the platform's own tenancy, like a module grant: the operator's
+      // decision about a company, not the company's record about itself.
+      tenantId: PLATFORM_TENANT_ID,
+      projectId: `${PLATFORM_TENANT_ID}-governance`,
+      actor: { refType: 'User', refId: input.decidedBy },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: existing ? 'ADDON_GRANT_CHANGED' : 'ADDON_GRANT_SET',
+      entity: { refType: 'AddonGrant', refId: ref },
+      nextState: { ...record, id: ref },
+    });
+
+    return record;
+  }
+
+  /** The add-on provision for a tenant, or undefined. Resolved onto the engine context. */
+  addonGrant(tenantId: string, moduleKey: string = GRID_MODULE_KEY): AddonGrantRecord | undefined {
+    return this.#addonGrants.get(addonGrantRef(moduleKey, tenantId));
+  }
+
+  /**
    * Set a credential the platform calls a vendor with, from the console.
    *
    * Two writes that must not become one. The **value** goes to the encrypted
@@ -3322,6 +3429,11 @@ export class Platform {
       if (isModuleId(state.moduleId)) {
         this.#moduleGrants.set(grantRef(state.moduleId, state.tenantId), state);
       }
+    }
+
+    for (const record of this.ledger.entitiesOfType('AddonGrant')) {
+      const state = copy<AddonGrantRecord>(record);
+      this.#addonGrants.set(addonGrantRef(state.moduleKey, state.tenantId), state);
     }
 
     // The free trials already taken, counted again from the wallets rather
@@ -3690,6 +3802,39 @@ export class Platform {
     if (subscription.grantedFree !== true || subscription.grantedFreeUntil === undefined) return subscription;
     if (now.toISOString() < subscription.grantedFreeUntil) return subscription;
     return { ...subscription, grantedFree: false };
+  }
+
+  /**
+   * Whether this tenancy holds its paid add-ons free of charge — the test the Grid
+   * add-on's entitlement reads through `ctx.freeExempt`.
+   *
+   * A free grant on the subscription is *not* enough on its own, because a company
+   * of an ordinary **paying** group carries one too: `coverCompany` marks every
+   * member granted-free to mean "not billed individually — the group pays
+   * centrally", which is coverage, not exemption. The add-on is a priced product
+   * that a paying group still owes for. The honest question is whether the entity
+   * that actually settles this tenancy's bill is itself exempt:
+   *
+   *   - a company standing alone settles its own subscription, so its own free
+   *     grant is the answer;
+   *   - a company in a group is billed on the group's **primary** subscription, so
+   *     the primary's free grant is the answer — true only for a genuinely exempt
+   *     group (the operator granted the group free, e.g. the one account free until
+   *     a fixed term), false for a paying group whose members are merely covered.
+   *
+   * Both reads go through `subscription`, so the exemption's **term is already
+   * applied**: once it lapses this answers false and the add-on becomes chargeable.
+   */
+  #addonFreeExempt(tenantId: string, now: Date): boolean {
+    if (!this.#subscriptions.has(tenantId)) return false;
+    if (this.subscription(tenantId, now).grantedFree !== true) return false;
+    const group = groupOfTenant(this, tenantId);
+    if (!group) return true; // stands alone and is directly exempt
+    const primary = primaryCompanyOf(this, group);
+    if (!primary || primary.tenantId === tenantId) return true; // this is (or stands in for) the paying entity, and it is exempt
+    // A member: free only when the group's paying entity is itself exempt, never
+    // from the coverage flag the member carries for a paying group.
+    return this.#subscriptions.has(primary.tenantId) && this.subscription(primary.tenantId, now).grantedFree === true;
   }
 
   subscription(tenantId: string, now = new Date()): Subscription {
@@ -4561,6 +4706,18 @@ export class Platform {
       // dropping a module nobody remembered to re-add.
       grantedModules: this.grantedModules(auth.tenantId),
       heldModules: this.heldModules(auth.tenantId),
+      // The commercial add-on provision for this tenancy, resolved once beside the
+      // module grants. Undefined for almost every tenancy — a paid add-on is
+      // provisioned per company. `billing/addonstore.ts` derives entitlement and
+      // seat enforcement from it; the customer never reads this record directly.
+      ...(this.addonGrant(auth.tenantId) ? { addonGrant: this.addonGrant(auth.tenantId)! } : {}),
+      // Whether this tenancy holds its paid add-ons free of charge right now — a
+      // genuine operator exemption, its own or the one on its group's paying
+      // company, never the coverage flag a member of a *paying* group carries.
+      // `#addonFreeExempt` draws that line and applies the exemption's term, so an
+      // exemption that has run out reads false here and the add-on becomes
+      // chargeable that day. `billing/addonstore.ts` is the only reader.
+      ...(this.#addonFreeExempt(auth.tenantId, new Date()) ? { freeExempt: true } : {}),
       // Whether a maker-checker rule has anybody to hand the second act to.
       //
       // Resolved lazily, because almost no command asks: only a gate decision,

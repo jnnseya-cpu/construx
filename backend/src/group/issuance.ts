@@ -1,4 +1,4 @@
-import { hashEvidence } from '../core/canonical.ts';
+import { canonicalize, hashEvidence } from '../core/canonical.ts';
 import { DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { AuthContext } from '../identity/auth.ts';
@@ -396,6 +396,67 @@ function fallbackBranding(issuer: IssuerBlock): ClientBranding {
   };
 }
 
+/**
+ * A frozen document body as blocks, with its priced line items drawn as a table.
+ *
+ * A quotation writes its priced lines as body rows keyed `Item 1`, `Item 2`, …
+ * each holding "<description> — <quantity> <unit> — <amount>" (a fixed sum has
+ * no quantity). Rendered as a flat key/value list they read as a cramped
+ * data dump; lifted into a table they read as the priced schedule they are. The
+ * header rows (Client, Period, Basis) above them and the summary rows (Total,
+ * Payment terms, exclusions) below stay key/value, in their original order.
+ *
+ * The body is not touched — only how it is drawn — so the content hash the
+ * instrument is verified against does not move, and a document with no `Item N`
+ * rows (an invoice, a certificate) renders exactly as it did before.
+ */
+export function bodyBlocks(body: Record<string, unknown>): DocumentBlock[] {
+  const blocks: DocumentBlock[] = [];
+  let pairs: Array<{ label: string; value: string }> = [];
+  let items: string[][] = [];
+  const flushPairs = (): void => {
+    if (pairs.length > 0) {
+      blocks.push({ kind: 'KEY_VALUES', rows: pairs });
+      pairs = [];
+    }
+  };
+  const flushItems = (): void => {
+    if (items.length > 0) {
+      blocks.push({ kind: 'TABLE', headers: ['#', 'Description', 'Quantity', 'Amount'], rows: items });
+      items = [];
+    }
+  };
+
+  for (const [label, raw] of Object.entries(body)) {
+    const value = String(raw);
+    const item = /^Item (\d+)$/.exec(label);
+    if (!item) {
+      flushItems();
+      pairs.push({ label, value });
+      continue;
+    }
+    flushPairs();
+    // "<description> — <qty> <unit> — <amount>", where the description may itself
+    // contain " — "; the greedy first group keeps it whole and the quantity is
+    // the "<number> <unit>" run just before the amount.
+    const priced = /^(.*) — ([0-9][0-9.,]*\s+[^—]+?) — (.+)$/.exec(value);
+    if (priced) {
+      items.push([item[1]!, priced[1]!.trim(), priced[2]!.trim(), priced[3]!.trim()]);
+      continue;
+    }
+    // A fixed sum, or a line carried into one sum: "<label> — <amount>" with no
+    // quantity, or no amount at all. Split off a trailing amount where there is
+    // one, otherwise the whole value is the description.
+    const cut = value.lastIndexOf(' — ');
+    const tail = cut >= 0 ? value.slice(cut + 3).trim() : '';
+    const isAmount = cut >= 0 && /^[£$€]?[0-9(]/.test(tail);
+    items.push([item[1]!, (isAmount ? value.slice(0, cut) : value).trim(), '', isAmount ? tail : '']);
+  }
+  flushItems();
+  flushPairs();
+  return blocks;
+}
+
 /** The numbered document, as blocks, from the frozen manifest and nothing else. */
 export function issuedDocumentModel(platform: Platform, document: LifecycleDocument, issuance: Issuance): ExportDocument {
   const revision = document.revisions.find((held) => held.revision === issuance.revision)!;
@@ -418,21 +479,47 @@ export function issuedDocumentModel(platform: Platform, document: LifecycleDocum
         { label: 'Issuer profile', value: `version ${issuance.issuerProfileVersion}` },
       ],
     },
-    { kind: 'KEY_VALUES', rows: Object.entries(manifest.body).map(([label, value]) => ({ label, value: String(value) })) },
-    ...(document.supersedes ? [{ kind: 'PARAGRAPH' as const, text: `Supersedes document ${document.supersedes}.` }] : []),
+    ...bodyBlocks(manifest.body),
+    // The supersession is recorded against the document (`document.supersedes`)
+    // and shown in its own history — not printed on the copy the client reads.
+    // A buyer does not need to be told their offer is a revised one, and the
+    // raw document id told them nothing anyway.
     ...(issuer.footerLegalText ? [{ kind: 'PARAGRAPH' as const, text: issuer.footerLegalText }] : []),
   ];
   const contentHash = issuance.hash;
+  // The person's name, not the raw actor id. An issued legal instrument that
+  // names its generator `01M1S26DD4K6R0…` tells the recipient nothing and reads
+  // as unfinished — the same fault the exported report carried, here on the path
+  // that issues the numbered document. Resolved from the user directory, and the
+  // id only where no name is on record.
+  const generatedBy = issuance.issuedBy ?? issuance.reservedBy;
+  let generatedByName: string | undefined;
+  try {
+    const name = platform.user(generatedBy).name?.trim();
+    if (name) generatedByName = name;
+  } catch {
+    // An actor no longer on the directory still has a traceable id; a blank
+    // would be worse than the id, so the field simply falls back to it.
+  }
+  // "Prepared for" on the cover is who the document is *for*, which for a
+  // quotation is the client named in its own body — not the tenancy's own name,
+  // which the branding default carries and which read as "prepared for JNN
+  // Global Ltd" on an offer to a council. Falls back to the branding default
+  // when the body names no client (an internal report, a certificate).
+  const bodyClient = manifest.body.Client;
+  const preparedFor =
+    typeof bodyClient === 'string' && bodyClient.trim().length > 0 ? bodyClient.trim() : branding.clientName;
   return {
     id: issuance.id,
     reference: issuance.number,
     title: document.title,
-    branding: { ...branding, issuingEntity: issuer.registeredName, legalFooter: issuer.footerLegalText || branding.legalFooter },
+    branding: { ...branding, clientName: preparedFor, issuingEntity: issuer.registeredName, legalFooter: issuer.footerLegalText || branding.legalFooter },
     issuer: { companyId: document.tenantId, profileVersion: issuance.issuerProfileVersion, documentType: 'report' },
     audience: 'CLIENT',
     format: 'PDF',
     generatedAt: issuance.issuedAt ?? issuance.reservedAt,
-    generatedBy: issuance.issuedBy ?? issuance.reservedBy,
+    generatedBy,
+    ...(generatedByName ? { generatedByName } : {}),
     projectId: governance(document.tenantId),
     blocks,
     contentHash,
@@ -485,20 +572,28 @@ export function issueDocument(
     if (document.status === 'APPROVED' && current.approval?.hash !== current.hash) {
       throw new DomainError('DOCUMENT_NOT_APPROVED', 'The current revision carries no approval of its own hash', 409);
     }
-    // What goes out is the frozen manifest, issuer block included. A profile
-    // changed since generation — new registered details, a new brand — means
-    // the frozen issuer is no longer the company's; regenerate and re-approve
-    // so what was approved is exactly what is issued.
-    if (current.manifest.issuerProfileVersion !== profile.version) {
+    // What goes out is the frozen manifest, issuer block included. Registered
+    // details changed since generation mean the frozen issuer is no longer the
+    // company's; regenerate and re-approve so what was approved is exactly
+    // what is issued.
+    //
+    // The comparison is of the issuer block the document prints, not of the
+    // profile's version number. The version also moves when a numbering rule,
+    // a signatory or the approval policy is set — none of which is on the
+    // approved revision — and comparing versions refused an approved quotation
+    // for "the issuer changed" because the company had just been told (by the
+    // previous refusal) to add a numbering rule. Signatories are checked on
+    // their own below; the number is allocated at issue under the current rule.
+    if (canonicalize(current.manifest.issuer) !== canonicalize(profile.issuer)) {
       throw new DomainError(
         'ISSUER_PROFILE_CHANGED',
-        `The issuer profile is at version ${profile.version} but this revision was generated under version ${current.manifest.issuerProfileVersion}. Generate a new revision so the document carries the current issuer, then approve it.`,
+        `The registered company details have changed since revision ${current.revision} was generated (under issuer profile version ${current.manifest.issuerProfileVersion}; it is now at ${profile.version}). Generate a new revision so the document carries the current details, then approve it.`,
         409,
       );
     }
     const readiness = legalReadiness(profile);
     if (!readiness.complete) {
-      throw new DomainError('LEGAL_PROFILE_INCOMPLETE', `The registered issuer details are incomplete (${readiness.missing.join(', ')}). Set them on the company profile before issuing.`, 422);
+      throw new DomainError('LEGAL_PROFILE_INCOMPLETE', `The registered company details are incomplete — ${readiness.missingLabels.join(', ')} not entered. Enter them under Site Documents → Set the issuer details before issuing.`, 422);
     }
     // A signatory named on the approval who has since been removed from the
     // profile invalidates it (§8.2): the approval was theirs to give.

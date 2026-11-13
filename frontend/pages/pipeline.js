@@ -1,12 +1,12 @@
 import { api, isRoleDenial } from '../lib/api.js';
-import { command, commandBar } from '../lib/command.js';
+import { command, commandBar, confirmCost } from '../lib/command.js';
 import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, resolveHtml, table, time, toast } from '../lib/ui.js';
 import { donutChart } from '../lib/charts.js';
 import { flowPanel, loadFlow } from '../lib/flow.js';
 import { insightPanel } from '../lib/insight.js';
-import { CONTINENT, COUNTRY, REQUIREMENT_CATEGORY, SECTOR_GROUPED, today } from '../lib/enums.js';
+import { CONTINENT, COUNTRY, METHOD_OF_MEASUREMENT, REQUIREMENT_CATEGORY, SECTOR_GROUPED, today } from '../lib/enums.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
-import { blockedReason, can, draw, goTo, openProject, phaseGates, state } from '../app.js';
+import { blockedReason, can, closeProject, draw, goTo, openProject, phaseGates, state } from '../app.js';
 
 /**
  * Business development — the pipeline, and the discipline of refusing work.
@@ -183,9 +183,9 @@ function heldTenderFiles(evidence, ingestion) {
  * schedule lists quantities; a photograph shows a place. Requirements live in
  * the invitation letter, the instructions to tenderers and the specification.
  */
-const CANNOT_BE_AN_INVITATION = ['DRAWING', 'CALCULATION', 'SCHEDULE', 'PHOTOGRAPH', 'MODEL', 'CERTIFICATE'];
+const CANNOT_BE_AN_INVITATION = ['DRAWING', 'CALCULATION', 'REPORT', 'SCHEDULE', 'PHOTOGRAPH', 'MODEL', 'CERTIFICATE'];
 
-function ittReadingPanel({ perception, evidence, ingestion, projectId, projectName, blocked, tenderProjects, invitationOptions }) {
+function ittReadingPanel({ perception, evidence, ingestion, projectId, projectName, blocked, tenderProjects, invitationOptions, projectHasInvitation }) {
   // Three separate reasons this cannot run, and they need different sentences.
   // Collapsing them into one "unavailable" is how somebody spends an afternoon
   // fixing the wrong thing.
@@ -200,6 +200,9 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
   }
 
   const available = perception?.capability?.available === true;
+  // Reading text needs a model that reasons, not one that sees: a deployment
+  // with only the first can still read every document whose words are held.
+  const textAvailable = perception?.capability?.textReading?.available === true;
   const published = new Map((perception?.capability?.tasks ?? []).map((entry) => [entry.task, entry]));
   const ittTask = published.get('ITT_REQUIREMENTS');
   const drafts = (perception?.drafts ?? []).filter((d) => d.task === 'ITT_REQUIREMENTS' && d.status === 'DRAFT');
@@ -210,8 +213,13 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
    * somebody has checked them nothing downstream can price anything — the same
    * rule the requirements reading follows.
    */
-  const takeoffDrafts = (perception?.drafts ?? []).filter((d) => d.task === 'DRAWING_TAKEOFF' && d.status === 'DRAFT');
+  const takeoffDrafts = (perception?.drafts ?? []).filter(
+    (d) => (d.task === 'DRAWING_TAKEOFF' || d.task === 'PRICE_LIST_BOQ') && d.status === 'DRAFT',
+  );
   const readable = heldTenderFiles(evidence, ingestion);
+  // The documents whose words the platform has read itself — what one reading
+  // of the whole pack sends.
+  const textDocuments = readable.filter((row) => row.road === 'TEXT').length;
 
   return html`
     <div class="card pad0" style="margin-bottom:14px">
@@ -231,9 +239,26 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
         ${
           !blocked
             ? html`<div class="actions" style="margin-bottom:12px">
-                <button class="btn" data-upload-tender>Upload a tender document</button>
+                <button class="btn ${textAvailable && textDocuments > 0 ? 'quiet' : ''}" data-upload-tender>Upload a tender document</button>
+                ${
+                  textAvailable && textDocuments > 0
+                    ? html`<button class="btn" data-read-pack>
+                        Read all ${textDocuments} document${textDocuments === 1 ? '' : 's'} together
+                      </button>`
+                    : ''
+                }
                 <button class="btn quiet" data-paste-tender>Paste the invitation instead</button>
-              </div>`
+              </div>
+              ${
+                textAvailable && textDocuments > 0
+                  ? html`<p class="metric-sub" style="margin:-4px 0 12px">
+                      One reading of the whole pack — the instructions, the questionnaire, the price list and the
+                      reports together, as one tender — into one draft: the deadline and how to return, the scored
+                      questions with their weightings and limits, and the documents to send back. Code then checks the
+                      reading against the documents before you see it. The estimate is shown before anything is sent.
+                    </p>`
+                  : ''
+              }`
             : ''
         }
 
@@ -260,12 +285,25 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
         }
 
         ${
-          !blocked && !available
+          !blocked && !available && textAvailable
+            ? html`<div class="notice info" style="margin-bottom:12px">
+                <div>
+                  <b>Text is read here; pictures of pages are not.</b> ${perception?.capability?.reason ?? ''}
+                  Every document whose words the platform has read itself — Word, a spreadsheet, a PDF with a text
+                  layer — can be read below. A scan or a drawing that is only an image cannot.
+                </div>
+              </div>`
+            : ''
+        }
+
+        ${
+          !blocked && !available && !textAvailable
             ? html`<div class="notice warn" style="margin-bottom:12px">
                 <div>
-                  <b>Not available on this deployment.</b><br />${perception?.capability?.reason ?? ''}
-                  An invitation is not read here at all, rather than read badly and filed as fact — a fabricated
-                  requirement is a bid disqualified.
+                  <b>AI reading is not available on this deployment.</b><br />${perception?.capability?.reason ?? ''}
+                  Your files are still stored and their text read below, free. Type the compliance matrix in with
+                  “Read the invitation into a matrix” above — nothing is read by a model here, rather than read badly
+                  and filed as fact.
                 </div>
               </div>`
             : ''
@@ -281,7 +319,14 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
       </div>
 
       ${
-        !blocked && available
+        /*
+         * The files, whether or not a model is configured. Storing a tender
+         * document and reading its text is the platform's own free stage; only
+         * the buttons that send it to a model depend on a provider. The table
+         * used to be drawn only where one was configured, so a company with no
+         * AI uploaded five files and was shown none of them.
+         */
+        !blocked
           ? table({
               headers: ['The document', 'Type', 'What the platform has read', 'Held since', ''],
               rows: readable.slice(0, 20).map(({ entry, file, road, says }) => [
@@ -326,7 +371,13 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                  * on a road (DRAWING/TEXT/LOOK) that carries one.
                  */
                 html`${
-                  file && String(file.kind ?? '') === 'DRAWING'
+                  !(available || (textAvailable && road === 'TEXT'))
+                  ? road === 'UNREAD'
+                    ? html`<button class="btn quiet sm" data-ingest-tender="${entry.hash}" data-name="${entry.description}">
+                        Look at the file first
+                      </button>`
+                    : ''
+                  : available && file && String(file.kind ?? '') === 'DRAWING'
                   ? html`<button class="btn sm" data-take-off="${entry.hash}">Measure quantities</button>
                       <button class="btn quiet sm" data-read-itt-text="${file.ingestionId}"
                         title="A drawing states no tender requirements. This will run and will almost certainly find none.">
@@ -346,6 +397,19 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                           Look at the file first
                         </button>`
                       : ''
+                }
+                ${
+                  // The civils door: read the buyer's priced Bill of Quantities
+                  // straight into the bill. Offered on any readable tender
+                  // document, because the pricing schedule arrives as a Word
+                  // file, a PDF or a scan and the person holding it is on this
+                  // screen. Quantities only — the reader returns no rate.
+                  available && file && (road === 'TEXT' || road === 'LOOK' || String(file.kind ?? '') === 'DRAWING')
+                    ? html`<button class="btn quiet sm" data-read-boq="${entry.hash}"
+                        title="Read this as the buyer's priced Bill of Quantities — the AI extracts every item, unit and quantity into the bill for you to price. It reads quantities only, never a rate.">
+                          Read as a pricing schedule
+                        </button>`
+                    : ''
                 }
                 ${
                   /*
@@ -389,8 +453,50 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                 const requirements = read.requirements ?? [];
                 const deliverables = read.deliverables ?? [];
                 const omitted = read.omitted ?? read.omissions ?? [];
+                const checks = draft.checks?.checks ?? [];
+                const untraced = new Set(
+                  checks.filter((check) => check.id === 'NOT_IN_PACK').flatMap((check) => check.references ?? []),
+                );
+                const when = (value) => (value ? String(value).replace('T', ' ') : null);
+                const notStated = html`<i style="color:var(--text-3)">not stated</i>`;
                 return html`<div class="card" style="margin-bottom:10px">
+                  ${
+                    draft.checks
+                      ? html`<div class="notice ${draft.checks.attention > 0 ? 'warn' : 'ok'}" style="margin-bottom:10px">
+                          <div>
+                            <b>Checked in code against the documents: ${draft.checks.summary}</b>
+                            ${
+                              checks.length > 0
+                                ? html`<ul style="margin:6px 0 0 18px;padding:0">
+                                    ${checks.map(
+                                      (check) => html`<li style="margin-bottom:4px">
+                                        ${check.severity === 'ATTENTION' ? badge('look', 'warn') : badge('note', '')}
+                                        <b>${check.title}.</b> ${check.detail}
+                                        ${
+                                          (check.references ?? []).length > 0
+                                            ? html`<span style="color:var(--text-3)"> (${check.references.join(', ')})</span>`
+                                            : ''
+                                        }
+                                      </li>`,
+                                    )}
+                                  </ul>`
+                                : ''
+                            }
+                          </div>
+                        </div>`
+                      : ''
+                  }
                   <div class="split-list">
+                    ${
+                      Array.isArray(draft.packFiles) && draft.packFiles.length > 0
+                        ? html`<div class="row">
+                            <span class="lbl">Read together</span>
+                            <span class="val" style="font-size:12px">${draft.packFiles
+                              .map((file) => `${file.filename} (${humanise(String(file.kind ?? '')).toLowerCase()})`)
+                              .join(' · ')}</span>
+                          </div>`
+                        : ''
+                    }
                     <div class="row">
                       <span class="lbl">Reference it read</span>
                       <span class="val">${read.reference ?? html`<i style="color:var(--text-3)">not stated in the document</i>`}</span>
@@ -401,8 +507,25 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                     </div>
                     <div class="row">
                       <span class="lbl">Returns by</span>
-                      <span class="val">${read.returnBy ?? html`<i style="color:var(--text-3)">not stated</i>`}</span>
+                      <span class="val">${
+                        when(read.returnByLocal)
+                          ? html`${when(read.returnByLocal)} ${
+                              read.returnTimeZone ? read.returnTimeZone : html`<i style="color:var(--text-3)">(no zone stated)</i>`
+                            }`
+                          : read.returnBy ?? notStated
+                      }</span>
                     </div>
+                    ${
+                      read.returnChannel || read.clarificationLocal || read.siteVisitLocal || read.issuedOn
+                        ? html`<div class="row">
+                            <span class="lbl">Issued · questions by · site visit · returned through</span>
+                            <span class="val">
+                              ${read.issuedOn ?? '—'} · ${when(read.clarificationLocal) ?? '—'} · ${when(read.siteVisitLocal) ?? '—'} ·
+                              ${read.returnChannel ? humanise(String(read.returnChannel)) : '—'}
+                            </span>
+                          </div>`
+                        : ''
+                    }
                     <div class="row">
                       <span class="lbl">Found</span>
                       <span class="val">${requirements.length} requirement(s), ${deliverables.length} deliverable(s)</span>
@@ -426,14 +549,21 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                   ${
                     requirements.length > 0
                       ? table({
-                          headers: ['Ref', 'Category', 'Requirement', 'Mandatory', 'Weight', 'Evidence demanded'],
-                          align: ['', '', '', '', 'num', ''],
-                          rows: requirements.slice(0, 40).map((r) => [
-                            r.reference ?? '—',
+                          headers: ['Ref', 'Category', 'Requirement', 'Mandatory', 'Weight', 'Limit', 'Evidence demanded'],
+                          align: ['', '', '', '', 'num', '', ''],
+                          rows: requirements.slice(0, 60).map((r, index) => [
+                            html`${r.reference ?? '—'}${
+                              untraced.has(String(r.reference ?? '').trim() || `line ${index + 1}`)
+                                ? html` ${badge('not found in the documents', 'warn')}`
+                                : ''
+                            }`,
                             html`<span style="font-size:12px;color:var(--text-3)">${humanise(String(r.category ?? ''))}</span>`,
                             r.requirement ?? '',
                             r.mandatory === true ? badge('pass/fail', 'warn') : 'scored',
                             r.weightingPercent === undefined || r.weightingPercent === null ? '—' : `${r.weightingPercent}%`,
+                            [r.wordLimit != null ? `${r.wordLimit} words` : '', r.pageLimit != null ? `${r.pageLimit} pages` : '']
+                              .filter(Boolean)
+                              .join(', ') || '—',
                             html`<span style="font-size:12px;color:var(--text-3)">${r.evidenceRequired ?? ''}</span>`,
                           ]),
                         })
@@ -441,8 +571,12 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                   }
                   <div class="actions" style="margin-top:11px">
                     <button class="btn" data-confirm-itt="${draft.id}"
-                      ${raw(invitationOptions.length === 0 ? 'disabled title="Record the invitation first — a reading is filed against one"' : '')}>
-                      Confirm and build the matrix
+                      ${raw(
+                        projectHasInvitation && invitationOptions.length === 0
+                          ? 'disabled title="The tender on this project is closed. A reading is filed against a live one."'
+                          : '',
+                      )}>
+                      ${projectHasInvitation ? 'Confirm and build the matrix' : 'Confirm — record the invitation and build the matrix'}
                     </button>
                     <button class="btn quiet" data-reject-itt="${draft.id}">Reject this reading</button>
                   </div>
@@ -464,18 +598,20 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
         takeoffDrafts.length > 0
           ? html`<div class="card pad0" style="margin-bottom:14px">
               <div style="padding:15px 17px">
-                <h2>Quantities measured off the drawings, awaiting a person</h2>
+                <h2>Quantities measured off the drawings, or read from a pricing schedule, awaiting a person</h2>
                 <p class="metric-sub" style="margin-bottom:10px">
-                  Check them against the sheet before confirming. Every line carries the sheet it was measured from and
-                  the rule it was measured under; confirming writes them into the bill, which is what an estimate is
-                  priced from. Nothing here is a price — a quantity is not a rate.
+                  Check them against the source before confirming — the drawing a quantity was measured off, or the
+                  buyer’s Bill of Quantities it was read from. Confirming writes them into the bill, which is what an
+                  estimate is priced from. Nothing here is a price — a quantity is not a rate, and the reader never
+                  returns one.
                 </p>
                 ${takeoffDrafts.map((draft) => {
                   const items = draft.extraction?.items ?? [];
                   const omitted = draft.extraction?.omitted ?? [];
+                  const fromSchedule = draft.task === 'PRICE_LIST_BOQ';
                   return html`<div class="card" style="margin-bottom:10px">
                     <div class="metric-sub" style="margin-bottom:8px">
-                      ${items.length} item${items.length === 1 ? '' : 's'} measured${
+                      ${items.length} item${items.length === 1 ? '' : 's'} ${fromSchedule ? 'read from the buyer’s schedule' : 'measured'}${
                         draft.extraction?.scale ? html` · scale ${draft.extraction.scale}` : ''
                       }${draft.confidence !== undefined ? html` · confidence ${Math.round(Number(draft.confidence) * 100)}%` : ''}
                     </div>
@@ -488,7 +624,7 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                             item.unit,
                             Number(item.quantity).toLocaleString('en-GB'),
                             item.sourceSheet ?? '—',
-                            item.measurementRule ?? 'NRM2',
+                            item.measurementRule ?? (fromSchedule ? 'As scheduled' : 'NRM2'),
                           ]),
                         })
                       : html`<div class="notice warn"><div>
@@ -502,7 +638,7 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                         </div>`
                       : ''}
                     <div class="actions" style="margin-top:11px">
-                      <button class="btn" data-confirm-takeoff="${draft.id}" ${raw(items.length === 0 ? 'disabled' : '')}>
+                      <button class="btn" data-confirm-takeoff="${draft.id}" data-method="${draft.extraction?.methodOfMeasurement ?? ''}" ${raw(items.length === 0 ? 'disabled' : '')}>
                         Confirm and write the bill
                       </button>
                       <button class="btn quiet" data-reject-itt="${draft.id}">Reject this measurement</button>
@@ -527,11 +663,136 @@ const COVERAGE_LABEL = {
   NO_EVIDENCE_ASKED: 'no evidence asked',
 };
 
+/**
+ * The tender programme: drafted from the measured bill, checked by the
+ * platform's own critical-path engine, confirmed by a person into the project's
+ * programme, and downloaded as a Gantt chart for the portal.
+ *
+ * A denial is shown as a denial, never as "no programme".
+ */
+function tenderProgrammePanel(tenderDrafts) {
+  const intro = html`<h2 style="font-size:14px;margin:0 0 4px">Tender programme</h2>
+    <p class="metric-sub" style="margin:0 0 11px">
+      The programme a buyer asks for with the return. Drafted from your measured bill — activities, working-day
+      durations, the logic between them, who does each, and a risk allowance — and checked by the platform’s own
+      critical-path engine against your period and the bank holidays. Nothing goes into the programme until you
+      confirm it; after that it is the project’s programme, editable on the Programme screen, and the download
+      always shows it as it now is.
+    </p>`;
+  if (tenderDrafts?.error) {
+    return html`<div style="margin:16px 17px 4px">${intro}${notice(
+      isRoleDenial(tenderDrafts.error)
+        ? 'Your role cannot see this project’s programme.'
+        : `The tender programme could not be read: ${tenderDrafts.error.message ?? 'unknown error'}.`,
+      isRoleDenial(tenderDrafts.error) ? 'warn' : 'bad',
+    )}</div>`;
+  }
+  const drafts = tenderDrafts?.drafts ?? [];
+  const confirmed = drafts.find((d) => d.status === 'CONFIRMED');
+  const waiting = drafts.find((d) => d.status === 'DRAFT');
+  const draftButton = html`<button class="btn ${confirmed ? 'quiet' : ''} sm" data-tp-draft>${
+    waiting || confirmed ? 'Draft it again' : 'Draft the tender programme from the bill'
+  }</button>`;
+
+  const confirmedBlock = confirmed
+    ? html`<div class="card" style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
+          <span>
+            ${badge('confirmed', 'ok')} Starts ${date(confirmed.startDate)} · completion date
+            ${date(confirmed.forecast.completionBy)} · ${confirmed.activities.length} activities ·
+            ${confirmed.calendar?.name ?? 'five-day week'}
+          </span>
+          <span style="flex:none;display:flex;gap:7px;flex-wrap:wrap">
+            <button class="btn sm" data-tp-download="PDF">Download programme (PDF)</button>
+            <button class="btn quiet sm" data-tp-download="DOCX">Word</button>
+          </span>
+        </div>
+      </div>`
+    : '';
+
+  const waitingBlock = waiting
+    ? html`<div class="card" style="margin-bottom:10px">
+        <div class="metric-sub" style="margin-bottom:8px">
+          ${waiting.forecast.fits
+            ? badge('fits the period', 'ok')
+            : badge('overruns the period', 'bad')}
+          Draft finishes ${date(waiting.forecast.finishDate)} against a completion date of
+          ${date(waiting.forecast.completionBy)} — computed by the critical-path engine on
+          ${waiting.calendar?.name ?? 'a five-day week'}, not claimed by the drafter.
+          Critical path: ${waiting.forecast.criticalRefs.join(' → ') || 'none'}.
+        </div>
+        ${table({
+          headers: ['Ref', 'Activity', 'Days', 'Follows', 'Resource / subcontract', 'Bill items'],
+          align: ['', '', 'num', '', '', ''],
+          rows: waiting.activities.map((a) => [
+            a.ref,
+            a.riskAllowance ? `${a.name} (risk allowance)` : a.name,
+            a.milestone ? 'Milestone' : String(a.durationDays),
+            a.predecessors.map((l) => `${l.ref}${l.type === 'FS' ? '' : ` ${l.type}`}${l.lagDays ? ` +${l.lagDays}d` : ''}`).join(', ') || '—',
+            [a.resource, a.subcontract ? `Subcontract: ${a.subcontract}` : ''].filter(Boolean).join(' · ') || '—',
+            (a.boqRefs ?? []).join(', ') || '—',
+          ]),
+        })}
+        ${waiting.corrections.length > 0
+          ? html`<div class="notice warn" style="margin-top:9px"><div>
+              <b>Corrected before you saw it:</b> ${waiting.corrections.join(' ')}
+            </div></div>`
+          : ''}
+        ${waiting.assumptions.length > 0
+          ? html`<div class="metric-sub" style="margin-top:9px">
+              <b>Assumptions behind the durations — check each against your own outputs:</b>
+              <ul style="margin:4px 0 0 18px">${waiting.assumptions.map((line) => html`<li>${line}</li>`)}</ul>
+            </div>`
+          : ''}
+        <div class="actions" style="margin-top:11px">
+          <button class="btn" data-tp-confirm="${waiting.id}" ${raw(confirmed ? 'disabled' : '')}>Confirm as the programme</button>
+          ${draftButton}
+        </div>
+        ${confirmed
+          ? html`<div class="metric-sub" style="margin-top:6px">
+              The project already has its programme. Change it on the Programme screen; a draft is not written over it.
+            </div>`
+          : ''}
+      </div>`
+    : '';
+
+  return html`<div style="margin:16px 17px 4px">
+    ${intro}
+    ${confirmedBlock}
+    ${waitingBlock}
+    ${waiting ? '' : html`<div class="actions">${draftButton}</div>`}
+  </div>`;
+}
+
 function matrixDetail(analysis, waivers, addenda, coverage) {
   const gapRefs = new Set(analysis.mandatoryGaps.map((line) => line.reference));
   // A waiver is read live, so a line waived after the matrix was analysed reads
   // as waived here without the analysis being rerun.
   const waivedBy = new Map((waivers?.live ?? []).map((waiver) => [waiver.reference, waiver]));
+
+  // The next-actions panel: everything still outstanding, grouped by how it
+  // clears, so the reader is told the route per line rather than inferring it
+  // from the status column. It reuses exactly what the backend already computed
+  // — there is one source of truth, not a second:
+  //  - GAP lines are profile-backed (a probe matched but nothing is on file), so
+  //    recording the company fact clears them. Every GAP is one of insurance,
+  //    accreditation, turnover, DBS or references.
+  //  - `coverage.toObtain` is the evidence gates with nothing (or nothing
+  //    current) on file — a document to attach and assert a claim against. A ref
+  //    already in the record-a-fact group is not repeated here; recording the
+  //    fact is its primary clear, and the evidence tables below still show it.
+  //  - `clarifications` are the questions the analysis raised for the buyer.
+  //  - UNKNOWN lines the platform cannot check and that need no document are
+  //    answered in the response pack when it is written, not here.
+  const recordFacts = analysis.matrix.filter((line) => line.status === 'GAP');
+  const recordFactRefs = new Set(recordFacts.map((line) => line.reference));
+  const fileDocs = (coverage?.toObtain ?? []).filter((o) => !recordFactRefs.has(o.reference));
+  const fileDocRefs = new Set(fileDocs.map((o) => o.reference));
+  const raiseClars = analysis.clarifications ?? [];
+  const unknownToAnswer = analysis.matrix.filter(
+    (line) => line.status === 'UNKNOWN' && !fileDocRefs.has(line.reference),
+  );
+  const nothingOutstanding = recordFacts.length === 0 && fileDocs.length === 0 && raiseClars.length === 0;
 
   return html`
     <div class="card pad0">
@@ -540,9 +801,16 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
         ${analysis.readyToPrice ? badge('ready to price', 'ok') : badge('not ready to price', 'bad')}
       </h2>
       <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
-        Returns ${date(analysis.returnBy)}. Analysed ${date(analysis.analysedAt)} against
-        ${money(analysis.estimatedValueMinor)} over ${analysis.durationWeeks} weeks — every exposure below is computed
-        against those two figures, so a matrix read months later still shows what it was judged on.
+        Returns ${date(analysis.returnBy)}. Analysed ${date(analysis.analysedAt)}${
+          analysis.estimatedValueMinor === undefined
+            ? ' — no contract value or programme set yet, so the commercial-term risk below is carried but not yet sized. ' +
+              'It sizes itself from your take-off estimate as soon as you price the job.'
+            : analysis.sizedFrom === 'ESTIMATE'
+              ? ` — commercial-term risk sized against your take-off estimate of ${money(analysis.estimatedValueMinor)}` +
+                `${analysis.durationWeeks === undefined ? '' : ` over ${analysis.durationWeeks} weeks`}. It updates as the estimate firms up.`
+              : ` against ${money(analysis.estimatedValueMinor)}${analysis.durationWeeks === undefined ? '' : ` over ${analysis.durationWeeks} weeks`} — every exposure below ` +
+                'is computed against those figures, so a matrix read months later still shows what it was judged on.'
+        }
       </p>
 
       <div class="grid g4" style="padding:13px 17px 0">
@@ -569,6 +837,90 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
           <div class="metric ${raw(analysis.clarifications.length === 0 ? 'good' : 'warn')}">${analysis.clarifications.length}</div>
           <div class="metric-sub">Questions that have to go before the clarification deadline, not after.</div>
         </div>
+      </div>
+
+      <div class="card" style="margin:13px 17px 0">
+        <h2 style="margin:0 0 2px">What’s needed, and how to add each</h2>
+        <p style="font-size:12.5px;color:var(--text-3);margin:0 0 10px">
+          Everything still outstanding on this tender, grouped by how you clear it — so each line tells you the route,
+          rather than leaving you to read it off the status column. Clear what you can here; the full matrix and evidence
+          tables are below.
+        </p>
+        ${
+          nothingOutstanding
+            ? html`<div class="notice ok"><div>
+                <b>Nothing outstanding that the platform can check.</b> Every pass/fail requirement is evidenced and no
+                question is waiting for the buyer. The scored sections are answered when you write the response pack.
+              </div></div>`
+            : html`
+                ${
+                  recordFacts.length > 0
+                    ? html`<div style="margin-bottom:13px">
+                        <div style="font-weight:600;font-size:13px">Record a company fact
+                          <span style="color:var(--text-3);font-weight:400">— clears the moment you save it</span></div>
+                        <div style="font-size:12px;color:var(--text-3);margin:2px 0 6px">
+                          Insurances, accreditations, turnover, DBS and references. Saving the fact flips these to
+                          Satisfied — the matrix re-checks your record every time it is read.
+                        </div>
+                        ${table({
+                          headers: ['Ref', 'Requirement', 'What to record'],
+                          rows: recordFacts.map((line) => [
+                            html`${line.reference}${line.mandatory ? badge('mandatory', 'bad') : ''}`,
+                            html`<span style="font-size:12px">${line.requirement}</span>`,
+                            html`<span style="font-size:12px;color:var(--text-3)">${line.evidenceRequired}</span>`,
+                          ]),
+                        })}
+                        <button class="btn sm" data-command="company-facts" style="margin-top:6px">Record the company’s facts</button>
+                      </div>`
+                    : ''
+                }
+                ${
+                  fileDocs.length > 0
+                    ? html`<div style="margin-bottom:13px">
+                        <div style="font-weight:600;font-size:13px">File a document &amp; assert a claim
+                          <span style="color:var(--text-3);font-weight:400">— the buyer wants to see it</span></div>
+                        <div style="font-size:12px;color:var(--text-3);margin:2px 0 6px">
+                          A certificate or policy the register does not hold yet. File it, then assert a claim against it so
+                          it is traceable — and have someone other than the asserter verify it before you submit.
+                        </div>
+                        ${table({
+                          headers: ['Ref', 'Requirement', 'Evidence needed'],
+                          rows: fileDocs.map((o) => [
+                            html`${o.reference}${o.mandatory ? badge('mandatory', 'bad') : ''}`,
+                            html`<span style="font-size:12px">${o.requirement}</span>`,
+                            html`<span style="font-size:12px;color:var(--text-3)">${o.evidenceRequired}</span>`,
+                          ]),
+                        })}
+                        <button class="btn sm" data-command="assert-claim" style="margin-top:6px">Assert a claim</button>
+                      </div>`
+                    : ''
+                }
+                ${
+                  raiseClars.length > 0
+                    ? html`<div style="margin-bottom:13px">
+                        <div style="font-weight:600;font-size:13px">Raise a clarification
+                          <span style="color:var(--text-3);font-weight:400">— only the buyer can answer these</span></div>
+                        <div style="font-size:12px;color:var(--text-3);margin:2px 0 6px">
+                          The analysis raised these itself. One press puts them on the clarification register as a TQ; you
+                          then send them from Tender &amp; Procurement — paste into the buyer’s portal before their
+                          clarification deadline, as the platform does not transmit to the portal itself.
+                        </div>
+                        ${raiseClars.map((c) => html`<div style="font-size:12px;margin:2px 0">• ${c}</div>`)}
+                        <button class="btn sm" data-raise-clars="${analysis.analysisId}" data-raise-project="${analysis.projectId}" style="margin-top:6px">Raise these to the client</button>
+                      </div>`
+                    : ''
+                }
+                ${
+                  unknownToAnswer.length > 0
+                    ? html`<div class="notice" style="margin-top:4px"><div style="font-size:12px">
+                        <b>${unknownToAnswer.length} requirement${unknownToAnswer.length === 1 ? '' : 's'}</b> the platform
+                        cannot check for you — these are answered in the response pack when you write it
+                        (“Write the next section”), not by a fact or a document.
+                      </div></div>`
+                    : ''
+                }
+              `
+        }
       </div>
 
       ${
@@ -634,6 +986,76 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
                 still your decision, and it never invents a document you do not have. Only the lines that need action are
                 listed; the rest are covered.
               </p>
+
+              ${
+                coverage.toAttach.length > 0
+                  ? html`<h2 style="padding:13px 17px 0">Attach these when you submit to the client portal</h2>
+                      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                        The distinct documents the register already holds that answer this matrix — one line per document,
+                        however many requirements it covers. A proposed match (${'?'}) is yours to confirm; a pending
+                        document is yours to verify before it is sent.
+                      </p>
+                      ${table({
+                        headers: ['Document', 'Answers', 'Standing'],
+                        rows: coverage.toAttach.map((a) => [
+                          html`${a.reference} — <span style="font-size:12px;color:var(--text-3)">${a.claim}</span>`,
+                          html`${a.linkedRefs.map((r) => badge(r, 'ok'))}${a.suggestedRefs.map((r) => badge(`${r}?`, 'warn'))}${
+                            a.suggestedRefs.length > 0
+                              ? html`<br><span style="font-size:11px;color:var(--text-3)">? proposed — confirm it answers the requirement</span>`
+                              : ''
+                          }`,
+                          badge(humanise(a.standing), a.standing === 'APPROVED' ? 'ok' : a.standing === 'PENDING' ? 'warn' : 'bad'),
+                        ]),
+                      })}`
+                  : ''
+              }
+
+              ${
+                coverage.toObtain.length > 0
+                  ? html`<h2 style="padding:13px 17px 0">Add these to your library before you submit</h2>
+                      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                        The pass/fail evidence gates nothing on file answers — the documents to go and get (insurances,
+                        accreditations, checks, policies, references), not the scored questions, which are answered in the
+                        submission itself. The mandatory ones end the bid if still open on the day, so they are first. File
+                        the document and assert a claim against it, or raise a clarification if the buyer should not be asking.
+                      </p>
+                      ${table({
+                        headers: ['Ref', 'Requirement', 'Evidence needed', 'Why'],
+                        rows: coverage.toObtain.map((o) => [
+                          html`${o.reference}${o.mandatory ? badge('mandatory', 'bad') : ''}`,
+                          html`<span style="font-size:12px">${o.requirement}</span>`,
+                          html`<span style="font-size:12px;color:var(--text-3)">${o.evidenceRequired}</span>`,
+                          o.reason === 'MISSING' ? badge('nothing on file', 'bad') : badge('expired or not current', 'warn'),
+                        ]),
+                      })}`
+                  : ''
+              }
+
+              ${
+                (coverage.undertakings ?? []).length > 0
+                  ? html`<h2 style="padding:13px 17px 0">Compliance undertakings — the platform drafted these; confirm each is true</h2>
+                      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                        These lines are answered by a statement, not a document. The agent has written each confirmation
+                        from the requirement; confirming is <b>you declaring it true</b> — the platform never confirms on
+                        your behalf. ${coverage.undertakings.filter((u) => !u.confirmed).length} of ${coverage.undertakings.length} still to confirm.
+                        ${
+                          can('ESTIMATE_TENDER', 'A') && coverage.undertakings.some((u) => !u.confirmed)
+                            ? html`<br><button class="btn sm" data-confirm-undertakings="${analysis.analysisId}" style="margin-top:8px">Confirm all as true</button>`
+                            : ''
+                        }
+                      </p>
+                      ${table({
+                        headers: ['Ref', 'Drafted confirmation', 'Status'],
+                        rows: coverage.undertakings.map((u) => [
+                          html`<span style="font-size:12px">${u.requirement}</span>`,
+                          html`<span style="font-size:12px;color:var(--text-3)">${u.statement}</span>`,
+                          u.confirmed ? badge('confirmed', 'ok') : badge('draft — confirm', 'warn'),
+                        ]),
+                      })}`
+                  : ''
+              }
+
+              <h2 style="padding:15px 17px 0">Every requirement that needs action</h2>
               ${table({
                 headers: ['Ref', 'Requirement', 'Standing', 'Held evidence and suggestions'],
                 rows: coverage.requirements
@@ -744,24 +1166,31 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
       <div class="grid g2" style="padding:13px 17px 15px">
         <div>
           <h2 style="margin-bottom:6px">The buyer's marking scheme</h2>
-          <p style="font-size:12.5px;color:var(--text-3);margin:0 0 8px">
-            ${
-              analysis.weightings.stated === 0
+          ${(() => {
+            const w = analysis.weightings;
+            const st = w.status ?? (w.complete ? 'COMPLETE' : w.stated === 0 ? 'NONE' : w.stated > 100 ? 'NESTED' : 'SHORT');
+            const note =
+              st === 'NONE'
                 ? 'The invitation stated no weightings. Ask for the breakdown before pricing — an evaluation nobody can see is one nobody can bid to.'
-                : analysis.weightings.complete
+                : st === 'COMPLETE'
                   ? 'The stated weightings total 100%. The full breakdown is published.'
-                  : `The stated weightings total ${analysis.weightings.stated}%, not 100%. Part of how this is being marked has not been disclosed.`
-            }
-          </p>
-          <div class="split-list">
-            ${analysis.weightings.declared.map(
-              (w) => html`<div class="row"><span class="lbl">${humanise(w.category)}</span><span class="val">${w.percent}%</span></div>`,
-            )}
-            <div class="row">
-              <span class="lbl"><b>Stated total</b></span>
-              <span class="val">${badge(`${analysis.weightings.stated}%`, analysis.weightings.complete ? 'ok' : 'warn')}</span>
-            </div>
-          </div>
+                  : st === 'NESTED'
+                    ? 'The criteria are nested — the sub-weightings are percentages of a section, not of the whole, so they do not add to a single total. The top-level split (typically a price / quality share) is set out in the ITT; do not read the sub-weightings as shares of the whole mark.'
+                    : `The stated weightings total ${w.stated}%, under 100%. Part of how this is being marked has not been disclosed.`;
+            return html`
+              <p style="font-size:12.5px;color:var(--text-3);margin:0 0 8px">${note}</p>
+              ${
+                st === 'NESTED'
+                  ? html`<p style="font-size:12px;color:var(--text-3);margin:0"><b>Scored on:</b> ${w.declared.map((d) => humanise(d.category)).join(', ')}. The ITT carries the exact split.</p>`
+                  : html`<div class="split-list">
+                      ${w.declared.map((d) => html`<div class="row"><span class="lbl">${humanise(d.category)}</span><span class="val">${d.percent}%</span></div>`)}
+                      <div class="row">
+                        <span class="lbl"><b>Stated total</b></span>
+                        <span class="val">${badge(`${w.stated}%`, w.complete ? 'ok' : 'warn')}</span>
+                      </div>
+                    </div>`
+              }`;
+          })()}
         </div>
         <div>
           <h2 style="margin-bottom:6px">Questions for the buyer</h2>
@@ -769,12 +1198,34 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
             Raised by the analysis rather than typed by somebody. These go through the clarification process and are
             answered to every bidder, so asking late is asking the competition's question for them.
           </p>
+          <button class="btn quiet sm" data-ai-review="${analysis.projectId}" style="margin:0 0 8px"
+            title="A bid-manager read of the tender for genuine clarification questions — contradictions, missing information, ambiguous scope — each quoting the passage it comes from. It proposes; you verify and raise.">
+            Ask the AI to review the tender (expert clarifications)
+          </button>
+          <div data-ai-review-results="${analysis.projectId}" style="margin-bottom:8px"></div>
           ${
             analysis.clarifications.length === 0
-              ? html`<div class="empty"><b>Nothing to ask</b>The invitation is internally consistent and insurable as written.</div>`
-              : html`<div class="split-list">
-                  ${analysis.clarifications.map((c) => html`<div class="row"><span class="lbl">${c}</span></div>`)}
-                </div>`
+              ? html`<div class="empty"><b>No question the analysis can prove</b>
+                  The invitation is internally consistent and insurable as written, so there is nothing to ask on its
+                  behalf — a clarification nobody needs is one the competition reads too. If you need to put a question
+                  to the buyer yourself, raise it on <b>Tender &amp; Procurement → “Raise clarification”</b>: it then
+                  appears on the clarification register with a <b>“Copy all questions to send”</b> button, to paste into
+                  the buyer’s portal before the clarification deadline.</div>`
+              : html`
+                  ${
+                    can('PROCUREMENT_AWARD', 'C')
+                      ? html`<button class="btn sm" data-raise-clars="${analysis.analysisId}" data-raise-project="${analysis.projectId}" style="margin-bottom:8px">
+                          Raise these to the client
+                        </button>
+                        <p style="font-size:11.5px;color:var(--text-3);margin:0 0 8px">
+                          One press puts every question above on the clarification register as a TQ, to the client — no retyping.
+                          Already-raised ones are skipped. Send and record the answers on Tender &amp; Procurement.
+                        </p>`
+                      : ''
+                  }
+                  <div class="split-list">
+                    ${analysis.clarifications.map((c) => html`<div class="row"><span class="lbl">${c}</span></div>`)}
+                  </div>`
           }
         </div>
       </div>
@@ -784,6 +1235,99 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
 
 /** Every command on this screen runs before a project exists. */
 const TENANT = { tenantScoped: true };
+
+/**
+ * A reading across the live tenders — what needs attention, before a tender is
+ * picked to work.
+ *
+ * This is the insight surface the tenant-wide pipeline had none of: the AI
+ * Insight panel reads one project's proposals, so with no project selected it
+ * could only error. This is arithmetic over the board already on screen —
+ * nothing is fetched and no model is called — so it is always there. It names
+ * what is closing, what is not ready to bid, what has a critical clarification
+ * outstanding and what mandatory return has no owner, each the thing that stops
+ * a bid going in, and offers the way straight to the tender that carries it.
+ */
+function tenderAttention(board) {
+  const TERMINAL = ['NO_BID', 'CONVERTED', 'LOST'];
+  const live = board.filter((t) => !TERMINAL.includes(t.stage));
+
+  const closing = live
+    .filter((t) => typeof t.businessDaysRemaining === 'number' && t.businessDaysRemaining <= 10)
+    .sort((a, b) => a.businessDaysRemaining - b.businessDaysRemaining);
+  const notReady = live.filter((t) => (t.blockers ?? []).length > 0);
+  const reReview = live.filter((t) => (t.reReviewReasons ?? []).length > 0);
+  const criticalClar = live.filter((t) => (t.clarifications ?? []).some((c) => c.severity === 'CRITICAL'));
+  const unowned = live.flatMap((t) =>
+    (t.returns ?? [])
+      .filter((d) => d.mandatory && !d.owner)
+      .map((d) => ({ tender: t, deliverable: d })),
+  );
+
+  const metrics = [
+    { n: live.length, k: 'Live tenders', tone: '' },
+    { n: closing.length, k: 'Closing within 10 days', tone: closing.length > 0 ? 'warn' : '' },
+    { n: notReady.length, k: 'Not ready to bid', tone: notReady.length > 0 ? 'bad' : '' },
+    { n: unowned.length, k: 'Mandatory returns unowned', tone: unowned.length > 0 ? 'warn' : '' },
+  ];
+
+  // The tender's row-level entry point, where it carries the project the focus
+  // keys on. Without one there is nothing to focus onto, so the reference is
+  // shown plain rather than as a button that would land nowhere.
+  const go = (t, text) =>
+    t.projectId
+      ? html`<button class="btn quiet sm" data-focus-tender="${t.projectId}">${text}</button>`
+      : html`<span>${text}</span>`;
+
+  const rows = [
+    ...closing.slice(0, 5).map(
+      (t) => html`<div class="row">
+        <span class="lbl">${raw(badge(`${t.businessDaysRemaining}d`, t.businessDaysRemaining <= 5 ? 'bad' : 'warn'))} ${t.reference} · ${t.clientName} — closing</span>
+        <span class="val">${go(t, 'Work on this')}</span>
+      </div>`,
+    ),
+    ...reReview.slice(0, 3).map(
+      (t) => html`<div class="row">
+        <span class="lbl">${raw(badge('re-review', 'warn'))} ${t.reference} — an addendum changed it</span>
+        <span class="val">${go(t, 'Work on this')}</span>
+      </div>`,
+    ),
+    ...criticalClar.slice(0, 3).map(
+      (t) => html`<div class="row">
+        <span class="lbl">${raw(badge('critical', 'bad'))} ${t.reference} — a clarification is outstanding</span>
+        <span class="val">${go(t, 'Work on this')}</span>
+      </div>`,
+    ),
+    ...unowned.slice(0, 5).map(
+      ({ tender, deliverable }) => html`<div class="row">
+        <span class="lbl">${raw(badge('no owner', 'warn'))} ${tender.reference} · ${deliverable.reference} — ${deliverable.title}</span>
+        <span class="val">${go(tender, 'Work on this')}</span>
+      </div>`,
+    ),
+  ];
+
+  return html`<div class="card pad0">
+    <h3 style="padding:15px 17px 0">Where your tenders need attention</h3>
+    <div class="metric-sub" style="padding:4px 17px 0">
+      ${live.length === 0
+        ? 'No live tender is in play. Register an opportunity and record its ITT to start one.'
+        : 'Read across every live tender — what is closing, what is not ready, and what is blocking a bid. Press “Work on this” to take one on.'}
+    </div>
+    <div class="figure-strip" style="padding:11px 17px 4px">
+      ${metrics.map(
+        (m) => html`<div>
+          <div class="fig-k">${m.k}</div>
+          <div class="metric ${raw(m.tone)}">${m.n}</div>
+        </div>`,
+      )}
+    </div>
+    ${rows.length > 0
+      ? html`<div class="split-list" style="padding:6px 17px 15px">${rows}</div>`
+      : live.length > 0
+        ? html`<div class="metric-sub" style="padding:9px 17px 15px">Every live tender is on track — nothing closing inside ten days, and no blocker, critical clarification or unowned mandatory return.</div>`
+        : html`<div style="padding:0 0 6px"></div>`}
+  </div>`;
+}
 
 export async function pipeline(root) {
   const [criteria, summary, discipline, winRate, library, profile, radar, tenders, permissions, matrices, claimRegister, projectList, portfolioList, tradeCatalogue] = await Promise.all([
@@ -828,7 +1372,7 @@ export async function pipeline(root) {
   // The reader is project-scoped: a reading is filed against the project the
   // tender is bid from, and it costs ACUs against that project's tenancy.
   const projectId = state.session?.projectId;
-  const [perception, evidence, ingestion, bidPacks, assurance, portalPort, submissions, flow] = projectId
+  const [perception, evidence, ingestion, bidPacks, assurance, portalPort, submissions, flow, tenderDrafts] = projectId
     ? await Promise.all([
         api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
         api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
@@ -852,8 +1396,11 @@ export async function pipeline(root) {
         // Where this job is on the road from an enquiry to a price or a
         // submission, and the one thing to do next. Computed server-side.
         loadFlow(projectId),
+        // The programme the buyer asks for with the return, drafted from the
+        // measured bill and confirmed into the project's programme.
+        api.read(`/v1/projects/${projectId}/programme/tender-drafts`, 'WORKPACKAGES_TASKS').catch((error) => ({ error })),
       ])
-    : [null, null, null, null, null, null, null, null];
+    : [null, null, null, null, null, null, null, null, null];
 
   // The register carries counts; the findings themselves are what somebody acts
   // on, so the newest review is opened in full rather than left behind a click.
@@ -865,37 +1412,49 @@ export async function pipeline(root) {
           .catch(() => null)
       : null;
 
-  /*
-   * The sections a library answer can be recorded against.
-   *
-   * The pack register carries counts, not sections, so recording a use would
-   * otherwise mean typing a matrix reference — and a typed reference is how one
-   * section becomes two rows that no median can be taken across. The packs
-   * still open are read in full instead, so the chooser can only offer a
-   * section that exists. There are rarely more than two or three open at once,
-   * and an issued pack is excluded: an answer cannot first go out on a
-   * submission that has already gone.
-   */
-  const openPacks = (bidPacks?.packs ?? []).filter((pack) => pack.status !== 'ISSUED');
-  const packSections = projectId
+  // The full pack, sections and all, fetched once and kept — so the submission
+  // can be read, edited and downloaded on this screen rather than only counted.
+  // The register above carries counts; this carries the prose.
+  //
+  // **Issued packs are included here, deliberately.** They used to be excluded,
+  // and that made the whole workflow a dead-end at its last step: the moment the
+  // record was frozen — which is exactly when somebody needs the clean PDF of
+  // what was sent — the pack dropped out of this list and the "Download
+  // submission (PDF)" button vanished with it. An issued pack is read-only
+  // below (the Edit button is withheld; the backend refuses an edit either way),
+  // but it can still be read, copied and downloaded.
+  const fullPacks = projectId
     ? (
         await Promise.all(
-          openPacks.map((pack) =>
+          (bidPacks?.packs ?? []).map((pack) =>
             api
               .get(`/v1/projects/${projectId}/bid-responses/${pack.id}`)
-              .then((full) =>
-                (full.sections ?? []).map((section) => ({
-                  value: `${pack.id}::${section.key}`,
-                  label: `${pack.reference} · ${section.key} — ${section.title}`,
-                })),
-              )
-              // A pack that will not open is left out rather than offered as an
-              // option that cannot be submitted.
-              .catch(() => []),
+              .then((full) => ({ pack, sections: full.sections ?? [] }))
+              // A pack that will not open is carried with no sections rather than
+              // dropped, so the register and the reader agree on what exists.
+              .catch(() => ({ pack, sections: [] })),
           ),
         )
-      ).flat()
+      )
     : [];
+  /*
+   * The sections a library answer can be recorded against, or the next one to
+   * write — the chooser the two command forms below read from.
+   *
+   * An issued pack is excluded: an answer cannot first go out on a submission
+   * that has already gone, so its sections are not offered to write to or record
+   * a use against. That is the chooser's rule, not the reader's — the reader
+   * above shows an issued pack so it can be downloaded; this does not offer its
+   * sections for editing.
+   */
+  const packSections = fullPacks
+    .filter(({ pack }) => pack.status !== 'ISSUED')
+    .flatMap(({ pack, sections }) =>
+    sections.map((section) => ({
+      value: `${pack.id}::${section.key}`,
+      label: `${pack.reference} · ${section.key} — ${section.title}`,
+    })),
+  );
 
   // Why the reader cannot run here, in the platform's own words rather than a
   // rule copied into the browser: `blockedReason` reads the published
@@ -913,10 +1472,91 @@ export async function pipeline(root) {
   // The role list comes from the published matrix rather than a second copy in
   // the browser: an owner on a deliverable has to be a role the platform knows.
   const roleOptions = Object.keys(permissions.matrix ?? {}).sort().map((role) => ({ value: role, label: humanise(role) }));
-  const invitationOptions = board.map((t) => ({ value: t.invitationId, label: `${t.reference} · ${t.title}` }));
+  // Only the invitations still in play are offered as a target to confirm a
+  // reading against, add a deliverable to, assign a return on or record an
+  // addendum for. A tender that was declined, won-and-converted or lost is not
+  // one you file a fresh matrix or a new return against — and leaving them in
+  // the list is how a reading for one tender gets confirmed onto another by a
+  // single wrong click, which is exactly what happened: a North Lincolnshire
+  // reading built onto a closed job because every tender the account ever had
+  // was in one flat dropdown. The terminal stages match the backend's own
+  // definition (NO_BID, CONVERTED, LOST); everything else — a live or
+  // not-yet-decided pursuit — stays.
+  const TERMINAL_STAGES = ['NO_BID', 'CONVERTED', 'LOST'];
+  const invitationOptions = board
+    .filter((t) => !TERMINAL_STAGES.includes(t.stage))
+    .map((t) => ({ value: t.invitationId, label: `${t.reference} · ${t.title}` }));
   const biddableOptions = board
     .filter((t) => t.stage === 'BID')
     .map((t) => ({ value: t.invitationId, label: `${t.reference} · closes ${t.deadline.local}` }));
+  // One matrix per tender, and only for a tender still in play. A tender's
+  // requirements merge into a single analysis as its documents are read, but
+  // every superseded fragment stays on the append-only ledger — so a tender read
+  // one document at a time had a dozen analyses on file, all mixed together. The
+  // list and the pickers show only the matrix each *live* invitation currently
+  // points to.
+  //
+  // A matrix bound to a tender that is **closed, won or lost** drops out too —
+  // a reading confirmed onto a tender by mistake (the "it went to an old closed
+  // project" that could not be cleared) stops cluttering the live list the
+  // moment that tender is terminal, which is also what "when an opportunity is
+  // closed it must be closed" means for its matrix. It stays on the record,
+  // counted among the superseded, reachable by focusing that tender.
+  //
+  // Where nothing is bound to any tender yet, nothing is hidden, so a first
+  // analysis is never swallowed.
+  const allAnalyses = matrices.analyses ?? [];
+  const boundAnalysisIds = new Set(board.map((t) => t.analysisId).filter(Boolean));
+  const liveAnalysisIds = new Set(
+    board.filter((t) => !TERMINAL_STAGES.includes(t.stage)).map((t) => t.analysisId).filter(Boolean),
+  );
+  const liveAnalyses =
+    boundAnalysisIds.size === 0 ? allAnalyses : allAnalyses.filter((a) => liveAnalysisIds.has(a.analysisId));
+  const supersededAnalyses = allAnalyses.length - liveAnalyses.length;
+  // The matrices not shown in the live list — superseded fragments, and matrices
+  // bound to a closed, won or lost tender. Kept so a person can still open and
+  // read one (the reading confirmed onto the wrong tender by mistake is in here),
+  // rather than it being hidden with no way back to it.
+  const liveAnalysisSet = new Set(liveAnalyses.map((a) => a.analysisId));
+  const hiddenAnalyses = allAnalyses.filter((a) => !liveAnalysisSet.has(a.analysisId));
+
+  /*
+   * One tender per page.
+   *
+   * The reader, the response packs and the red team on the lower half of this
+   * screen are already scoped to the project selected in the session — writing
+   * a section spends that project's ACUs, so it could never be anything else.
+   * The procurement half above them was not: "Invitations in hand" and
+   * "Compliance matrices on file" listed every tender the tenancy holds at
+   * once, so a bid manager working one job read it against the backdrop of
+   * every other — "it is mixing everything regardless of the selected project."
+   *
+   * The focus is the project already selected, because that is the one the
+   * lower half is working. A tender carries the project it is bid from
+   * (`t.projectId`), so when the selected project owns an invitation on the
+   * board, the board and the matrices narrow to it and a bar at the top says
+   * which tender is in focus and offers the way back out. The analytics further
+   * down — the win rate, the decided pipeline — stay tenant-wide, because they
+   * are a reading *across* bids and narrowing them to one would be a lie.
+   *
+   * Focus engages only when the selected project actually has a tender here.
+   * A delivery project opened to look at its costs selects a project too, and
+   * it has no invitation on this board; focusing on nothing would blank the
+   * board behind a bar nobody could clear usefully, so that case shows
+   * everything, exactly as before.
+   */
+  const focusTenders = projectId ? board.filter((t) => t.projectId === projectId) : [];
+  const focused = focusTenders.length > 0;
+  const visibleBoard = focused ? focusTenders : board;
+  const focusAnalysisIds = new Set(focusTenders.map((t) => t.analysisId).filter(Boolean));
+  // Focused, the matrix is drawn from every analysis, not only the live ones, so
+  // a won or lost tender opened on purpose still shows its own matrix — the
+  // exclusion above is about the unfocused list, not about what you asked to see.
+  const shownAnalyses = focused
+    ? allAnalyses.filter((a) => focusAnalysisIds.has(a.analysisId))
+    : liveAnalyses;
+  const focusLabel = focusTenders.map((t) => t.reference).join(', ');
+  const hiddenTenders = board.length - visibleBoard.length;
   /*
    * The trades the register knows, grouped the way it groups them.
    *
@@ -976,8 +1616,56 @@ export async function pipeline(root) {
         `${missing.length > 0 ? ` · ${missing.join(', ')}` : ' · complete'}`,
     }));
 
+  /*
+   * The live actions, scoped to the tender in focus.
+   *
+   * The focus narrows what the page *shows*; this narrows what it *does*. When
+   * the page is focused on one tender, a command that takes an invitation, a
+   * return or a matrix offers only that tender's — so a focused page acts on
+   * nothing but the job in hand, and the wrong-tender slip a tenant-wide
+   * dropdown invites (confirming a reading onto the wrong invitation, the
+   * mistake that started this) cannot happen from here. Off focus, every live
+   * tender is offered, exactly as before — the lists are the same objects.
+   *
+   * A return's chooser carries the invitation in its value (`id::ref`), so it
+   * is filtered on the invitation split back out of it, not on the value whole.
+   */
+  const focusInvitationIds = new Set(focusTenders.map((t) => t.invitationId));
+  const scopedInvitationOptions = focused
+    ? invitationOptions.filter((o) => focusInvitationIds.has(o.value))
+    : invitationOptions;
+  const scopedBiddableOptions = focused
+    ? biddableOptions.filter((o) => focusInvitationIds.has(o.value))
+    : biddableOptions;
+  const scopedReturnOptions = focused
+    ? returnOptions.filter((o) => focusInvitationIds.has(splitReturnTarget(o.value).invitationId))
+    : returnOptions;
+  // Why a focused command is empty, in place of the tenant-wide "record one
+  // first": the invitation is not missing, it is the focus — it is simply not
+  // live to this action (a won or closed tender opened for its costs). Only
+  // reached when focused and the scoped list came back empty.
+  const focusEmptyReason = `The tender in focus (${focusLabel}) has no live invitation to act on here — use “Show all tenders” to act on another.`;
+
   const thresholds = criteria.thresholds;
   const opportunities = summary.opportunities ?? [];
+  /*
+   * Under focus, the opportunities list narrows to the one tender in focus, the
+   * same way the board and the matrices do — "why is everything listed in score
+   * an opportunity" was this table showing every pursuit in the tenancy while a
+   * bid manager was working one job. An opportunity belongs to the focus when it
+   * is tied to the focused project (as a pursuit or once converted), or carries
+   * the same reference as a tender in focus. With nothing in focus, the whole
+   * list shows, exactly as before.
+   */
+  const focusReferences = new Set(focusTenders.map((t) => t.reference).filter(Boolean));
+  const shownOpportunities = focused
+    ? opportunities.filter(
+        (o) =>
+          o.projectId === projectId ||
+          o.convertedProjectId === projectId ||
+          (o.reference && focusReferences.has(o.reference)),
+      )
+    : opportunities;
 
   /*
    * The two halves of the decision this screen is named after, and which of
@@ -1013,6 +1701,22 @@ export async function pipeline(root) {
     (o) => o.stage === 'BID' && !o.projectId && o.outcome?.outcome !== 'LOST',
   );
 
+  /*
+   * Every opportunity picker on this screen obeys the focus the board and the
+   * table already obey. Under focus it defaults to the one tender in focus
+   * rather than to whatever happens to sit first in the tenancy list — the
+   * report that drove this was "Record how a bid ended" opening with a
+   * different council than the one on screen, which, against a write-once
+   * outcome, is how a loss lands on the wrong bid. `focusDefault` returns the
+   * focused pursuit's id for a picker to pre-select, or '' (no forced default,
+   * browser picks the first option) when nothing is in focus or the focused
+   * pursuit is not eligible for that action. With nothing in focus every picker
+   * behaves exactly as before.
+   */
+  const focusDefault = (eligible) =>
+    focused ? (shownOpportunities.find(eligible)?.id ?? '') : '';
+  const outcomePending = (o) => (o.stage === 'BID' || o.stage === 'CONVERTED') && !o.outcome;
+
   render(
     root,
     html`
@@ -1036,9 +1740,9 @@ export async function pipeline(root) {
               { id: 'invitation', label: 'Record an ITT', tone: '',
                 permitted: can('ESTIMATE_TENDER', 'C', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'C', TENANT) },
               { id: 'quote-only', label: 'It only asks for a price',
-                permitted: can('ESTIMATE_TENDER', 'U') && invitationOptions.length > 0,
-                reason: invitationOptions.length === 0
-                  ? 'No invitation is recorded, so there is nothing to record a return against.'
+                permitted: can('ESTIMATE_TENDER', 'U') && scopedInvitationOptions.length > 0,
+                reason: scopedInvitationOptions.length === 0
+                  ? (focused ? focusEmptyReason : 'No invitation is recorded, so there is nothing to record a return against.')
                   : blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
               /*
                * The step everything after it needs, and the one that had no
@@ -1054,9 +1758,9 @@ export async function pipeline(root) {
                * saying what to do about it.
                */
               { id: 'requirements', label: 'Read the invitation into a matrix', tone: '',
-                permitted: can('ESTIMATE_TENDER', 'C', TENANT) && invitationOptions.length > 0,
-                reason: invitationOptions.length === 0
-                  ? 'Record the ITT first — a compliance matrix is bound to the invitation it was read from.'
+                permitted: can('ESTIMATE_TENDER', 'C', TENANT) && scopedInvitationOptions.length > 0,
+                reason: scopedInvitationOptions.length === 0
+                  ? (focused ? focusEmptyReason : 'Record the ITT first — a compliance matrix is bound to the invitation it was read from.')
                   : blockedReason('ESTIMATE_TENDER', 'C', TENANT) },
               { id: 'deliverable', label: 'Add a deliverable',
                 permitted: can('ESTIMATE_TENDER', 'U', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
@@ -1068,14 +1772,19 @@ export async function pipeline(root) {
                * reading filed blocked the decision to bid for ever.
                */
               { id: 'assign-deliverable', label: 'Assign a return',
-                permitted: can('ESTIMATE_TENDER', 'U', TENANT) && returnOptions.length > 0,
-                reason: returnOptions.length === 0
-                  ? 'No invitation has a return register yet. Read one, or add the return items one at a time.'
+                permitted: can('ESTIMATE_TENDER', 'U', TENANT) && scopedReturnOptions.length > 0,
+                reason: scopedReturnOptions.length === 0
+                  ? (focused ? focusEmptyReason : 'No invitation has a return register yet. Read one, or add the return items one at a time.')
                   : blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
               { id: 'addendum', label: 'Record an addendum',
                 permitted: can('ESTIMATE_TENDER', 'U', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
               { id: 'programme', label: 'Build tender programme',
                 permitted: can('ESTIMATE_TENDER', 'C', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'C', TENANT) },
+              { id: 'record-external-submission', label: 'Record a portal submission', tone: 'quiet',
+                permitted: Boolean(projectId) && can('PROCUREMENT_AWARD', 'I'),
+                reason: !projectId
+                  ? 'Open one tender first (focus it), then record that it was submitted on the buyer’s portal.'
+                  : blockedReason('PROCUREMENT_AWARD', 'I') },
             ]),
           )}
         </div>
@@ -1088,19 +1797,65 @@ export async function pipeline(root) {
       -->
       ${raw(flowPanel(flow, { here: 'pipeline' }))}
 
+      ${
+        /*
+         * The focus bar. It only appears once a tender is in focus — when it is
+         * not, the "Work on this" button on each board row is the way in, so an
+         * empty bar would be noise. It names the tender being worked and the way
+         * back out, and it carries the client so the reference alone is not the
+         * only thing telling one tender from another.
+         */
+        focused
+          ? html`<div class="card" style="margin-bottom:14px;border-left:3px solid var(--info)">
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <div style="flex:1 1 auto;min-width:220px">
+                  <div style="font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3)">
+                    Working on one tender
+                  </div>
+                  <div style="font-size:15px;font-weight:600;margin-top:2px">
+                    ${focusLabel}${focusTenders[0]?.clientName ? html` · <span style="font-weight:400;color:var(--text-2)">${focusTenders[0].clientName}</span>` : ''}
+                  </div>
+                  <div style="font-size:12.5px;color:var(--text-3);margin-top:3px">
+                    The invitations board and the compliance matrices below show only this tender${
+                      hiddenTenders > 0
+                        ? ` — ${hiddenTenders} other invitation${hiddenTenders === 1 ? '' : 's'} ${hiddenTenders === 1 ? 'is' : 'are'} hidden while you work it`
+                        : ''
+                    }. The reader, the response packs and the red team were already this tender's.
+                  </div>
+                </div>
+                <button class="btn quiet" data-close-focus>Show all tenders</button>
+              </div>
+            </div>`
+          : ''
+      }
+
       <div id="pipeline-insight" style="margin-bottom:14px"></div>
 
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Invitations in hand</h2>
         <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
-          ${tenders.summary} The deadline is recorded in the zone it is read in and resolved to one instant — a portal
+          ${focused
+            ? html`Showing the one tender you are working on. ${hiddenTenders > 0 ? html`Use <b>Show all tenders</b> above to see the other ${hiddenTenders}.` : ''}`
+            : tenders.summary} The deadline is recorded in the zone it is read in and resolved to one instant — a portal
           that closes at noon in Dublin has closed an hour before noon here.
         </p>
         ${table({
           headers: ['Reference', 'Client', 'Closes', 'Zone', 'Left', 'Deliverables', 'Addenda', 'Stage', 'Ready to bid', 'Matrix'],
           align: ['', '', '', '', 'num', 'num', 'num', '', '', ''],
-          rows: board.map((t) => [
-            html`${t.reference}<br><span style="font-size:11.5px;color:var(--text-3)">${t.title}</span>`,
+          rows: visibleBoard.map((t) => [
+            html`${t.reference}<br><span style="font-size:11.5px;color:var(--text-3)">${t.title}</span>${
+              /*
+               * The way into one tender's page. Shown only when the board is
+               * showing every tender and this one carries the project its bid
+               * is written against — focusing keys on that project, so a
+               * pursuit that names none has nothing to focus onto and says so
+               * through its site-visit row rather than a button that would land
+               * on nobody's job.
+               */
+              !focused && t.projectId
+                ? html`<br><button class="btn quiet sm" data-focus-tender="${t.projectId}" style="margin-top:4px">Work on this</button>`
+                : ''
+            }`,
             t.clientName,
             t.deadline.local.replace('T', ' '),
             html`<span style="font-size:11.5px;color:var(--text-3)">${t.deadline.timeZone}</span>${
@@ -1125,14 +1880,14 @@ export async function pipeline(root) {
           empty: 'No invitation recorded',
         })}
         ${
-          board.some((t) => t.blockers.length > 0 || t.reReviewReasons.length > 0 || t.clarifications.length > 0)
+          visibleBoard.some((t) => t.blockers.length > 0 || t.reReviewReasons.length > 0 || t.clarifications.length > 0)
             ? html`<div class="split-list" style="padding:0 17px 15px">
-                ${board.flatMap((t) => [
+                ${visibleBoard.flatMap((t) => [
                   ...t.reReviewReasons.map(
                     (reason) => html`<div class="row"><span class="lbl">${t.reference} ${badge('re-review', 'warn')} ${reason}</span></div>`,
                   ),
                   ...t.blockers.map(
-                    (blocker) => html`<div class="row"><span class="lbl">${t.reference} ${badge('blocks the bid', 'bad')} ${blocker}</span></div>`,
+                    (blocker) => html`<div class="row"><span class="lbl">${t.reference} ${badge('needed to submit', 'bad')} ${blocker}</span></div>`,
                   ),
                   ...t.clarifications.map(
                     (c) => html`<div class="row">
@@ -1161,9 +1916,39 @@ export async function pipeline(root) {
            * no project there is nowhere for them to go, and it says so rather
            * than offering a button that would land on somebody else's job.
            */
-          board.some((t) => t.siteVisit || t.clarificationDeadline)
+          visibleBoard.some((t) => t.siteVisit || t.clarificationDeadline || t.programme)
             ? html`<div class="split-list" style="padding:0 17px 15px">
-                ${board.flatMap((t) => [
+                ${visibleBoard.flatMap((t) => [
+                  /*
+                   * The bid programme, where one is built. It was recorded and
+                   * never shown — "Build tender programme" answered "Recorded"
+                   * and the stages it had worked out were on no screen.
+                   */
+                  ...(t.programme
+                    ? [
+                        html`<div class="row" style="align-items:flex-start">
+                          <span class="lbl">
+                            ${t.reference} · bid programme
+                            ${t.programme.compression
+                              ? html`<div>${badge('compressed', 'warn')}</div>
+                                  <div class="metric-sub" style="max-width:260px">
+                                    ${t.programme.availableBusinessDays} working days against the normal
+                                    ${t.programme.compression.normalMinimumDays}. Why: ${t.programme.compression.reason}
+                                  </div>`
+                              : ''}
+                          </span>
+                          <span class="val" style="text-align:left">
+                            ${t.programme.milestones.map(
+                              (m) => html`<div>
+                                ${m.label}: ${date(m.start)}${m.finish !== m.start ? html` → ${date(m.finish)}` : ''}
+                                <span class="metric-sub">· ${m.businessDays === 0 ? 'same day as the stage before' : `${m.businessDays} working day${m.businessDays === 1 ? '' : 's'}`}</span>
+                                ${m.belowMinimum ? badge('short', 'warn') : ''}
+                              </div>`,
+                            )}
+                          </span>
+                        </div>`,
+                      ]
+                    : []),
                   ...(t.clarificationDeadline
                     ? [
                         html`<div class="row">
@@ -1204,12 +1989,12 @@ export async function pipeline(root) {
            * not readable anywhere in the product: the gate would name `APP5`
            * as missing an owner while no screen said what `APP5` was.
            */
-          board.some((t) => (t.returns ?? []).length > 0)
+          visibleBoard.some((t) => (t.returns ?? []).length > 0)
             ? html`<div style="padding:0 17px 15px">
                 <h3 style="font-size:13px;margin:4px 0 7px">What has to go back</h3>
                 ${table({
                   headers: ['Invitation', 'Ref', 'What it is', 'Pass/fail', 'Owner', 'Our date', 'Source', 'Format'],
-                  rows: board.flatMap((t) =>
+                  rows: visibleBoard.flatMap((t) =>
                     (t.returns ?? []).map((d) => [
                       t.reference,
                       d.reference,
@@ -1241,7 +2026,8 @@ export async function pipeline(root) {
         projectName: state.project?.name ?? '',
         blocked: readBlocked,
         tenderProjects,
-        invitationOptions,
+        invitationOptions: scopedInvitationOptions,
+        projectHasInvitation: focused,
       })}
 
       <section class="card" style="margin-bottom:14px" aria-labelledby="pl-bid-h">
@@ -1311,6 +2097,8 @@ export async function pipeline(root) {
                     commandBar([
                       { id: 'bid-plan', label: 'Plan a response pack', tone: '',
                         permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
+                      { id: 'bid-replan', label: 'Re-plan from the scored questions',
+                        permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
                       { id: 'bid-section', label: 'Write the next section',
                         permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
                       { id: 'bid-issue', label: 'Issue the pack',
@@ -1319,8 +2107,31 @@ export async function pipeline(root) {
                   )}
                 </div>
                 <p class="metric-sub">${(bidPacks.summary ?? '')}</p>
+                ${(() => {
+                  // A pack planned from every written requirement, not from the
+                  // questions the buyer marks. Shown so a pack of ninety-six
+                  // sections against a seven-question tender is caught before
+                  // it is paid for, not after.
+                  const unscored = (bidPacks.packs ?? []).filter(
+                    (pack) => pack.status !== 'ISSUED' && pack.basis !== 'SCORED_QUESTIONS',
+                  );
+                  if (unscored.length === 0) return '';
+                  return html`<div class="notice info" style="margin-top:11px"><div>
+                    <b>${unscored
+                      .map((pack) => {
+                        const total = pack.completeness?.total ?? 0;
+                        return `${pack.reference} (${total} section${total === 1 ? '' : 's'})`;
+                      })
+                      .join(', ')}
+                    ${unscored.length === 1 ? 'answers' : 'answer'} every written requirement, not only the scored questions.</b>
+                    That is right where the buyer marks no questionnaire. Where it does — “Quality Questionnaire”,
+                    “Q1 (30%)”, a word limit per answer — the evaluator marks only those answers. Read the questionnaire
+                    above and confirm the reading, then use <i>Re-plan from the scored questions</i> with the tender’s
+                    current matrix.
+                  </div></div>`;
+                })()}
                 ${table({
-                  headers: ['Pack', 'Client', 'Return by', 'Written', 'Outstanding', 'Passes', 'State'],
+                  headers: ['Pack', 'Client', 'Return by', 'Written', 'Outstanding', 'Passes', 'State', ''],
                   rows: (bidPacks.packs ?? []).map((pack) => [
                     pack.reference,
                     pack.clientName,
@@ -1335,6 +2146,17 @@ export async function pipeline(root) {
                       : pack.completeness?.ready
                         ? badge('ready to issue', 'good')
                         : badge('drafting', 'neutral'),
+                    /*
+                     * Every answer still unwritten, in one press: one price for
+                     * all of them, then the one-answer route once per answer, so
+                     * a dropped connection costs one answer, not the set.
+                     */
+                    pack.status !== 'ISSUED' && (pack.toWrite ?? 0) > 0 && can('ESTIMATE_TENDER', 'U')
+                      ? html`<button class="btn sm" data-draft-all="${pack.id}" data-remaining="${pack.toWrite}"
+                          data-reference="${pack.reference}">
+                          Draft ${pack.toWrite === 1 ? 'the remaining answer' : `all ${pack.toWrite} remaining answers`}
+                        </button>`
+                      : '',
                   ]),
                   empty: 'No response pack yet. Plan one from a compliance matrix below.',
                 })}
@@ -1360,8 +2182,70 @@ export async function pipeline(root) {
                     const paged = (bidPacks.packs ?? []).flatMap((pack) =>
                       (pack.completeness?.pageLimited ?? []).map((entry) => ({ pack, entry })),
                     );
-                    if (over.length === 0 && paged.length === 0) return '';
+                    // Answers still holding a note to the bid team. The buyer
+                    // reads the note as written, so the pack will not issue.
+                    const unfinished = (bidPacks.packs ?? []).flatMap((pack) =>
+                      (pack.completeness?.unfinished ?? []).map((entry) => ({ pack, entry })),
+                    );
+                    // Staff a one-person firm does not have, and what a reviewer
+                    // would raise but the pack can still go out with.
+                    const staff = (bidPacks.packs ?? []).flatMap((pack) =>
+                      (pack.completeness?.unsupportedStaff ?? []).map((entry) => ({ pack, entry })),
+                    );
+                    const advised = (bidPacks.packs ?? []).flatMap((pack) =>
+                      (pack.completeness?.advisories ?? []).map((entry) => ({ pack, entry })),
+                    );
+                    if (
+                      over.length === 0 && paged.length === 0 && unfinished.length === 0 &&
+                      staff.length === 0 && advised.length === 0
+                    ) return '';
                     return html`
+                      ${staff.length === 0
+                        ? ''
+                        : html`<div class="notice bad" style="margin-top:11px"><div>
+                            <b>${staff.length} section(s) claim staff your firm does not have.</b>
+                            Your company facts say every bid is yours alone, so a “Bid Manager”, “Quality Manager” or
+                            “Planning Lead” in an answer is a claim an evaluator can test at interview. Redraft the
+                            section — the drafter now names who actually does the work. The pack will not issue until
+                            none are left.
+                            ${staff.map(
+                              ({ pack, entry }) => html`<div style="margin-top:6px">
+                                ${pack.reference} · ${entry.key} — ${entry.roles.join(', ')}.
+                                <button class="btn sm" data-redraft="${entry.key}" data-pack="${pack.id}">
+                                  Redraft this section
+                                </button>
+                              </div>`,
+                            )}
+                          </div></div>`}
+                      ${advised.length === 0
+                        ? ''
+                        : html`<div class="notice warn" style="margin-top:11px"><div>
+                            <b>${advised.length} thing(s) a reviewer would raise.</b>
+                            None of these stops the pack issuing; each is worth a minute before it goes.
+                            ${advised.map(
+                              ({ pack, entry }) => html`<div style="margin-top:6px">
+                                ${pack.reference} · ${entry.key} — ${entry.detail}
+                              </div>`,
+                            )}
+                          </div></div>`}
+                      ${unfinished.length === 0
+                        ? ''
+                        : html`<div class="notice bad" style="margin-top:11px"><div>
+                            <b>${unfinished.length} section(s) still hold a note to the bid team instead of an answer.</b>
+                            Wording like “the bid team will insert…” or “(to be inserted)” goes to the buyer exactly as
+                            written, and an evaluator scores it as a gap. Redraft the section — the drafter now commits
+                            to a method, a timing and a named person instead — or edit it yourself. The pack will not
+                            issue until none are left.
+                            ${unfinished.map(
+                              ({ pack, entry }) => html`<div style="margin-top:6px">
+                                ${pack.reference} · ${entry.key}${entry.mandatory ? ' (mandatory)' : ''} —
+                                <i>${entry.phrases[0]}</i>${entry.phrases.length > 1 ? ` and ${entry.phrases.length - 1} more` : ''}.
+                                <button class="btn sm" data-redraft="${entry.key}" data-pack="${pack.id}">
+                                  Redraft this section
+                                </button>
+                              </div>`,
+                            )}
+                          </div></div>`}
                       ${over.length === 0
                         ? ''
                         : html`<div class="notice bad" style="margin-top:11px"><div>
@@ -1396,6 +2280,84 @@ export async function pipeline(root) {
                   })()
                 }
               `}
+              ${projectId ? tenderProgrammePanel(tenderDrafts) : ''}
+              ${
+                /*
+                 * The submission, read back and made editable. Until this, a
+                 * section could be drafted and counted but never seen — so the
+                 * real project names an experience answer needs, and the named
+                 * site manager a team answer needs, had nowhere to go. Each
+                 * drafted section shows in full, with Edit (rewrite it as yours)
+                 * and Copy. An edited section is marked yours, not the model's.
+                 */
+                fullPacks.some((fp) => fp.sections.length > 0)
+                  ? html`<div style="margin:16px 17px 4px">
+                      <h2 style="font-size:14px;margin:0 0 4px">Read and edit the drafted answers</h2>
+                      <p class="metric-sub" style="margin:0 0 11px">
+                        Every section the drafter has written, in full. Edit one to put your real project names, your team
+                        or your figures in — the drafter writes the method and leaves those for you, because it will not
+                        invent them. An edited section is recorded as yours, not the model’s.
+                      </p>
+                      ${fullPacks
+                        .filter((fp) => fp.sections.length > 0)
+                        .map(
+                          ({ pack, sections }) => html`<div class="card pad0" style="margin-bottom:10px">
+                            <div style="padding:11px 14px;display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
+                              <span>
+                                <b>${pack.reference}</b> · ${pack.clientName} —
+                                ${sections.filter((s) => s.status === 'DRAFTED').length} of ${sections.length} written
+                                ${pack.status === 'ISSUED' ? badge('issued · read-only', 'good') : ''}
+                              </span>
+                              ${
+                                sections.some((s) => s.status === 'DRAFTED' && (s.body ?? []).length > 0)
+                                  ? html`<span style="flex:none;display:flex;gap:7px;flex-wrap:wrap">
+                                      <button class="btn sm" data-download-pack="${pack.id}">Download submission (PDF)</button>
+                                      <button class="btn quiet sm" data-copy-pack="${pack.id}">Copy all answers</button>
+                                    </span>`
+                                  : ''
+                              }
+                            </div>
+                            ${sections.map(
+                              (section) => html`<div style="border-top:1px solid var(--line);padding:11px 14px">
+                                <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
+                                  <b style="font-size:13px">${section.key} — ${section.deliverable || section.title}</b>
+                                  <span style="flex:none">${
+                                    section.status === 'DRAFTED'
+                                      ? badge(
+                                          `${section.words ?? 0} words · ${section.authorship === 'HUMAN' ? 'yours' : 'AI draft'}`,
+                                          section.authorship === 'HUMAN' ? 'ok' : 'info',
+                                        )
+                                      : badge('not written', '')
+                                  }</span>
+                                </div>
+                                ${section.status === 'DRAFTED' && (section.body ?? []).length > 0
+                                  ? html`<div style="margin-top:7px;font-size:13px;line-height:1.55;white-space:pre-wrap">${(section.body ?? []).join('\n\n')}</div>
+                                      <div style="margin-top:9px;display:flex;gap:7px">
+                                        ${pack.status === 'ISSUED'
+                                          ? ''
+                                          : html`<button class="btn quiet sm" data-revise="${pack.id}::${section.key}">Edit this answer</button>`}
+                                        <button class="btn quiet sm" data-copy-section="${pack.id}::${section.key}">Copy</button>
+                                      </div>`
+                                  : // A section nobody has written yet can be written by a
+                                    // person. The only way in used to be the drafter, so an
+                                    // answer written elsewhere — or a deployment with no model —
+                                    // had nowhere to go. Same door as an edit: recorded as
+                                    // yours, and no provider is called.
+                                    html`<div class="metric-sub" style="margin-top:6px">
+                                      Not written yet — write it yourself, or use “Write the next section” above to have the drafter write it.
+                                    </div>
+                                    ${pack.status === 'ISSUED'
+                                      ? ''
+                                      : html`<div style="margin-top:8px">
+                                          <button class="btn quiet sm" data-revise="${pack.id}::${section.key}">Write it yourself</button>
+                                        </div>`}`}
+                              </div>`,
+                            )}
+                          </div>`,
+                        )}
+                    </div>`
+                  : ''
+              }
       </section>
 
       ${!projectId || assurance?.error
@@ -1416,11 +2378,21 @@ export async function pipeline(root) {
             <div class="actions cmd-bar" style="margin:10px 0">
               ${raw(
                 commandBar([
-                  { id: 'bid-challenge', label: 'Attack the pack',
+                  { id: 'bid-checks', label: 'Check the pack — free, no AI',
+                    permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
+                  { id: 'bid-challenge', label: 'Attack the pack', tone: 'quiet',
                     permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
                   { id: 'bid-floor', label: 'Set the quality floor', tone: 'quiet',
                     permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
                   { id: 'finding-dispose', label: 'Record a decision on a finding',
+                    permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
+                  // Issue the pack, repeated here where the findings are decided.
+                  // It is the step after the last decision, and it lived only in
+                  // the pack bar two sections up — so a bidder who had just
+                  // cleared the red team could not find it from where they were.
+                  // Same command id, same gate; it refuses unless the pack is
+                  // complete and the review clears.
+                  { id: 'bid-issue', label: 'Issue the pack',
                     permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
                 ]),
               )}
@@ -1475,14 +2447,17 @@ export async function pipeline(root) {
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Compliance matrices on file</h2>
         <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
-          ${matrices.summary} Every analysis stays readable after the session that produced it — rerunning one to see it
-          again would spend AI budget re-deriving a record the platform already holds, and would write a second analysis
-          of the same invitation into the record.
+          ${focused
+            ? html`The matrix for the tender you are working on.`
+            : html`One matrix per tender: each live invitation’s current matrix, the one its documents merge into as they are read.
+          ${supersededAnalyses > 0
+            ? `${supersededAnalyses} superseded ${supersededAnalyses === 1 ? 'matrix is' : 'matrices are'} kept on the record behind them but not listed here.`
+            : ''}`}
         </p>
         ${table({
           headers: ['Reference', 'Client', 'Returns', 'Requirements', 'Mandatory gaps', 'Bars', 'To ask', 'Exposure', 'Worst term', 'Verdict', ''],
           align: ['', '', '', 'num', 'num', 'num', 'num', 'num', '', '', ''],
-          rows: (matrices.analyses ?? []).map((a) => [
+          rows: shownAnalyses.map((a) => [
             a.reference,
             a.clientName,
             date(a.returnBy),
@@ -1495,9 +2470,154 @@ export async function pipeline(root) {
             a.readyToPrice ? badge('ready to price', 'ok') : badge('not ready', 'bad'),
             html`<button class="btn sm" data-matrix="${a.analysisId}">Open</button>`,
           ]),
-          empty: 'No invitation has been analysed yet',
+          empty: focused
+            ? 'This tender has not been read into a matrix yet. Read the invitation above, and its matrix appears here.'
+            : 'No invitation has been analysed yet',
         })}
+        ${
+          /*
+           * The way back to a matrix that is not in the live list — a superseded
+           * fragment, or one bound to a closed, won or lost tender, including a
+           * reading confirmed onto the wrong tender by mistake. Collapsed by
+           * default so it does not clutter, but it is here, and each one opens
+           * into the same matrix detail as a live one, so nothing read is lost.
+           */
+          hiddenAnalyses.length > 0
+            ? (() => {
+                /*
+                 * Two different things were being hidden under one misleading
+                 * label. `a.bound` is the backend's truth: it is true only for
+                 * the matrix a tender's invitation currently points at.
+                 *
+                 *  - `!a.bound` — an *earlier reading* of a tender. Reading a
+                 *    second document merges into the tender's matrix and leaves
+                 *    the previous one behind; it is not a separate tender and was
+                 *    never "sent to the wrong project". It is history of a live
+                 *    matrix, kept on the append-only ledger.
+                 *  - `a.bound` but hidden — a matrix bound to a tender that is
+                 *    closed, won or lost (or another project's, when you are not
+                 *    focused on it). This is the one that could have been read
+                 *    onto the wrong tender by mistake.
+                 */
+                const earlierReadings = hiddenAnalyses.filter((a) => !a.bound);
+                const otherTenderMatrices = hiddenAnalyses.filter((a) => a.bound);
+                const panelTable = (list) =>
+                  table({
+                    headers: ['Reference', 'Client', 'Returns', 'Requirements', 'Mandatory gaps', 'Bars', ''],
+                    align: ['', '', '', 'num', 'num', 'num', ''],
+                    rows: list.map((a) => [
+                      a.reference,
+                      a.clientName,
+                      date(a.returnBy),
+                      a.requirements,
+                      html`<span style="${raw(a.mandatoryGaps > 0 ? 'color:var(--critical)' : '')}">${a.mandatoryGaps}</span>`,
+                      html`<span style="${raw(a.bars > 0 ? 'color:var(--critical)' : '')}">${a.bars}</span>`,
+                      html`<button class="btn sm" data-matrix="${a.analysisId}">Open</button>`,
+                    ]),
+                    empty: 'None',
+                  });
+                return html`<details style="padding:4px 17px 15px">
+                <summary style="cursor:pointer;font-size:12.5px;color:var(--text-2)">
+                  Show ${hiddenAnalyses.length} earlier and closed-tender ${hiddenAnalyses.length === 1 ? 'matrix' : 'matrices'}
+                </summary>
+                <div style="padding-top:8px">
+                  ${earlierReadings.length > 0
+                    ? html`<p style="font-size:12px;color:var(--text-3);margin:0 0 6px">
+                        <strong>Earlier readings of a live tender (${earlierReadings.length}).</strong>
+                        Each is a previous version of a tender’s matrix, from before the next document was read and merged in. The current matrix for the tender is in the list above — these are kept only so nothing read is ever lost.
+                      </p>
+                      ${panelTable(earlierReadings)}`
+                    : ''}
+                  ${otherTenderMatrices.length > 0
+                    ? html`<p style="font-size:12px;color:var(--text-3);margin:${earlierReadings.length > 0 ? '14px' : '0'} 0 6px">
+                        <strong>Bound to a closed, won or lost tender (${otherTenderMatrices.length}).</strong>
+                        A matrix read onto the wrong tender shows up here. Open it, then re-read the invitation against the right tender above to move its requirements across.
+                      </p>
+                      ${panelTable(otherTenderMatrices)}`
+                    : ''}
+                </div>
+              </details>`;
+              })()
+            : ''
+        }
       </div>
+
+      ${
+        /*
+         * The returnables matrix — the day-one control, as one table.
+         *
+         * Everything here is already on the record (the return register bound to
+         * each invitation); what was missing was the single list a bid manager
+         * works from — every return, what it is, who owns it, by when, where in
+         * the invitation it comes from, and whether it still blocks the
+         * submission. Focus-aware, like the board and the matrices above it.
+         */
+        (() => {
+          const returnTenders = visibleBoard.filter((t) => (t.returns ?? []).length > 0);
+          const total = returnTenders.reduce((n, t) => n + (t.returns ?? []).length, 0);
+          if (total === 0) return '';
+          const rows = returnTenders.flatMap((t) =>
+            (t.returns ?? []).map((d) => {
+              const missing = whatIsMissing(d);
+              const blocking = d.mandatory && missing.length > 0;
+              const dash = (v) => (v ? v : html`<span style="color:var(--critical)">—</span>`);
+              return [
+                focused ? d.reference : `${t.reference} · ${d.reference}`,
+                d.title,
+                d.mandatory ? badge('mandatory', 'bad') : badge('optional', ''),
+                d.format ? d.format : '—',
+                dash(d.owner ? humanise(d.owner) : ''),
+                dash(d.internalDueBy ? date(d.internalDueBy) : ''),
+                dash(d.source?.document ?? ''),
+                blocking
+                  ? badge(`blocks submission — ${missing.join(', ')}`, 'bad')
+                  : missing.length > 0
+                    ? badge(missing.join(', '), 'warn')
+                    : badge('ready', 'ok'),
+              ];
+            }),
+          );
+          const blocking = returnTenders.reduce(
+            (n, t) => n + (t.returns ?? []).filter((d) => d.mandatory && whatIsMissing(d).length > 0).length,
+            0,
+          );
+          return html`<div class="card pad0" style="margin-bottom:14px">
+            <h2 style="padding:15px 17px 0">Returnables — everything that has to go back</h2>
+            <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+              ${focused
+                ? 'Every return on the tender you are working on'
+                : 'Every return across the live tenders'} — what it is, who owns it, your internal date, where in the
+              invitation it comes from, and whether it still blocks the submission.
+              ${blocking > 0
+                ? html`${blocking} still ${blocking === 1 ? 'blocks' : 'block'} the submission — clear them all at once below, or one at a time with <b>Assign a return</b> above.`
+                : 'Every mandatory return is owned, dated and sourced.'}
+            </p>
+            <div style="padding:8px 0 4px">
+              ${table({
+                headers: ['Return', 'What it is', 'Type', 'Format', 'Owner', 'Our date', 'Source', 'Status'],
+                align: ['', '', '', '', '', '', '', ''],
+                rows,
+                empty: 'No returns recorded yet',
+              })}
+            </div>
+            ${blocking > 0
+              ? html`<div class="actions" style="padding:0 17px 15px">
+                  ${raw(
+                    commandBar([
+                      {
+                        id: 'assign-all-returns',
+                        label: `Clear all ${blocking} blocking ${blocking === 1 ? 'return' : 'returns'}`,
+                        tone: 'primary',
+                        permitted: can('ESTIMATE_TENDER', 'U'),
+                        reason: blockedReason('ESTIMATE_TENDER', 'U'),
+                      },
+                    ]),
+                  )}
+                </div>`
+              : ''}
+          </div>`;
+        })()
+      }
 
       <!-- The topbar is 54px and sticky, so scrolling this into view without a
            margin puts the matrix's own heading underneath it. -->
@@ -1515,6 +2635,8 @@ export async function pipeline(root) {
         <div style="padding:11px 17px 0">
           ${raw(commandBar([
             { id: 'assert-claim', label: 'Assert a claim',
+              permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
+            { id: 'link-claim', label: 'Link held evidence',
               permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
             { id: 'verify-claim', label: 'Verify a claim',
               permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
@@ -1965,6 +3087,10 @@ export async function pipeline(root) {
             { id: 'bid-outcome', label: 'Record how a bid ended',
               permitted: can('BUSINESS_DEVELOPMENT', 'U') && opportunities.some((o) => o.stage === 'BID' || o.stage === 'CONVERTED'),
               reason: blockedReason('BUSINESS_DEVELOPMENT', 'U') ?? 'Nothing has reached a decision to bid' },
+            { id: 'correct-outcome', label: 'Correct an outcome', tone: 'quiet',
+              permitted: can('BUSINESS_DEVELOPMENT', 'A') && opportunities.some((o) => o.outcome),
+              reason: blockedReason('BUSINESS_DEVELOPMENT', 'A')
+                ?? 'No recorded outcome to correct. A correction reverses an outcome filed in error — a director-level act.' },
             { id: 'convert', label: 'Turn a win into a project',
               permitted: can('BUSINESS_DEVELOPMENT', 'A') && convertible.length > 0 && portfolios.length > 0,
               reason: blockedReason('BUSINESS_DEVELOPMENT', 'A')
@@ -1976,7 +3102,7 @@ export async function pipeline(root) {
         ${table({
           headers: ['Opportunity', 'Client', 'Value', 'Score', 'Recommended', 'Stage', 'Outcome', 'Due'],
           align: ['', '', 'num', 'num', '', '', '', ''],
-          rows: opportunities.map((o) => {
+          rows: shownOpportunities.map((o) => {
             const q = o.qualification;
             return [
               o.title,
@@ -1995,7 +3121,9 @@ export async function pipeline(root) {
               o.submissionDueAt ? date(o.submissionDueAt) : '—',
             ];
           }),
-          empty: 'No opportunities registered',
+          empty: focused
+            ? 'No opportunity is tied to the tender in focus. Show all tenders to see every pursuit.'
+            : 'No opportunities registered',
         })}
       </div>
 
@@ -2069,7 +3197,7 @@ export async function pipeline(root) {
           name: 'analysisId',
           label: 'Compliance matrix',
           type: 'select',
-          options: (matrices.analyses ?? []).map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })),
+          options: shownAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })),
           /*
            * Why there is none, not merely that there is none.
            *
@@ -2090,6 +3218,27 @@ export async function pipeline(root) {
               'matrix and no response pack — price it on Tender & Procurement and send the quotation.',
         },
       ],
+    },
+    'bid-replan': {
+      title: 'Re-plan a pack from the scored questions',
+      intent:
+        'Plans the pack’s sections again under the current rule: where the buyer marks a questionnaire, the pack ' +
+        'answers those questions and nothing else, and the scope, hazards and drawing notes stay on the compliance ' +
+        'matrix as obligations the drafter writes from. Choose the tender’s current matrix — if you have since read ' +
+        'its questionnaire, that is the newer one. A section whose question is still asked word for word keeps what ' +
+        'was written; the dropped sections stay on the record. Nothing is charged.',
+      path: (v) => `/v1/projects/${projectId}/bid-responses/${v.packId}/replan`,
+      submitLabel: 'Re-plan',
+      fields: [
+        { name: 'packId', label: 'Pack', type: 'select',
+          options: (bidPacks?.packs ?? [])
+            .filter((pack) => pack.status !== 'ISSUED')
+            .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.total ?? 0} section(s)` })),
+          emptyHint: 'Only a pack that has not been issued can be re-planned. Issuing is final.' },
+        { name: 'analysisId', label: 'Compliance matrix', type: 'select',
+          options: shownAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
+      ],
+      transform: ({ packId: _packId, analysisId }) => ({ analysisId }),
     },
     'bid-section': {
       title: 'Write the next section',
@@ -2162,6 +3311,42 @@ export async function pipeline(root) {
       ],
       transform: ({ packId: _packId }) => ({}),
     },
+    /*
+     * The review without the model. Issuing a pack needs a current review, and
+     * every review used to send the pack to a provider: with one cleared it
+     * charged, and with an empty wallet the quote blocked even the half that
+     * costs nothing. This is that half on its own — the same findings, cleared
+     * the same way, by a named person recording a decision on each high one.
+     */
+    'bid-checks': {
+      title: 'Check the pack — free, no AI',
+      intent:
+        'Reads the pack against the compliance matrix with no model: every requirement answered, word limits kept, ' +
+        'no note to the bid team left in, evidence that stands on the return date, and the quality floor. Nothing ' +
+        'leaves the platform and nothing is charged. A high finding blocks the issue until you record a decision on ' +
+        'it; then "Issue the pack" goes through. "Attack the pack" adds a model’s judgement on top, at a cost.',
+      path: (v) => `/v1/projects/${projectId}/bid-responses/${v.packId}/checks`,
+      submitLabel: 'Check it',
+      fields: [
+        { name: 'packId', label: 'Pack', type: 'select',
+          options: (bidPacks?.packs ?? [])
+            .filter((pack) => pack.status !== 'ISSUED')
+            .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.summary ?? ''}` })),
+          emptyHint: 'Every pack has been issued. A pack is checked before it is issued, not after.' },
+      ],
+      transform: ({ packId: _packId }) => ({}),
+      report: (result) => {
+        const review = result?.review ?? {};
+        const open = (review.findings ?? []).filter((f) => f.severity === 'CRITICAL' || (f.severity === 'HIGH' && !f.disposition));
+        return {
+          title: `${review.reference ?? 'Review'} — checks only`,
+          message: open.length === 0
+            ? 'Nothing blocks the issue. "Issue the pack" can go through.'
+            : `${open.length} finding(s) block the issue. Record a decision on each high one with "Record a decision on a finding"; a critical one has to be fixed.`,
+          tone: open.length === 0 ? 'ok' : 'warn',
+        };
+      },
+    },
     'finding-dispose': {
       title: 'Record a decision on a finding',
       intent:
@@ -2230,7 +3415,7 @@ export async function pipeline(root) {
       submitLabel: 'Record',
       fields: [
         { name: 'analysisId', label: 'Compliance matrix', type: 'select',
-          options: (matrices.analyses ?? []).map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
+          options: shownAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
         { name: 'kind', label: 'What kind of rule', type: 'select',
           options: [
             { value: 'REQUIRED_DOCUMENT', label: 'A document that must be in the submission' },
@@ -2287,7 +3472,7 @@ export async function pipeline(root) {
         { name: 'packId', label: 'Locked bid pack', type: 'text',
           hint: 'The pack the receipt will be bound to. Only a locked pack has a hash to bind to.' },
         { name: 'analysisId', label: 'Compliance matrix', type: 'select',
-          options: (matrices.analyses ?? []).map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
+          options: shownAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
         { name: 'adapterId', label: 'Through', type: 'select',
           options: (portalPort?.adapters ?? []).filter((adapter) => adapter.live).map((adapter) => ({ value: adapter.id, label: adapter.name })) },
         { name: 'returnBy', label: 'Returns by', type: 'datetime-local',
@@ -2350,6 +3535,7 @@ export async function pipeline(root) {
       submitLabel: 'Score',
       fields: [
         { name: 'opportunityId', label: 'Opportunity', type: 'select',
+          value: focusDefault((o) => o.stage !== 'CONVERTED' && o.stage !== 'NO_BID'),
           options: scorable.map((o) => ({
             value: o.id,
             label: `${o.title} · ${o.clientName}${o.qualification ? ` · scored ${o.qualification.score}` : ''}`,
@@ -2379,13 +3565,14 @@ export async function pipeline(root) {
       title: 'Decide bid or no bid',
       intent:
         'The decision, its rationale, and the authority it is taken under where it goes against the algorithm. ' +
-        'Declining is always available and is never gated. Deciding to bid is refused while a mandatory deliverable ' +
-        'on the invitation has no source, no owner or no internal date — a bid disqualified for a missing certificate ' +
-        'was priced correctly and lost anyway.',
+        'Declining is always available and is never gated. Deciding to bid is a commercial call you make from the ' +
+        'score — it needs the invitation read, but not every return assigned yet. Returns still without an owner, a ' +
+        'source or a date are carried on the decision as outstanding and must be cleared before the submission goes out.',
       path: (v) => `/v1/pipeline/opportunities/${v.opportunityId}/decide`,
       submitLabel: 'Record the decision',
       fields: [
         { name: 'opportunityId', label: 'Opportunity', type: 'select',
+          value: focusDefault((o) => Boolean(o.qualification)),
           options: decidable.map((o) => ({
             value: o.id,
             label: `${o.title} · ${o.qualification.score} · ${BAND_LABEL[o.qualification.recommendation] ?? o.qualification.recommendation}`,
@@ -2397,6 +3584,16 @@ export async function pipeline(root) {
         { name: 'rationale', label: 'Why', type: 'textarea', rows: 3,
           hint: 'Required whichever way it goes. This is what the calibration is read against when the outcome comes ' +
             'back, so "the numbers said so" is not an answer.' },
+        { name: 'conditionalBid', label: 'Conditional — authorise limited work to a condition', type: 'checkbox', required: false,
+          hint: 'Tick with "we are bidding" when the go-ahead is limited: a named question must be answered before a full commitment. Fill the four fields below. Leave unticked for a full bid.' },
+        { name: 'condition', label: 'The condition to resolve', type: 'textarea', rows: 2, required: false,
+          hint: 'What limited work will answer — "can an approved HV switching contractor meet the outage dates?".' },
+        { name: 'conditionOwner', label: 'Owner of the limited work', type: 'text', required: false,
+          hint: 'Who runs the investigation. The person or office, not the system.' },
+        { name: 'spendCap', label: 'Spend cap on it (£)', type: 'number', money: true, required: false,
+          hint: 'The most this pursuit may cost before a full decision. An open-ended "look into it" is what this replaces.' },
+        { name: 'killDate', label: 'Kill date', type: 'date', required: false,
+          hint: 'The date the condition must be answered by, or the pursuit stops.' },
         { name: 'conditions', label: 'Conditions', type: 'textarea', rows: 2, required: false,
           hint: 'One per line — "provided the liquidated damages are capped". Recorded with the decision and reported ' +
             'against it.' },
@@ -2407,11 +3604,21 @@ export async function pipeline(root) {
           hint: 'The scheme of delegation, board minute or policy it comes from.' },
         { name: 'limitMinor', label: 'The limit that authority carries', type: 'number', money: true, required: false },
       ],
-      transform: ({ bid, rationale, conditions, delegatedTo, authorityReference, limitMinor }) => ({
+      transform: ({ bid, rationale, conditions, delegatedTo, authorityReference, limitMinor, conditionalBid, condition, conditionOwner, spendCap, killDate }) => ({
         bid: bid === true,
         rationale: String(rationale ?? '').trim(),
         ...(String(conditions ?? '').trim()
           ? { conditions: String(conditions).split('\n').map((line) => line.trim()).filter(Boolean) }
+          : {}),
+        ...(conditionalBid === true
+          ? {
+              conditional: {
+                condition: String(condition ?? '').trim(),
+                owner: String(conditionOwner ?? '').trim(),
+                spendCapMinor: Math.round(Number(spendCap ?? 0)),
+                killDate: String(killDate ?? '').trim(),
+              },
+            }
           : {}),
         ...(String(delegatedTo ?? '').trim()
           ? {
@@ -2447,6 +3654,7 @@ export async function pipeline(root) {
       submitLabel: 'Create the project',
       fields: [
         { name: 'opportunityId', label: 'Which pursuit', type: 'select',
+          value: focusDefault((o) => o.stage === 'BID' && !o.projectId && o.outcome?.outcome !== 'LOST'),
           options: convertible.map((o) => ({
             value: o.id,
             label: `${o.title} · ${o.clientName}${o.outcome?.outcome === 'WON' ? ' · recorded as won' : ' · no outcome recorded yet'}`,
@@ -2458,8 +3666,8 @@ export async function pipeline(root) {
         { name: 'portfolioId', label: 'Portfolio', type: 'select', options: portfolios },
         { name: 'assetType', label: 'Asset type', type: 'text',
           hint: 'What is being built or serviced — "Reservoir spillway", "Domestic EPC assessments".' },
-        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT },
-        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY,
+        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT, value: state.me?.activeCompany?.region ?? undefined },
+        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY, value: state.me?.activeCompany?.jurisdiction ?? undefined,
           hint: 'Where the works are. Stored as its ISO 3166-1 alpha-2 code.' },
         { name: 'city', label: 'City', type: 'text' },
         { name: 'currency', label: 'Currency', type: 'select',
@@ -2496,12 +3704,16 @@ export async function pipeline(root) {
       submitLabel: 'Record',
       fields: [
         { name: 'opportunityId', label: 'Opportunity', type: 'select',
-          options: opportunities
-            .filter((o) => (o.stage === 'BID' || o.stage === 'CONVERTED') && !o.outcome)
+          value: focusDefault(outcomePending),
+          options: (focused ? shownOpportunities : opportunities)
+            .filter(outcomePending)
             .map((o) => ({ value: o.id, label: `${o.title} · ${o.clientName}` })),
-          emptyHint:
-            'This records the outcome of a bid that reached a decision to bid and has none yet. If the list is empty, ' +
-            'every such bid already has its outcome on record — an outcome is written once and not rewritten.' },
+          emptyHint: focused
+            ? 'The tender in focus has no bid outcome left to record — it either carries one already (an outcome is ' +
+              'written once and not rewritten) or has not reached a decision to bid. Show all tenders to record ' +
+              'another pursuit’s outcome.'
+            : 'This records the outcome of a bid that reached a decision to bid and has none yet. If the list is empty, ' +
+              'every such bid already has its outcome on record — an outcome is written once and not rewritten.' },
         { name: 'outcome', label: 'How it ended', type: 'select',
           options: [{ value: 'WON', label: 'Won' }, { value: 'LOST', label: 'Lost' }] },
         { name: 'decidedOn', label: 'Decided on', type: 'date' },
@@ -2520,13 +3732,45 @@ export async function pipeline(root) {
             label: `${review.reference} · ${review.findableScorePercent}% findable`,
           })),
           hint: 'Naming it is what lets the platform check the findable score against the mark the buyer actually gave' },
+        { name: 'reasonClass', label: 'If lost, why (the class)', type: 'select', required: false,
+          options: [
+            { value: '', label: '—' },
+            { value: 'UNCOMPETITIVE_PRICE', label: 'Price — we were too high' },
+            { value: 'WEAK_QUALITY', label: 'Quality — the answers scored poorly' },
+            { value: 'COMPLIANCE_FAILURE', label: 'Compliance — rejected, not marked down' },
+            { value: 'POOR_FIT', label: 'Fit — the wrong job to chase' },
+            { value: 'NO_FEEDBACK', label: 'No feedback given' },
+            { value: 'OTHER', label: 'Other' },
+          ],
+          hint: 'The marks say how it scored; this says what to do differently. The calibration separates "we price too high" from "we write poor answers".' },
         { name: 'feedback', label: 'What the evaluator said', type: 'textarea', rows: 3, required: false,
           hint: 'One point per line. Kept verbatim — it is the most useful thing here.' },
       ],
-      transform: ({ opportunityId: _opportunityId, feedback, ...rest }) => ({
+      transform: ({ opportunityId: _opportunityId, feedback, reasonClass, ...rest }) => ({
         ...rest,
+        ...(reasonClass ? { reasonClass } : {}),
         feedback: String(feedback ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
       }),
+    },
+    'correct-outcome': {
+      title: 'Correct an outcome recorded in error',
+      intent:
+        'Reverses a bid outcome that was recorded against the wrong tender or by mistake — the one way back from a ' +
+        'write-once result. The original stays on the record (this is a logged correction, not a quiet rewrite), and ' +
+        'the pursuit returns to live so its true outcome can be recorded. A director-level act, kept with its reason.',
+      path: (v) => `/v1/pipeline/opportunities/${v.opportunityId}/outcome/correction`,
+      submitLabel: 'Correct it',
+      fields: [
+        { name: 'opportunityId', label: 'Opportunity', type: 'select',
+          value: focusDefault((o) => Boolean(o.outcome)),
+          options: (focused ? shownOpportunities : opportunities)
+            .filter((o) => o.outcome)
+            .map((o) => ({ value: o.id, label: `${o.title} · ${o.clientName} · recorded ${String(o.outcome.outcome).toLowerCase()}` })),
+          emptyHint: 'No opportunity carries a recorded outcome to correct.' },
+        { name: 'reason', label: 'Why the recorded outcome was wrong', type: 'textarea', rows: 2,
+          hint: 'Kept on the record for the auditor. e.g. "Recorded as lost against the wrong tender — this bid is live and awaiting the result."' },
+      ],
+      transform: ({ opportunityId: _opportunityId, reason }) => ({ reason: String(reason ?? '').trim() }),
     },
     opportunity: {
       /*
@@ -2722,7 +3966,7 @@ export async function pipeline(root) {
       path: (v) => `/v1/pipeline/tenders/${v.invitationId}/deliverables`,
       submitLabel: 'Record it',
       fields: [
-        { name: 'invitationId', label: 'Invitation', type: 'select', options: invitationOptions },
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: scopedInvitationOptions },
         {
           name: 'owner',
           label: 'Who produces it',
@@ -2780,7 +4024,7 @@ export async function pipeline(root) {
       path: (v) => `/v1/pipeline/tenders/${v.invitationId}/requirements`,
       submitLabel: 'Read it',
       fields: [
-        { name: 'invitationId', label: 'Invitation', type: 'select', options: invitationOptions },
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: scopedInvitationOptions },
         { name: 'reference', label: 'Their reference', type: 'text', hint: 'As the invitation prints it.' },
         { name: 'clientName', label: 'Client', type: 'text' },
         { name: 'returnBy', label: 'Return by', type: 'date', iso: true },
@@ -2801,6 +4045,8 @@ export async function pipeline(root) {
         { name: 'paymentDays', label: 'Payment period (days)', type: 'number', required: false },
         { name: 'retentionPercent', label: 'Retention (%)', type: 'number', required: false },
         { name: 'targetMarginPercent', label: 'Target margin (%)', type: 'number', required: false },
+        { name: 'confirmPlacement', label: 'This really belongs to the tender above (tick only if the misfile check wrongly flagged it)', type: 'checkbox', required: false,
+          hint: 'Leave unticked. If the platform refuses because the client looks like another tender’s, read the message, make sure you picked the right invitation, then tick this to record it anyway.' },
       ],
       transform: (v) => {
         const lines = (value) =>
@@ -2833,6 +4079,7 @@ export async function pipeline(root) {
               ...(String(v.retentionPercent ?? '').trim() === '' ? {} : { retentionPercent: Number(v.retentionPercent) }),
             },
             ...(String(v.targetMarginPercent ?? '').trim() === '' ? {} : { targetMarginPercent: Number(v.targetMarginPercent) }),
+            ...(v.confirmPlacement ? { confirmPlacement: true } : {}),
           },
           deliverables: lines(v.deliverables).map((parts) => ({
             reference: parts[0],
@@ -2854,7 +4101,7 @@ export async function pipeline(root) {
       path: (v) => `/v1/pipeline/tenders/${v.invitationId}/deliverables`,
       submitLabel: 'Add',
       fields: [
-        { name: 'invitationId', label: 'Invitation', type: 'select', options: invitationOptions },
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: scopedInvitationOptions },
         { name: 'reference', label: 'Reference', type: 'text', placeholder: 'D-01' },
         { name: 'title', label: 'What has to be returned', type: 'text', placeholder: 'Priced pricing schedule' },
         { name: 'mandatory', label: 'Pass / fail?', type: 'select',
@@ -2906,14 +4153,14 @@ export async function pipeline(root) {
     'assign-deliverable': {
       title: 'Assign a return',
       intent:
-        'A mandatory return needs an owner, our own internal date and a source in the invitation before the decision ' +
-        'to bid can be recorded. Reading an invitation files what the buyer asked for and cannot file the first two, ' +
-        'because neither is in the buyer’s document — they are this business committing its people. This is where ' +
-        'they are committed.',
+        'A mandatory return needs an owner, our own internal date and a source in the invitation before the submission ' +
+        'can go out — the decision to bid is a commercial call you make from the score, and this planning follows it. ' +
+        'Reading an invitation files what the buyer asked for and cannot file the first two, because neither is in the ' +
+        'buyer’s document — they are this business committing its people. This is where they are committed.',
       path: (v) => `/v1/pipeline/tenders/${splitReturnTarget(v.target).invitationId}/deliverables/assign`,
       submitLabel: 'Assign',
       fields: [
-        { name: 'target', label: 'Which return', type: 'select', options: returnOptions,
+        { name: 'target', label: 'Which return', type: 'select', options: scopedReturnOptions,
           hint: 'The ones blocking a bid are at the top, each with what it is missing.' },
         { name: 'owner', label: 'Owner', type: 'select', options: roleOptions, required: false,
           hint: 'The role that owns producing it. Required on anything mandatory.' },
@@ -2942,6 +4189,33 @@ export async function pipeline(root) {
       }),
     },
 
+    'assign-all-returns': {
+      title: 'Assign every blocking return',
+      intent:
+        'Fills the owner, our internal date and the source on every mandatory return still missing one — in a single ' +
+        'act rather than a form each. It touches only what is missing, so a return you deliberately gave a different ' +
+        'owner or date is left as it is. The source defaults to the invitation itself: these returns were read out of ' +
+        'it, so "where in the invitation it comes from" is the invitation — never yours to invent.',
+      path: (v) => `/v1/pipeline/tenders/${v.invitationId}/deliverables/assign-all`,
+      submitLabel: 'Assign them all',
+      fields: [
+        { name: 'invitationId', label: 'Tender', type: 'select', options: scopedInvitationOptions },
+        { name: 'owner', label: 'Owner for all of them', type: 'select', options: roleOptions, value: 'OWNER',
+          hint: 'For a one-director business this is you. Any return that already has an owner keeps it.' },
+        { name: 'internalDueBy', label: 'Our internal date for all of them', type: 'date', required: true,
+          hint: 'Required: a return with no date still blocks the submission. Earlier than the buyer’s return. ' +
+            'Any return that already has its own date keeps it.' },
+        { name: 'sourceDocument', label: 'Source document', type: 'text', required: false,
+          placeholder: 'Leave blank to use the invitation',
+          hint: 'Left blank, the source is the invitation these returns were read from — which is the honest answer.' },
+      ],
+      transform: (v) => ({
+        ...(v.owner ? { owner: v.owner } : {}),
+        ...(v.internalDueBy ? { internalDueBy: v.internalDueBy } : {}),
+        ...(String(v.sourceDocument ?? '').trim() ? { source: { document: String(v.sourceDocument).trim() } } : {}),
+      }),
+    },
+
     addendum: {
       title: 'Record an addendum',
       intent:
@@ -2950,7 +4224,7 @@ export async function pipeline(root) {
       path: (v) => `/v1/pipeline/tenders/${v.invitationId}/addenda`,
       submitLabel: 'Record',
       fields: [
-        { name: 'invitationId', label: 'Invitation', type: 'select', options: invitationOptions },
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: scopedInvitationOptions },
         { name: 'reference', label: 'Addendum reference', type: 'text', placeholder: 'ADD-01' },
         { name: 'issuedAt', label: 'Issued', type: 'datetime-local' },
         { name: 'summary', label: 'What it changed', type: 'textarea', rows: 3 },
@@ -2969,14 +4243,61 @@ export async function pipeline(root) {
       title: 'Build the tender programme',
       intent:
         'Back-planned from the return deadline across the working calendar, bank holidays included. Where the window ' +
-        'cannot hold the eight stages, the platform refuses and shows the arithmetic rather than compressing them silently.',
+        'cannot hold the eight stages it is refused with the arithmetic — never compressed silently — unless you tick ' +
+        '“Build it compressed” and say why.',
       path: (v) => `/v1/pipeline/tenders/${v.invitationId}/programme`,
       submitLabel: 'Build',
+      report: (built) => ({
+        title: built.compression ? 'Bid programme built — compressed' : 'Bid programme built',
+        message:
+          `${built.milestones.length} stages to ${built.submissionDay}` +
+          (built.compression
+            ? `, on ${built.availableBusinessDays} working days against the normal ${built.compression.normalMinimumDays}; ` +
+              `${built.milestones.filter((m) => m.belowMinimum).length} stages run short and are marked. It is under the tender on this screen.`
+            : '. It is under the tender on this screen.'),
+        tone: built.compression ? 'warn' : 'ok',
+      }),
       fields: [
-        { name: 'invitationId', label: 'Invitation', type: 'select', options: biddableOptions,
-          hint: biddableOptions.length === 0 ? 'Nothing has been decided as a bid yet' : 'Only invitations decided as a bid appear here' },
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: scopedBiddableOptions,
+          hint: 'Only tenders you have recorded a decision to bid on appear here — a programme is back-planned from that decision.',
+          emptyHint: focused
+            ? 'This tender has no recorded decision to bid yet, and a programme follows that decision (not the reading or the matrix — those do not decide the bid). On this screen: "Score an opportunity", then "Decide bid or no bid" and record the decision to bid. The programme then builds against it.'
+            : 'No tender has a recorded decision to bid yet, and a programme follows that decision. On this screen: "Score an opportunity", then "Decide bid or no bid" for the tender you want a programme for, and record the decision to bid.' },
+        { name: 'compressed', label: 'Build it compressed', type: 'checkbox', required: false,
+          hint: 'Only where fewer than ten working days remain. Every stage gets less than its normal minimum, and each short one is marked. Left unticked, a short window is refused with the arithmetic.' },
+        { name: 'compressionReason', label: 'Why it has to be compressed', type: 'textarea', rows: 2, required: false,
+          hint: 'Required with the box ticked — e.g. "Found the tender late; pricing from our own rates, no enquiries out".' },
       ],
-      transform: () => ({}),
+      transform: (v) => (v.compressed ? { compression: { reason: String(v.compressionReason ?? '').trim() } } : {}),
+    },
+    'record-external-submission': {
+      title: 'Record a submission made on the portal',
+      intent:
+        'For a bid you submitted on the buyer’s own portal (In-Tend, PSPS, a council site) rather than assembling it in ' +
+        'here. Give the date it went in and the reference the portal returned, and the tender reads as submitted and ' +
+        'awaiting its outcome — the guide stops asking you to prepare a bid that is already in. It records only that the ' +
+        'bid was submitted; it makes no claim the platform built or checked it.',
+      path: `/v1/projects/${projectId}/bid/external-submission`,
+      submitLabel: 'Record it',
+      fields: [
+        { name: 'submittedOn', label: 'Date it was submitted', type: 'date',
+          hint: 'The day the bid went in on the portal.' },
+        { name: 'portalReference', label: 'Portal reference', type: 'text',
+          placeholder: 'e.g. the In-Tend submission ID or receipt number',
+          hint: 'The reference the portal gave back when you submitted. It is what proves the bid was in.' },
+        { name: 'channel', label: 'Where it went', type: 'select', required: false, value: 'PORTAL',
+          options: [
+            { value: 'PORTAL', label: 'A tender portal (In-Tend, PSPS, a council site)' },
+            { value: 'EMAIL', label: 'By email' },
+            { value: 'PHYSICAL', label: 'Posted / courier' },
+            { value: 'HAND_DELIVERY', label: 'Hand delivered' },
+          ] },
+      ],
+      transform: (v) => ({
+        submittedOn: String(v.submittedOn ?? '').trim(),
+        portalReference: String(v.portalReference ?? '').trim(),
+        ...(v.channel ? { channel: v.channel } : {}),
+      }),
     },
   };
 
@@ -2987,6 +4308,23 @@ export async function pipeline(root) {
   // read. Written out per action rather than assembled from a variable, so each
   // path is a quotable route the door invariant can see.
   root.addEventListener('click', async (event) => {
+    // Focus the page on one tender. `openProject` is the same mechanism the
+    // menu and the briefing use to select a project, so the reader, packs and
+    // red team below follow to this tender without a second call, and the board
+    // and matrices above narrow to it on the redraw.
+    const focusTender = event.target.closest('[data-focus-tender]');
+    if (focusTender) {
+      await openProject(focusTender.getAttribute('data-focus-tender'));
+      return;
+    }
+    // Step back out to every tender. `closeProject` clears the selection the
+    // focus reads from and redraws; the lower half returns to its zero-state,
+    // which is correct — there is no one tender's work to show any more.
+    if (event.target.closest('[data-close-focus]')) {
+      await closeProject();
+      return;
+    }
+
     const uploadTender = event.target.closest('[data-upload-tender]');
     if (uploadTender) {
       const filed = await command({
@@ -3022,7 +4360,7 @@ export async function pipeline(root) {
       if (!filed) return;
       toast(
         'Filed',
-        `${filed.description}. The files are being stored — refresh in a moment and they can be looked at.`,
+        `${filed.description}. Each file is being stored in the background and appears as it finishes — a refresh will not lose any of them.`,
         'ok',
       );
       await draw();
@@ -3115,8 +4453,26 @@ export async function pipeline(root) {
       return;
     }
 
+    /*
+     * The four file-row buttons that send a file to a model. Each posted the
+     * moment it was pressed, with no price on screen — the one place in the
+     * console the rule "no AI action runs without showing its estimated cost
+     * first" was not met. They go through the same confirmation the rest of the
+     * platform uses, against the route each one is about to call; a quote that
+     * cannot be obtained is a refusal, not a licence to spend.
+     */
+    const spends = (title, path, runLabel, hash) =>
+      confirmCost({
+        title,
+        path,
+        runLabel,
+        ...(hash ? { quoteWith: { hash } } : {}),
+        intent: 'Sends this file to an AI provider. The estimate is below; nothing is charged unless you press the button.',
+      });
+
     const takeOff = event.target.closest('[data-take-off]');
     if (takeOff) {
+      if (!(await spends('Measure the quantities on this drawing', `/v1/projects/${projectId}/perception/take-off`, 'Measure', takeOff.dataset.takeOff))) return;
       takeOff.disabled = true;
       takeOff.textContent = 'Measuring…';
       try {
@@ -3135,15 +4491,117 @@ export async function pipeline(root) {
       return;
     }
 
+    /*
+     * The whole pack, read together in one run.
+     *
+     * The same reader and the same draft as reading one file, sent every
+     * document whose words the platform has read — so the questionnaire's
+     * weightings and the instructions' deadline land in one reading rather than
+     * five, and the checks below run across all of it.
+     */
+    /*
+     * Every remaining answer, drafted in one press.
+     *
+     * One price for the lot, quoted as the one-answer route run that many
+     * times, then that route called once per answer — each with the tender
+     * documents in view, each charged and recorded as it is written. A refusal
+     * stops the run there: what was written stays, nothing more is charged,
+     * and the reason is shown.
+     */
+    const draftAll = event.target.closest('[data-draft-all]');
+    if (draftAll) {
+      const remaining = Number(draftAll.dataset.remaining);
+      const path = `/v1/projects/${projectId}/bid-responses/${draftAll.dataset.draftAll}/sections`;
+      const proceed = await confirmCost({
+        title: `Draft ${remaining === 1 ? 'the remaining answer' : `all ${remaining} remaining answers`} — ${draftAll.dataset.reference}`,
+        path,
+        runLabel: remaining === 1 ? 'Draft it' : `Draft all ${remaining}`,
+        quoteWith: { repeat: remaining },
+        intent:
+          'Each answer is drafted on its own, against its question, its word limit and the tender documents, then ' +
+          'checked like any other draft. The estimate covers all of them. Each is charged as it is written; if one ' +
+          'is refused the run stops there, keeps what was written, and charges nothing more.',
+      });
+      if (!proceed) return;
+      draftAll.disabled = true;
+      let written = 0;
+      let failure;
+      for (let pass = 1; pass <= remaining; pass += 1) {
+        draftAll.textContent = `Drafting ${pass} of ${remaining}…`;
+        try {
+          const result = await api.post(path, {});
+          if (!result.written) break;
+          written += 1;
+          if (result.remaining === 0) break;
+        } catch (error) {
+          failure = error;
+          break;
+        }
+      }
+      if (failure) {
+        toast(
+          written > 0 ? `${written} of ${remaining} drafted, then stopped` : 'Not drafted',
+          failure.message,
+          failure.code === 'NO_REASONING_PROVIDER' || failure.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err',
+        );
+      } else {
+        toast('Drafted', `${written} answer${written === 1 ? '' : 's'} drafted. Read each below before anything is issued.`, 'ok');
+      }
+      await draw();
+      return;
+    }
+
+    const readPack = event.target.closest('[data-read-pack]');
+    if (readPack) {
+      const proceed = await confirmCost({
+        title: 'Read the whole tender pack',
+        path: `/v1/projects/${projectId}/tender/read-pack`,
+        runLabel: 'Read the pack',
+        intent:
+          'Sends the text of every tender document on this project to an AI provider, in one request. The estimate ' +
+          'below is sized from that text; nothing is charged unless you press the button.',
+      });
+      if (!proceed) return;
+      readPack.disabled = true;
+      readPack.textContent = 'Reading the pack…';
+      try {
+        const reading = await api.post(`/v1/projects/${projectId}/tender/read-pack`, {});
+        toast(
+          'Read — check it below',
+          reading.checks?.summary ?? 'The reading is below, awaiting a person.',
+          reading.checks?.attention > 0 ? 'warn' : 'ok',
+        );
+      } catch (error) {
+        toast(
+          error.code === 'PERCEPTION_NOT_LEGIBLE' ? 'No requirements found in the pack' : 'Not read',
+          error.message,
+          error.code === 'PERCEPTION_NOT_LEGIBLE' || error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err',
+        );
+      }
+      // Either way: a reading that came back too thin still files its draft.
+      await draw();
+      return;
+    }
+
     const readText = event.target.closest('[data-read-itt-text]');
     if (readText) {
+      if (!(await spends('Read this invitation', `/v1/projects/${projectId}/ingestion/${readText.dataset.readIttText}/itt`, 'Read it'))) return;
       readText.disabled = true;
       readText.textContent = 'Reading…';
       try {
         await api.post(`/v1/projects/${projectId}/ingestion/${readText.dataset.readIttText}/itt`, {});
         await draw();
       } catch (error) {
-        toast('Not read', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
+        // A file that read fine and simply holds no requirements — a streets
+        // schedule, a drawing register — is not a read failure, and titling it
+        // "Not read" over a body that says "the text came through" is the exact
+        // contradiction that makes a bidder think the reader is broken when it
+        // is telling the truth. Said as what it is instead.
+        toast(
+          error.code === 'PERCEPTION_NOT_LEGIBLE' ? 'No requirements in this file' : 'Not read',
+          error.message,
+          error.code === 'PERCEPTION_NOT_LEGIBLE' || error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err',
+        );
         /*
          * Redrawn on the failure too, because the failure wrote something.
          *
@@ -3166,6 +4624,7 @@ export async function pipeline(root) {
 
     const readIt = event.target.closest('[data-read-itt]');
     if (readIt) {
+      if (!(await spends('Read this invitation with a model that can see', `/v1/projects/${projectId}/perception/itt`, 'Read it', readIt.dataset.readItt))) return;
       readIt.disabled = true;
       readIt.textContent = 'Reading…';
       try {
@@ -3174,9 +4633,44 @@ export async function pipeline(root) {
       } catch (error) {
         // A refusal here is usually a true statement about the file, the
         // deployment or the wallet, so it is shown as it was given.
-        toast('Not read', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
+        // A file that read fine and simply holds no requirements — a streets
+        // schedule, a drawing register — is not a read failure, and titling it
+        // "Not read" over a body that says "the text came through" is the exact
+        // contradiction that makes a bidder think the reader is broken when it
+        // is telling the truth. Said as what it is instead.
+        toast(
+          error.code === 'PERCEPTION_NOT_LEGIBLE' ? 'No requirements in this file' : 'Not read',
+          error.message,
+          error.code === 'PERCEPTION_NOT_LEGIBLE' || error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err',
+        );
         readIt.disabled = false;
         readIt.textContent = 'Read it with a model that can see';
+      }
+      return;
+    }
+
+    const readBoq = event.target.closest('[data-read-boq]');
+    if (readBoq) {
+      if (!(await spends('Read this file as a pricing schedule', `/v1/projects/${projectId}/perception/price-list-boq`, 'Read it', readBoq.dataset.readBoq))) return;
+      readBoq.disabled = true;
+      readBoq.textContent = 'Reading the schedule…';
+      try {
+        await api.post(`/v1/projects/${projectId}/perception/price-list-boq`, { hash: readBoq.dataset.readBoq });
+        toast(
+          'Read',
+          'The bill of quantities is below, awaiting a person. Confirm it to write the bill — the reader returns ' +
+            'quantities only, never a rate, so every line is yours to price.',
+          'ok',
+        );
+        await draw();
+      } catch (error) {
+        toast(
+          error.code === 'PERCEPTION_NOT_LEGIBLE' ? 'No priceable items in this file' : 'Not read',
+          error.message,
+          error.code === 'PERCEPTION_NOT_LEGIBLE' || error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err',
+        );
+        readBoq.disabled = false;
+        readBoq.textContent = 'Read as a pricing schedule';
       }
       return;
     }
@@ -3191,6 +4685,22 @@ export async function pipeline(root) {
      */
     const confirmTakeoff = event.target.closest('[data-confirm-takeoff]');
     if (confirmTakeoff) {
+      // The method of measurement the bill is drawn to. NRM2 is the building
+      // default; a civils bill measured to the Highway Works method or CESMM is
+      // tagged as such rather than mislabelled NRM2. The reader quotes what the
+      // document states — pre-selected below — and the person confirms or
+      // changes it. The backend normalises whatever is sent to a short tag.
+      const METHODS = METHOD_OF_MEASUREMENT;
+      const stated = (confirmTakeoff.dataset.method || '').trim();
+      const matched = METHODS.find((m) => m.value.toLowerCase() === stated.toLowerCase());
+      const methodOptions = [...METHODS];
+      let methodValue = 'NRM2';
+      if (stated && !matched) {
+        methodOptions.unshift({ value: stated, label: `${stated} — as the document states it` });
+        methodValue = stated;
+      } else if (matched) {
+        methodValue = matched.value;
+      }
       const filed = await command({
         title: 'Confirm the measured quantities',
         intent:
@@ -3210,6 +4720,17 @@ export async function pipeline(root) {
             label: 'Cost code prefix',
             placeholder: 'E20',
             hint: 'Items are numbered from it — E20.001, E20.002. Your own numbering; the platform invents none.',
+          },
+          {
+            name: 'measurementRule',
+            label: 'Method of measurement',
+            type: 'select',
+            options: methodOptions,
+            value: methodValue,
+            hint:
+              stated
+                ? `The document names “${stated}”. Confirm it, or choose the method the bill is actually drawn to.`
+                : 'The rule the bill is drawn to. NRM2 is building work; a civils bill measured to the Highway Works method (MMHW) or CESMM is tagged as such.',
           },
         ],
       });
@@ -3255,38 +4776,88 @@ export async function pipeline(root) {
         await recordCompanyFacts();
         return;
       }
-      // Three figures the analyst needs and no invitation states, because none
-      // of them is about the buyer: what this business expects to price, over
-      // how long, and at what margin. Asked here rather than guessed, because
-      // every exposure figure in the matrix is computed against them.
+      /*
+       * Where this project has no invitation yet, the invitation is recorded
+       * from the reading on this same form — the reference, client, deadline
+       * and channel it found, put in front of the person to correct — rather
+       * than refused until somebody types into another form what the reading
+       * has just found. A field the reading did not find is left empty for the
+       * person to fill, never guessed.
+       */
+      const draft = (perception?.drafts ?? []).find((entry) => entry.id === confirmIt.dataset.confirmItt);
+      const read = draft?.extraction ?? {};
+      const localOf = (value) => {
+        const text = typeof value === 'string' ? value.trim().replace(' ', 'T') : '';
+        return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text) ? text : '';
+      };
+      const dateOnly = typeof read.returnByLocal === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(read.returnByLocal.trim());
+      const zones = timeZoneOptions();
+      const readZone = zones.some((zone) => zone.value === read.returnTimeZone) ? read.returnTimeZone : '';
+      const issuedOn = typeof read.issuedOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(read.issuedOn) ? read.issuedOn : '';
+      const recordsInvitation = !focused;
+      const invitationFields = recordsInvitation
+        ? [
+            { name: 'reference', label: 'The buyer’s reference', type: 'text', value: read.reference ?? '',
+              hint: read.reference ? 'As the reading found it. Correct it if the documents say otherwise.' : 'The reading found none — type it from the invitation.' },
+            { name: 'clientName', label: 'Client', type: 'text', value: read.clientName ?? '' },
+            { name: 'issuedAt', label: 'Issued', type: 'datetime-local', value: issuedOn ? `${issuedOn}T00:00` : '',
+              hint: issuedOn ? 'The date the reading found.' : 'The reading found no issue date — when did the invitation arrive?' },
+            { name: 'returnLocal', label: 'Returns by (as the invitation states it)', type: 'datetime-local', value: localOf(read.returnByLocal),
+              hint: dateOnly
+                ? `The reading found the date ${read.returnByLocal} but no time. Enter the time printed in the invitation.`
+                : 'The wall-clock time printed in the invitation, not converted.' },
+            { name: 'timeZone', label: 'Read in', type: 'select', options: zones, value: readZone || 'Europe/London' },
+            { name: 'timeZoneStated', label: 'Did the invitation state the zone?', type: 'select', value: readZone ? 'true' : 'false',
+              options: [{ value: 'true', label: 'Yes — it says so in the documents' }, { value: 'false', label: 'No — the zone above is our assumption' }],
+              hint: 'An assumed zone is raised as a critical clarification for the buyer.' },
+            { name: 'channel', label: 'Returned through', type: 'select', placeholder: 'Choose how it is returned',
+              value: read.returnChannel ?? '',
+              options: ['PORTAL', 'EMAIL', 'PHYSICAL', 'HAND_DELIVERY'].map((c) => ({ value: c, label: humanise(c) })) },
+            { name: 'clarificationLocal', label: 'Last date for questions', type: 'datetime-local', required: false, value: localOf(read.clarificationLocal) },
+            { name: 'siteVisitLocal', label: 'Site visit', type: 'datetime-local', required: false, value: localOf(read.siteVisitLocal) },
+          ]
+        : [
+            {
+              name: 'invitationId',
+              label: 'Against which invitation',
+              type: 'select',
+              options: scopedInvitationOptions,
+              hint: 'The reading is filed against the invitation it came from.',
+            },
+          ];
+      // Only the invitation is required. The value, duration and margin are
+      // optional: the matrix needs none of them, and an estimator cannot give a
+      // contract value before the take-off. Left blank, the commercial-term risk
+      // (damages, retention, bond) is sized later once the job is priced; filled
+      // in, it is sized now.
       const accepted = await command({
         title: 'Confirm what the AI read',
         intent:
+          (recordsInvitation
+            ? 'This project has no invitation recorded yet, so the one the reading found is recorded with it. Check ' +
+              'each field against the documents — a field the reading did not find is left empty for you. '
+            : '') +
           'Confirming files the reading through the same commands as typing the requirements in by hand — the ' +
-          'analyst, its authorisation and its ACU cost are unchanged. The three figures below are not in the ' +
-          'invitation: an ITT states what the buyer wants, not what this business expects to price it at, and ' +
-          'every exposure in the matrix is set against them.',
+          'analyst, its authorisation and its ACU cost are unchanged. Only the invitation is needed. The three ' +
+          'figures below are optional and are not in the invitation — leave them blank if you have not priced the ' +
+          'job yet, and the contract-term risk is sized once you have.',
         path: () => `/v1/projects/${projectId}/perception/${confirmIt.dataset.confirmItt}/confirm`,
-        submitLabel: 'Confirm and build the matrix',
+        submitLabel: recordsInvitation ? 'Record the invitation and build the matrix' : 'Confirm and build the matrix',
         fields: [
-          {
-            name: 'invitationId',
-            label: 'Against which invitation',
-            type: 'select',
-            options: invitationOptions,
-            hint: 'The reading is filed against the invitation it came from.',
-          },
+          ...invitationFields,
           {
             name: 'estimatedValue',
-            label: 'What we expect to price (£)',
+            label: 'What we expect to price (£) — optional',
             type: 'number',
             step: '1',
-            hint: 'The contract value this business is bidding, not the buyer’s published budget.',
+            required: false,
+            hint: 'Leave blank until you have priced the job. Only used to size damages, retention and bond risk.',
           },
-          { name: 'durationWeeks', label: 'Priced over (weeks)', type: 'number', step: '1' },
+          { name: 'durationWeeks', label: 'Priced over (weeks) — optional', type: 'number', step: '1', required: false,
+            hint: 'Leave blank until the programme is set.' },
           {
             name: 'targetMarginPercent',
-            label: 'Target margin (%)',
+            label: 'Target margin (%) — optional',
             type: 'number',
             step: '0.1',
             required: false,
@@ -3294,16 +4865,38 @@ export async function pipeline(root) {
           },
         ],
         transform: (v) => ({
-          invitationId: v.invitationId,
-          // Pounds in the form, minor units on the wire. Asking a bid manager
-          // for pennies is how a value lands two orders of magnitude out.
-          estimatedValueMinor: Math.round(Number(v.estimatedValue) * 100),
-          durationWeeks: Number(v.durationWeeks),
+          ...(recordsInvitation
+            ? {
+                invitation: {
+                  reference: v.reference,
+                  clientName: v.clientName,
+                  issuedAt: new Date(v.issuedAt).toISOString(),
+                  returnLocal: v.returnLocal,
+                  timeZone: v.timeZone,
+                  timeZoneStated: v.timeZoneStated === 'true',
+                  channel: v.channel,
+                  ...(v.clarificationLocal ? { clarificationLocal: v.clarificationLocal } : {}),
+                  ...(v.siteVisitLocal ? { siteVisitLocal: v.siteVisitLocal } : {}),
+                },
+              }
+            : { invitationId: v.invitationId }),
+          // Pounds in the form, minor units on the wire. Omitted when blank, so a
+          // value nobody has yet is absent rather than a misleading zero.
+          ...(v.estimatedValue !== '' && v.estimatedValue !== undefined
+            ? { estimatedValueMinor: Math.round(Number(v.estimatedValue) * 100) }
+            : {}),
+          ...(v.durationWeeks !== '' && v.durationWeeks !== undefined ? { durationWeeks: Number(v.durationWeeks) } : {}),
           ...(v.targetMarginPercent ? { targetMarginPercent: Number(v.targetMarginPercent) } : {}),
         }),
       });
       if (accepted) {
-        toast('Filed', 'The compliance matrix and the return register are on the record', 'ok');
+        toast(
+          'Filed',
+          recordsInvitation
+            ? 'The invitation, the compliance matrix and the return register are on the record'
+            : 'The compliance matrix and the return register are on the record',
+          'ok',
+        );
         await draw();
       }
       return;
@@ -3379,6 +4972,132 @@ export async function pipeline(root) {
     }
   });
 
+  // One press raises the analysis's own "Questions for the buyer" onto the
+  // clarification register, to the client — the structured form of that list,
+  // so nobody retypes the AI's questions into a delimited box. Idempotent: the
+  // backend skips a question already raised.
+  // The AI expert review: a bid-manager read of the tender for genuine
+  // clarification questions. It proposes; nothing is raised until a person
+  // presses "Raise this" on one, which puts it on the register where it can be
+  // sent. The whole result is advice, re-fetched each press — nothing is stored.
+  root.addEventListener('click', async (event) => {
+    const reviewBtn = event.target.closest('[data-ai-review]');
+    if (!reviewBtn) return;
+    const reviewProjectId = reviewBtn.dataset.aiReview;
+    const results = root.querySelector(`[data-ai-review-results="${reviewProjectId}"]`);
+    reviewBtn.disabled = true;
+    reviewBtn.textContent = 'Reading the tender…';
+    try {
+      const review = await api.post(`/v1/projects/${reviewProjectId}/tender-clarifications/ai-review`, {});
+      const proposed = review.proposed ?? [];
+      if (!review.available) {
+        if (results) results.innerHTML = '';
+        toast('Review unavailable', review.note ?? 'The expert review could not run on this deployment.', 'warn');
+      } else if (proposed.length === 0) {
+        if (results) results.innerHTML = resolveHtml(html`<div class="empty" style="margin:0"><b>Nothing to ask</b>${review.note ?? ''}</div>`);
+        toast('Reviewed', review.note ?? 'Nothing needs asking.', 'ok');
+      } else if (results) {
+        results.innerHTML = resolveHtml(html`
+          <div class="notice" style="margin:0 0 8px"><div style="font-size:12px">${review.note ?? ''} Each proposal quotes the passage it comes from — verify it, then raise the ones worth sending.</div></div>
+          ${proposed.map(
+            (p) => html`<div class="card pad" style="margin-bottom:8px">
+              <div style="font-weight:600;font-size:13px;margin-bottom:3px">${p.subject}</div>
+              <div style="font-size:12.5px;margin-bottom:5px">${p.question}</div>
+              <div style="font-size:11.5px;color:var(--text-3);margin-bottom:6px"><b>Basis:</b> ${p.basis}</div>
+              <button class="btn quiet sm" data-raise-one="1" data-rp="${reviewProjectId}" data-subject="${p.subject}" data-question="${p.question}">Raise this to the client</button>
+            </div>`,
+          )}`);
+        toast('Reviewed', `${proposed.length} question${proposed.length === 1 ? '' : 's'} proposed. Verify each against the tender before raising.`, 'ok');
+      }
+    } catch (error) {
+      toast('Review failed', error.message, isRoleDenial(error) ? 'warn' : 'err');
+    } finally {
+      reviewBtn.disabled = false;
+      reviewBtn.textContent = 'Ask the AI to review the tender (expert clarifications)';
+    }
+    return;
+  });
+
+  // Raise one AI-proposed question onto the clarification register, verbatim.
+  // From here it follows the ordinary flow — copy and send on Tender & Procurement.
+  root.addEventListener('click', async (event) => {
+    const raiseOne = event.target.closest('[data-raise-one]');
+    if (!raiseOne) return;
+    const rp = raiseOne.dataset.rp;
+    const subject = raiseOne.dataset.subject;
+    const question = raiseOne.dataset.question;
+    raiseOne.disabled = true;
+    raiseOne.textContent = 'Raising…';
+    try {
+      const result = await api.post(`/v1/projects/${rp}/tender-clarifications/batch`, {
+        items: [{ side: 'CLIENT', subject, question, links: { document: 'Invitation' } }],
+      });
+      const ref = result.raised?.[0]?.reference;
+      toast('Raised to the client', `${ref ?? 'The question'} is on the clarification register — copy and send it on Tender & Procurement before the clarification deadline.`, 'ok');
+      raiseOne.textContent = 'Raised ✓';
+    } catch (error) {
+      toast('Not raised', error.message, isRoleDenial(error) ? 'warn' : 'err');
+      raiseOne.disabled = false;
+      raiseOne.textContent = 'Raise this to the client';
+    }
+    return;
+  });
+
+  root.addEventListener('click', async (event) => {
+    const raiseBtn = event.target.closest('[data-raise-clars]');
+    if (!raiseBtn) return;
+    const analysisId = raiseBtn.dataset.raiseClars;
+    const raiseProjectId = raiseBtn.dataset.raiseProject;
+    raiseBtn.disabled = true;
+    raiseBtn.textContent = 'Raising…';
+    try {
+      const result = await api.post(`/v1/projects/${raiseProjectId}/tender-clarifications/from-analysis`, { analysisId });
+      const raised = result.raised?.length ?? 0;
+      toast(
+        raised > 0 ? `${raised} clarification${raised === 1 ? '' : 's'} raised to the client` : 'Nothing new to raise',
+        raised > 0
+          ? `${result.raised.map((entry) => entry.reference).join(', ')}` +
+              `${result.skipped > 0 ? ` · ${result.skipped} already on the register` : ''}` +
+              ' — send and record the answers on Tender & Procurement.'
+          : `All ${result.total} are already on the register.`,
+        'ok',
+      );
+    } catch (error) {
+      toast('Not raised', error.message, isRoleDenial(error) ? 'warn' : 'err');
+    } finally {
+      raiseBtn.disabled = false;
+      raiseBtn.textContent = 'Raise these to the client';
+    }
+  });
+
+  // Confirm the drafted compliance undertakings — the agent wrote them; this
+  // records that a person declares each true. Idempotent on the backend.
+  root.addEventListener('click', async (event) => {
+    const confirmBtn = event.target.closest('[data-confirm-undertakings]');
+    if (!confirmBtn) return;
+    const analysisId = confirmBtn.dataset.confirmUndertakings;
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Confirming…';
+    try {
+      const result = await api.post(`/v1/pipeline/analyses/${analysisId}/undertakings`, {});
+      const n = result.confirmed?.length ?? 0;
+      toast(
+        n > 0 ? `${n} undertaking${n === 1 ? '' : 's'} confirmed` : 'Nothing new to confirm',
+        n > 0
+          ? `Recorded as declared true${result.already > 0 ? ` · ${result.already} already confirmed` : ''}.`
+          : `All ${result.total} are already confirmed.`,
+        'ok',
+      );
+      // Re-open the matrix so the confirmed lines show immediately.
+      const open = root.querySelector(`[data-matrix="${analysisId}"]`);
+      if (open) open.click();
+    } catch (error) {
+      toast('Not confirmed', error.message, isRoleDenial(error) ? 'warn' : 'err');
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Confirm all as true';
+    }
+  });
+
   /*
    * Cutting one section to length.
    *
@@ -3387,6 +5106,33 @@ export async function pipeline(root) {
    * the limit is the buyer's. It is an AI pass and it is charged, so the press
    * says what it is doing and the result says what came off.
    */
+  // Redraft one section that still holds a note to the bid team. An AI pass,
+  // charged like the first draft, so the press says what it is doing; a section a
+  // person rewrote is refused by the server and the refusal says to edit it.
+  root.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-redraft]');
+    if (!button || !projectId) return;
+
+    button.disabled = true;
+    button.textContent = 'Redrafting…';
+    try {
+      const result = await api.post(
+        `/v1/projects/${projectId}/bid-responses/${button.dataset.pack}/sections/${encodeURIComponent(button.dataset.redraft)}/redraft`,
+        {},
+      );
+      toast(
+        `${button.dataset.redraft} redrafted`,
+        `${result.written.words} words. Read it before issuing — it is a draft. ${result.acuConsumed} ACUs.`,
+        'ok',
+      );
+      await draw();
+    } catch (error) {
+      toast('Not redrafted', error.detail ?? error.message ?? 'The section is unchanged.', 'err');
+      button.disabled = false;
+      button.textContent = 'Redraft this section';
+    }
+  });
+
   root.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-shorten]');
     if (!button || !projectId) return;
@@ -3395,7 +5141,7 @@ export async function pipeline(root) {
     button.textContent = 'Cutting…';
     try {
       const result = await api.post(
-        `/v1/projects/${projectId}/bid-responses/${button.dataset.pack}/sections/${button.dataset.shorten}/shorten`,
+        `/v1/projects/${projectId}/bid-responses/${button.dataset.pack}/sections/${encodeURIComponent(button.dataset.shorten)}/shorten`,
         {},
       );
       toast(
@@ -3411,6 +5157,193 @@ export async function pipeline(root) {
       toast('Not cut', error.detail ?? error.message ?? 'The section is unchanged.', 'err');
       button.disabled = false;
       button.textContent = 'Cut it to length';
+    }
+  });
+
+  /*
+   * Read-and-edit, the last mile of the submission. A drafted section could be
+   * counted but never seen or changed until this; now Edit opens the answer
+   * pre-filled so the real project names and team go in, and Copy lifts it out.
+   */
+  root.addEventListener('click', async (event) => {
+    const reviseBtn = event.target.closest('[data-revise]');
+    if (reviseBtn && projectId) {
+      const [packId, key] = String(reviseBtn.dataset.revise).split('::');
+      const found = fullPacks.find((fp) => fp.pack.id === packId);
+      const section = found?.sections.find((s) => s.key === key);
+      const current = (section?.body ?? []).join('\n\n');
+      const result = await command({
+        title: `Edit — ${section?.title ?? key}`,
+        intent:
+          'Rewrite this answer in your own words: put your real project names, your team and your figures in. A blank ' +
+          'line starts a new paragraph. Saving records it as yours, not the model’s, and calls no provider.',
+        path: `/v1/projects/${projectId}/bid-responses/${packId}/sections/${encodeURIComponent(key)}/revise`,
+        submitLabel: 'Save this answer',
+        fields: [
+          {
+            name: 'text',
+            label: 'The answer, as the buyer will read it',
+            type: 'textarea',
+            rows: 16,
+            value: current,
+            hint: 'One blank line between paragraphs. Nothing here is sent to a model — this is your text.',
+          },
+        ],
+        transform: (v) => ({
+          body: String(v.text || '')
+            .split(/\n\s*\n/)
+            .map((p) => p.replace(/[ \t]+/g, ' ').trim())
+            .filter(Boolean),
+        }),
+      });
+      if (result) {
+        toast('Saved', 'Your version is recorded against the pack.', 'ok');
+        await draw();
+      }
+      return;
+    }
+
+    const copyBtn = event.target.closest('[data-copy-section]');
+    if (copyBtn) {
+      const [packId, key] = String(copyBtn.dataset.copySection).split('::');
+      const found = fullPacks.find((fp) => fp.pack.id === packId);
+      const section = found?.sections.find((s) => s.key === key);
+      const text = (section?.body ?? []).join('\n\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        toast('Copied', 'The answer is on your clipboard.', 'ok');
+      } catch {
+        toast('Could not copy', 'Your browser blocked the clipboard — select the text and copy it by hand.', 'err');
+      }
+      return;
+    }
+
+    // The whole submission as a branded, downloadable file — the end-to-end
+    // answer: the submission is produced and downloaded in the platform, not
+    // copied out and finished elsewhere. The clipboard copy below stays as the
+    // quick option for pasting into a portal's own text boxes.
+    const tpDraft = event.target.closest('[data-tp-draft]');
+    if (tpDraft) {
+      const done = await command({
+        title: 'Draft the tender programme',
+        intent:
+          'Reads your measured bill and the tender’s own programme requirements and drafts the activities, durations, ' +
+          'logic, resources and a risk allowance. The platform checks it with its critical-path engine against the ' +
+          'period and the bank holidays. It is an AI pass and is charged; nothing is written to the programme until you ' +
+          'confirm it.',
+        path: `/v1/projects/${state.session.projectId}/programme/tender-draft`,
+        submitLabel: 'Draft it',
+        fields: [
+          { name: 'startDate', label: 'Start on site', type: 'date', hint: 'The first day of work on site.' },
+          {
+            name: 'completionDate',
+            label: 'Completion date the buyer fixed',
+            type: 'date',
+            required: false,
+            hint: 'From the contract data or the invitation. Give this or the period below — the date wins.',
+          },
+          {
+            name: 'periodDays',
+            label: 'Or: construction period (calendar days)',
+            type: 'number',
+            required: false,
+            hint: 'Only if the buyer gave a period rather than a date — 84 for twelve weeks.',
+          },
+          {
+            name: 'guidance',
+            label: 'What you know that the bill does not say',
+            type: 'textarea',
+            required: false,
+            hint:
+              'For example “road closure from 18/01/2027; grout cures 7 days before testing”. Passed to the drafter ' +
+              'as your guidance, never as a fact about the tender.',
+          },
+        ],
+      });
+      if (done) {
+        toast(
+          'Programme drafted',
+          `${done.draft.activities.length} activities, finishing ${done.draft.forecast.finishDate}` +
+            `${done.draft.forecast.fits ? '' : ' — after the completion date'}. Check it, then confirm.`,
+          done.draft.forecast.fits ? 'ok' : '',
+        );
+        await draw();
+      }
+      return;
+    }
+
+    const tpConfirm = event.target.closest('[data-tp-confirm]');
+    if (tpConfirm) {
+      tpConfirm.disabled = true;
+      try {
+        const result = await api.post(
+          `/v1/projects/${state.session.projectId}/programme/tender-drafts/${tpConfirm.dataset.tpConfirm}/confirm`,
+          {},
+        );
+        toast('Programme confirmed', `It is now this project’s programme, finishing ${result.finishDate}.`, 'ok');
+        await draw();
+      } catch (error) {
+        toast('Not confirmed', error.detail ?? error.message ?? 'The programme is unchanged.', 'err');
+        tpConfirm.disabled = false;
+      }
+      return;
+    }
+
+    const tpDownload = event.target.closest('[data-tp-download]');
+    if (tpDownload) {
+      try {
+        await api.download(`/v1/projects/${state.session.projectId}/programme/tender.pdf`, {
+          format: tpDownload.dataset.tpDownload,
+        });
+        toast('Downloaded', 'Your tender programme has been saved.', 'ok');
+      } catch (error) {
+        toast('Could not download', error?.message ?? 'Could not generate the programme.', 'err');
+      }
+      return;
+    }
+
+    const downloadPackBtn = event.target.closest('[data-download-pack]');
+    if (downloadPackBtn) {
+      try {
+        await api.download(
+          `/v1/projects/${state.session.projectId}/bid-responses/${downloadPackBtn.dataset.downloadPack}/submission.pdf`,
+          { format: 'PDF' },
+        );
+        toast('Downloaded', 'Your submission PDF has been saved.', 'ok');
+      } catch (error) {
+        toast('Could not download', error?.message ?? 'Could not generate the submission PDF.', 'err');
+      }
+      return;
+    }
+
+    // The whole submission in one paste — for the person at the portal who has
+    // to attach a single document rather than fill thirteen boxes. It assembles
+    // exactly what is on the pack, in order, each answer under its question, so
+    // the attached document and the platform's record say the same thing. Only
+    // written sections are included; an unwritten one is named so a gap in the
+    // paste is a fact rather than a surprise on the return date.
+    const copyPackBtn = event.target.closest('[data-copy-pack]');
+    if (copyPackBtn) {
+      const found = fullPacks.find((fp) => fp.pack.id === copyPackBtn.dataset.copyPack);
+      if (!found) return;
+      const blocks = found.sections.map((section) => {
+        // The full requirement, never the 67-character title: this text is
+        // pasted into the buyer's portal.
+        const heading = `${section.key} — ${(section.deliverable || section.title).replace(/\\[nrt]/g, ' ').replace(/\s+/g, ' ').trim()}`;
+        const body =
+          section.status === 'DRAFTED' && (section.body ?? []).length > 0
+            ? section.body.join('\n\n')
+            : '[Not written yet]';
+        return `${heading}\n\n${body}`;
+      });
+      const text = `${found.pack.reference} — ${found.pack.clientName}\n\n${blocks.join('\n\n\n')}\n`;
+      try {
+        await navigator.clipboard.writeText(text);
+        toast('Copied', `All ${found.sections.length} answers are on your clipboard — paste them into your submission document.`, 'ok');
+      } catch {
+        toast('Could not copy', 'Your browser blocked the clipboard — open each answer and copy it by hand.', 'err');
+      }
+      return;
     }
   });
 
@@ -3497,12 +5430,34 @@ export async function pipeline(root) {
     },
   ]);
 
-  void insightPanel(root.querySelector('#pipeline-insight'), {
-    projectId,
-    areas: ['BUSINESS_DEVELOPMENT', 'ESTIMATE_TENDER'],
-    subject: 'the pipeline and what to bid',
-    onChange: draw,
-  });
+  /*
+   * The insight surface over the pipeline.
+   *
+   * The AI Insight panel reads an agent's proposals for one *project*, so it can
+   * only speak once a project is selected — focused on a tender, or opened from
+   * the board. Mounted with no project it fetched `/v1/projects/undefined/...`
+   * and showed an error where an insight belonged: "no insights at the tender
+   * stage" was exactly that.
+   *
+   * So when a project is in scope, the AI panel mounts as before. When none is —
+   * the tenant-wide board, before a tender is worked — the panel has nothing to
+   * read, so in its place goes a deterministic reading *across* the live tenders:
+   * what is closing, what is not ready, what has a critical clarification or an
+   * unowned mandatory return. It is arithmetic over the board already on screen,
+   * so it is always there, model or no model, and it is the thing a bid manager
+   * opens the pipeline to see.
+   */
+  const insightHost = root.querySelector('#pipeline-insight');
+  if (projectId) {
+    void insightPanel(insightHost, {
+      projectId,
+      areas: ['BUSINESS_DEVELOPMENT', 'ESTIMATE_TENDER'],
+      subject: 'the pipeline and what to bid',
+      onChange: draw,
+    });
+  } else if (insightHost) {
+    render(insightHost, tenderAttention(board));
+  }
 
 
   /*
@@ -3607,6 +5562,24 @@ export async function pipeline(root) {
             : { hint: fromOurRecord('the largest job on your record') + ' The largest you have built is not necessarily the largest you can carry.' }),
         },
         { name: 'accreditations', label: 'Accreditations', required: false, value: asList(held?.accreditations), hint: 'CHAS, SafeContractor, ISO 9001 — comma separated.' },
+        { name: 'insurances', label: 'Insurances held', type: 'textarea', rows: 4, required: false,
+          value: (held?.insurances ?? []).map((i) => `${i.type} | ${i.limitMinor / 100}${i.expiresOn ? ` | ${i.expiresOn}` : ''}`).join('\n'),
+          hint:
+            'One per line: cover | limit in £ | renews on (optional). ' +
+            'e.g. "Employers Liability | 10000000 | 2027-03-31". The compliance matrix reads these against the ' +
+            'insurance an ITT demands, so a line here is what turns an insurance requirement from a gap to satisfied. ' +
+            'Clearing the box removes them.' },
+        { name: 'references', label: 'Project references (your experience)', type: 'textarea', rows: 4, required: false,
+          value: (held?.references ?? [])
+            .map((r) => `${r.clientName} | ${r.projectName} | ${r.sector} | ${r.valueMinor / 100} | ${r.completedYear}`)
+            .join('\n'),
+          hint:
+            'One per line: client | project | sector | value in £ | year completed. ' +
+            'e.g. "South Holland DC | Level-access wet room, 14 Elm Rd | Residential | 18000 | 2024". ' +
+            'These are the past projects you stand behind — the matrix reads them against a references/experience ' +
+            'requirement, and the radar matches them to opportunities. Clearing the box removes them.' },
+        { name: 'dbsHeld', label: 'Enhanced DBS checks in place for staff entering occupied homes', type: 'checkbox',
+          value: !!held?.dbs?.held },
         { name: 'trades', label: 'Trades delivered in-house', required: false, value: asList(held?.selfDeliveredTrades) },
         { name: 'concurrent', label: 'Sites the business can run at once', type: 'number', value: held?.capacity?.concurrentProjects ?? '' },
         {
@@ -3618,7 +5591,39 @@ export async function pipeline(root) {
         },
         { name: 'marginMin', label: 'Target margin, minimum (%)', type: 'number', required: false, value: held?.targetMarginPercent?.min ?? '' },
         { name: 'marginMax', label: 'Target margin, maximum (%)', type: 'number', required: false, value: held?.targetMarginPercent?.max ?? '' },
+        { name: 'singleOwnerBids', label: 'One-director business — every requirement and return is mine', type: 'checkbox', required: false,
+          value: !!held?.singleOwnerBids,
+          hint: 'Tick it and the compliance matrix stops suggesting a role per category (QS, EPC, Safety…) that reads as work going to people who do not exist — every owner defaults to the owner instead.' },
       ],
+      /*
+       * A line the parser below cannot read is refused, naming it — never
+       * dropped. "Public liability, 5000000" (a comma, not a bar) used to vanish
+       * while the screen said "Recorded", and the matrix then showed the
+       * insurance as a gap the business had in fact filled in.
+       */
+      validate: (v) => {
+        const unread = (text, ok) =>
+          String(text || '')
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .find((line) => !ok(line.split('|').map((part) => part.trim())));
+        const insurance = unread(v.insurances, (parts) => parts[0] && parts[1] && !Number.isNaN(Number(parts[1])));
+        if (insurance) {
+          return {
+            field: 'insurances',
+            message: `"${insurance}" could not be read. Write it as cover | limit in £ | renews on (optional), with a vertical bar between each part — e.g. "Public liability | 5000000 | 2027-10-25".`,
+          };
+        }
+        const reference = unread(v.references, (parts) => parts[0] && parts[1]);
+        if (reference) {
+          return {
+            field: 'references',
+            message: `"${reference}" could not be read. Write it as client | project | sector | value in £ | year completed, with a vertical bar between each part.`,
+          };
+        }
+        return null;
+      },
       transform: (v) => {
         const money = (x) => Math.round(Number(x || 0) * 100);
         const list = (x) => String(x || '').split(',').map((part) => part.trim()).filter(Boolean);
@@ -3631,12 +5636,41 @@ export async function pipeline(root) {
           sectors: Array.isArray(v.sectors) ? v.sectors : [v.sectors].filter(Boolean),
           cpvCodes: held?.cpvCodes ?? [],
           valueBandMinor: { min: money(v.valueMin), max: money(v.valueMax) },
-          insurances: held?.insurances ?? [],
+          // Parsed from the textarea: "cover | limit in £ | renews" per line. A
+          // line without a cover name or a numeric limit is dropped rather than
+          // written as a malformed insurance the matrix cannot read.
+          insurances: String(v.insurances || '')
+            .split('\n')
+            .map((line) => line.split('|').map((part) => part.trim()))
+            .filter((parts) => parts[0] && parts[1] && !Number.isNaN(Number(parts[1])))
+            .map((parts) => ({
+              type: parts[0],
+              limitMinor: Math.round(Number(parts[1]) * 100),
+              ...(parts[2] ? { expiresOn: parts[2] } : {}),
+            })),
           accreditations: list(v.accreditations),
-          references: held?.references ?? [],
+          // Parsed from the textarea, mirroring insurances: "client | project |
+          // sector | value£ | year" per line. A reference the business types here
+          // is one it stands behind, so it is recorded verified — that is what the
+          // experience probe and the radar count. A malformed line (no client or
+          // project) is dropped rather than written half-formed.
+          references: String(v.references || '')
+            .split('\n')
+            .map((line) => line.split('|').map((part) => part.trim()))
+            .filter((parts) => parts[0] && parts[1])
+            .map((parts) => ({
+              clientName: parts[0],
+              projectName: parts[1],
+              sector: parts[2] || (Array.isArray(v.sectors) ? v.sectors[0] : v.sectors) || 'Residential',
+              valueMinor: Math.round(Number(parts[3] || 0) * 100),
+              completedYear: Number(parts[4]) || new Date().getFullYear(),
+              verified: true,
+            })),
+          dbs: { held: !!v.dbsHeld },
           selfDeliveredTrades: list(v.trades),
           targetMarginPercent: { min: Number(v.marginMin || 0), max: Number(v.marginMax || 0) },
           capacity: { concurrentProjects: Number(v.concurrent || 0), committedProjects: Number(v.committed || 0) },
+          ...(v.singleOwnerBids === true ? { singleOwnerBids: true } : {}),
         };
       },
     });
@@ -3647,7 +5681,12 @@ export async function pipeline(root) {
     return result;
   }
 
-  root.querySelector('[data-company-facts]')?.addEventListener('click', async (event) => {
+  // Delegated on the view, not bound to the one command bar that carries
+  // `data-company-facts` — so the "Record the company’s facts" button in the
+  // matrix's next-actions panel fires it too, not only the bar on the company
+  // card. Same safe pattern as the two dispatchers below: it returns on a click
+  // that is not this command, and `#view` is fresh each draw so it cannot stack.
+  root.addEventListener('click', async (event) => {
     if (!event.target.closest('[data-command="company-facts"]')) return;
     await recordCompanyFacts();
   });
@@ -3707,6 +5746,33 @@ export async function pipeline(root) {
       );
       return;
     }
+
+    /*
+     * Deciding to bid is now a clean commercial call — it is not blocked by
+     * unassigned returns. So the decision can succeed with returns still to
+     * plan, and a bid manager should be told that plainly rather than finding
+     * out at submission. The outstanding returns come back on the result.
+     */
+    if (button.dataset.command === 'decide') {
+      const outstanding = result.outstandingReturns ?? [];
+      if (result.conditional) {
+        toast(
+          'Conditional bid recorded',
+          'Limited work is authorised to the condition, under its owner, spend cap and kill date. It becomes a full commitment once the condition is met and you decide again.',
+          'ok',
+        );
+      } else if (result.stage === 'BID') {
+        toast(
+          outstanding.length > 0 ? 'Bid recorded — returns still to assign' : 'Bid recorded',
+          outstanding.length > 0
+            ? `${outstanding.length} mandatory ${outstanding.length === 1 ? 'return needs' : 'returns need'} an owner, a date and a source before you can submit. Use "Assign a return" next.`
+            : 'Every mandatory return already has an owner, a date and a source.',
+          outstanding.length > 0 ? 'warn' : 'ok',
+        );
+      }
+      await draw();
+      return;
+    }
     await draw();
   });
 
@@ -3725,8 +5791,8 @@ export async function pipeline(root) {
             'TEST_RESULT', 'REFERENCE', 'METHOD', 'CALCULATION'].map((kind) => ({ value: kind, label: humanise(kind) })) },
         { name: 'claim', label: 'The sentence this proves', type: 'textarea', rows: 2,
           hint: 'As it would appear in a submission — "We achieved 98% on-time delivery across 14 schemes in 2026".' },
-        { name: 'sourceHash', label: 'Document hash', type: 'text',
-          hint: 'The hash of the file already registered as evidence.' },
+        { name: 'sourceHash', label: 'Document', type: 'file',
+          hint: 'The certificate, policy, DBS record or case study that proves this. It is hashed and stored as evidence here — you never copy a hash.' },
         { name: 'issuedBy', label: 'Issued by', type: 'text', required: false },
         { name: 'issuedAt', label: 'Issued on', type: 'date', required: false },
         { name: 'expiresAt', label: 'Current until', type: 'date', required: false,
@@ -3734,18 +5800,44 @@ export async function pipeline(root) {
       ],
       transform: (v) => Object.fromEntries(Object.entries(v).filter(([, value]) => String(value ?? '').trim())),
     },
-    'verify-claim': {
-      title: 'Verify a claim',
+    'link-claim': {
+      title: 'Link held evidence to a requirement',
       intent:
-        'Say the document proves the sentence, and how it was checked. Refused if you were the one who asserted it, and ' +
-        'refused over a document that has already lapsed — an approved claim nobody can stand behind is worse than none.',
+        'Say which of this tender’s requirements a document you have already filed answers. A document is filed once ' +
+        'and lives on the business, not the bid — you link it to the requirements each tender asks, and the same ' +
+        'certificate answers the same clause on the next bid without re-filing it. This is how a proposed match above is ' +
+        'confirmed.',
+      path: (v) => `/v1/evidence/claims/${v.claimId}/link`,
+      submitLabel: 'Link',
+      fields: [
+        { name: 'claimId', label: 'Held evidence', type: 'select',
+          options: (claimRegister?.claims ?? [])
+            .filter((claim) => claim.standing !== 'REJECTED')
+            .map((claim) => ({ value: claim.id, label: `${claim.reference} — ${claim.claim.slice(0, 60)}` })) },
+        { name: 'references', label: 'Requirements it answers', type: 'textarea', rows: 3,
+          hint: 'One matrix reference per line — e.g. "18.4" or "Clause 7.1". Copy them from the "Consider linking" rows above.' },
+      ],
+      transform: ({ references }) => ({
+        references: String(references ?? '').split('\n').map((r) => r.trim()).filter(Boolean),
+      }),
+    },
+    'verify-claim': {
+      title: profile?.singleOwnerBids ? 'Verify or attest a claim' : 'Verify a claim',
+      intent: profile?.singleOwnerBids
+        ? 'Say the document proves the sentence, and how it was checked. Normally somebody other than the person who '
+          + 'asserted it does this. You have turned on single-director mode, so you may attest your own \u2014 it is '
+          + 'recorded as your own attestation, not an independent check, and the record says so.'
+        : 'Say the document proves the sentence, and how it was checked. Refused if you were the one who asserted it, '
+          + 'and refused over a document that has already lapsed \u2014 an approved claim nobody can stand behind is worse than none.',
       path: (v) => `/v1/evidence/claims/${v.claimId}/verify`,
-      submitLabel: 'Verify',
+      submitLabel: profile?.singleOwnerBids ? 'Verify / attest' : 'Verify',
       fields: [
         { name: 'claimId', label: 'Claim', type: 'select',
           options: pendingClaims.map((claim) => ({ value: claim.id, label: `${claim.reference} — ${claim.claim.slice(0, 60)}` })) },
         { name: 'method', label: 'How it was checked', type: 'text',
-          hint: '"Compared against the insurer\u2019s schedule" is a method. "Yes" is a signature on nothing.' },
+          hint: profile?.singleOwnerBids
+            ? 'State what you checked it against \u2014 "compared the uploaded certificate against the Constructionline portal on 8 Nov".'
+            : '"Compared against the insurer\u2019s schedule" is a method. "Yes" is a signature on nothing.' },
       ],
       transform: ({ claimId, ...rest }) => rest,
     },

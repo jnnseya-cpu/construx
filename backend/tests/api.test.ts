@@ -366,6 +366,84 @@ describe('authorisation is enforced at the edge, not only in the engines', () =>
   });
 });
 
+describe('the guided journey endpoint', () => {
+  it('answers a project user from the tenancy facts, with or without a job named', async () => {
+    const reply = await call('GET', '/v1/journey', { token: tokenFor('owner') });
+    assert.equal(reply.status, 200);
+    assert.ok(Array.isArray(reply.body.stages) && reply.body.stages.length >= 2, 'the setup stages are always present');
+    assert.equal(typeof reply.body.hasProfile, 'boolean');
+    assert.equal(typeof reply.body.hasProject, 'boolean');
+    // The demo workspace has its company facts on file, so the first setup stage is done.
+    assert.equal(reply.body.hasProfile, true);
+    assert.ok('nowDo' in reply.body, 'the one-next-step field is always carried');
+  });
+
+  it('folds in the named job’s own road', async () => {
+    const reply = await call('GET', `/v1/journey?projectId=${seed.projectId}`, { token: tokenFor('owner') });
+    assert.equal(reply.status, 200);
+    assert.ok(reply.body.road === 'PRICE' || reply.body.road === 'BID', `a job on a road, got ${reply.body.road}`);
+    assert.ok(reply.body.stages.some((s: any) => s.group === 'WIN'), 'the job’s flow steps are folded in');
+  });
+
+  it('degrades to setup guidance for an unreadable job rather than failing', async () => {
+    const reply = await call('GET', '/v1/journey?projectId=does-not-exist', { token: tokenFor('owner') });
+    // Advisory guidance: a stale or forbidden project id must not 404 or 500 the
+    // whole strip — it falls back to the tenancy's own setup stages.
+    assert.equal(reply.status, 200);
+    assert.equal(reply.body.road, null);
+    assert.ok(reply.body.stages.some((s: any) => s.group === 'SETUP'), 'setup stages survive the degrade');
+    assert.ok(!reply.body.stages.some((s: any) => s.group === 'WIN'), 'no job road is folded in when the job is unreadable');
+  });
+
+  it('is refused to the platform operator, who runs the estate rather than a bid', async () => {
+    const reply = await call('GET', '/v1/journey', { token: tokenFor('operator') });
+    assert.equal(reply.status, 403);
+    assert.equal(reply.body.title, 'ACCOUNT_LAYER_SEPARATION');
+  });
+});
+
+describe('the paid plain-English explanation', () => {
+  it('is a quotable, metered AI action', async () => {
+    const reply = await call('POST', '/v1/ai/quote', {
+      token: tokenFor('owner'),
+      body: { method: 'POST', path: `/v1/projects/${seed.projectId}/ask/explain` },
+    });
+    assert.equal(reply.status, 200);
+    assert.equal(reply.body.engine, 'GUIDE');
+    assert.equal(reply.body.taskType, 'guide_explain');
+    assert.ok(reply.body.estimatedChargeMinor > 0, 'a paid action must carry a cost before anybody commits to it');
+  });
+
+  it('refuses the local stand-in before charging a single ACU', async () => {
+    // The whole point of "paid on request": a plain-English explanation
+    // attributed to reasoning that never happened is dishonest, so on a
+    // deployment with no provider the run releases its hold and refuses rather
+    // than billing for the stand-in's output.
+    const before = platform.wallet(seed.tenantId).snapshot();
+    const reply = await call('POST', `/v1/projects/${seed.projectId}/ask/explain`, {
+      token: tokenFor('owner'),
+      body: { question: 'How do I price the bill?' },
+    });
+    assert.equal(reply.status, 503);
+    assert.equal(reply.body.title, 'NO_REASONING_PROVIDER');
+
+    const after = platform.wallet(seed.tenantId).snapshot();
+    assert.equal(after.balanceMinor, before.balanceMinor, 'a refused run must not spend the balance');
+    assert.equal(after.heldMinor, before.heldMinor, 'a refused run must release its hold');
+  });
+
+  it('answers the same question for free, from state, with no provider needed', async () => {
+    // The free grounded answer is always there — that is the "free first" half.
+    const reply = await call('POST', `/v1/projects/${seed.projectId}/ask`, {
+      token: tokenFor('owner'),
+      body: { question: 'How do I price the bill?' },
+    });
+    assert.equal(reply.status, 201);
+    assert.equal(reply.body.acuConsumed, 0, 'answering from project state spends nothing');
+    assert.ok(typeof reply.body.answer === 'string' && reply.body.answer.length > 0);
+  });
+});
+
 describe('tenant isolation on the generic entity read', () => {
   /**
    * The endpoint that can return any record in the system is the one worth
@@ -553,6 +631,13 @@ describe('the interface is given the rules rather than holding them', () => {
     assert.equal(matrix.status, 200);
     assert.ok(matrix.body.matrix?.PM ?? matrix.body.PM, 'the matrix does not describe the PM role');
     assert.equal(gates.status, 200);
+
+    // The AI expert behind each role is published alongside the matrix, so the
+    // console can show a person who their AI agent is without restating it.
+    assert.ok(matrix.body.roleExpertise, 'the AI expert map is not published');
+    assert.equal(matrix.body.roleExpertise.PM?.discipline, 'PROJECT_MANAGER');
+    assert.ok(Array.isArray(matrix.body.roleExpertise.PM?.standards), 'the expert names the standards it works to');
+    assert.equal(matrix.body.roleExpertise.VIEWER, null, 'a read-only seat has no construction profession');
   });
 
   it('publishes the route table as its own documentation', async () => {

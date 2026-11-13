@@ -221,6 +221,10 @@ describe('one identity, several companies (§4)', () => {
     const token = await completeSignIn(base, verified.body);
     const me = await send('GET', '/v1/users/me', token);
     assert.equal((me.body.activeCompany as Record<string, unknown>).tenantId, jn.tenantId);
+    // The company's own jurisdiction and region, which a new portfolio or
+    // project defaults to — not the first country in the list.
+    assert.equal((me.body.activeCompany as Record<string, unknown>).jurisdiction, platform.tenant(jn.tenantId).jurisdiction);
+    assert.equal((me.body.activeCompany as Record<string, unknown>).region, 'EU');
     const unnamed = await send('POST', '/v1/auth/login', null, { email: etablix.qs.email });
     assert.equal(unnamed.body.actorId, etablix.qs.id);
   });

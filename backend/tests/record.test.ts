@@ -385,6 +385,69 @@ describe('rescoring a risk', () => {
     assert.ok(contingency.expectedMinor > 0);
   });
 
+  it('records cause → event → impact and who carries it, and leaves a client-owned risk out of our contingency', () => {
+    // A tender risk is one record: the cause, the event, and the cost/time if it
+    // happens — with who carries it. A client-owned risk is the client's to fund,
+    // so it must not inflate our contingency; counting it would fund the same
+    // exposure twice.
+    const before = safety.assessContingency(ctx('safety')).expectedMinor;
+
+    safety.registerRisk(ctx('pm'), {
+      id: 'RSK-CAUSE-OURS',
+      title: 'Temporary generation runs beyond the priced period',
+      cause: 'DNO energisation depends on a wayleave not yet granted',
+      allocation: 'CONTRACTOR',
+      category: 'PROGRAMME',
+      probability: 0.5,
+      costImpact: { optimistic: 1_000_000, mostLikely: 4_000_000, pessimistic: 9_000_000 },
+      scheduleImpactDays: { optimistic: 10, mostLikely: 40, pessimistic: 80 },
+      projectValueMinor: 240_000_000,
+      projectDurationDays: 870,
+    });
+
+    const ours = platform.ledger.require({ refType: 'RiskRegisterItem', refId: 'RSK-CAUSE-OURS' }).state;
+    assert.match(String(ours.cause), /wayleave/);
+    assert.equal(ours.allocation, 'CONTRACTOR');
+
+    const afterOurs = safety.assessContingency(ctx('safety')).expectedMinor;
+    assert.ok(afterOurs > before, 'a contractor-owned risk did not raise our contingency');
+
+    safety.registerRisk(ctx('pm'), {
+      id: 'RSK-CAUSE-THEIRS',
+      title: 'Client-provided equipment delivered late',
+      cause: 'Vendor lead time sits with the client under the ER',
+      allocation: 'CLIENT',
+      category: 'SUPPLY_CHAIN',
+      probability: 0.6,
+      costImpact: { optimistic: 2_000_000, mostLikely: 6_000_000, pessimistic: 12_000_000 },
+      scheduleImpactDays: { optimistic: 10, mostLikely: 30, pessimistic: 70 },
+      projectValueMinor: 240_000_000,
+      projectDurationDays: 870,
+    });
+
+    const afterTheirs = safety.assessContingency(ctx('safety')).expectedMinor;
+    assert.equal(afterTheirs, afterOurs, 'a client-owned risk was wrongly priced into our contingency');
+  });
+
+  it('refuses an allocation that is not one of the three', () => {
+    throwsCode(
+      () =>
+        safety.registerRisk(ctx('pm'), {
+          id: 'RSK-BAD-ALLOC',
+          title: 'Bad allocation',
+          // @ts-expect-error — deliberately invalid to prove the guard
+          allocation: 'NOBODY',
+          category: 'COMMERCIAL',
+          probability: 0.2,
+          costImpact: { optimistic: 1, mostLikely: 2, pessimistic: 3 },
+          scheduleImpactDays: { optimistic: 0, mostLikely: 0, pessimistic: 0 },
+          projectValueMinor: 1_000_000,
+          projectDurationDays: 100,
+        }),
+      'RISK_ALLOCATION_INVALID',
+    );
+  });
+
   it('refuses a rescore that does not say what changed', () => {
     throwsCode(
       () =>

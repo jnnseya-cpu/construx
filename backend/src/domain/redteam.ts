@@ -1,11 +1,12 @@
+import { sha256 } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, currentPhase, runAI, write, type EngineContext } from '../engines/context.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
 import { openImpacts } from './addendum.ts';
 import type { BidResponsePack, BidSection } from './bidresponse.ts';
-import { evidenceRegister } from './evidenceclaim.ts';
-import { complianceMatrix, liveWaivers, type MatrixLine } from './itt.ts';
+import { standingOf, type EvidenceClaim } from './evidenceclaim.ts';
+import { complianceMatrix, confirmedUndertakingReferences, liveWaivers, type MatrixLine } from './itt.ts';
 
 /**
  * Adversarial self-challenge — `L7.3`, §16, §4.7.3.
@@ -186,6 +187,18 @@ export type AssuranceReview = {
   /** What this review cannot tell you. Stated on the record, not in a footnote. */
   limits: string[];
   summary: string;
+  /**
+   * A fingerprint of each drafted section's prose at the moment this review ran.
+   *
+   * Carried so a re-run can tell which sections were edited since and which were
+   * not. A model finding is re-worded on every adversarial pass, so its exact
+   * title cannot be matched across runs — but a decision recorded against a
+   * section whose prose has not changed is still the person's decision about the
+   * same concern, and this is what lets `carryForwardDispositions` carry it.
+   * Absent on reviews written before this was added; the carry then falls back
+   * to exact-title matching, which is the safe behaviour, not a wrong one.
+   */
+  sectionDigests?: Record<string, string>;
 };
 
 /**
@@ -278,9 +291,41 @@ const FIGURE = /(?:£|\$|€)\s?\d|(?:\b\d[\d,]*\s?(?:%|per\s?cent\b))|\b\d[\d,]
 const QUANTIFIED =
   /\b\d[\d,.]*\s?(?:%|per\s?cent|weeks?|months?|years?|days?|hours?|starts?|places?|apprentices?|apprenticeships?|jobs?|roles?|people|FTE|tonnes?|tCO2e?|kg|miles?|km|visits?|sessions?|students?|pupils?|SMEs?|suppliers?)\b|(?:£|\$|€)\s?\d|\b\d[\d,.]*\s?(?:million|billion|k\b)/i;
 
-/** What a draft leaves behind when the model was told to name what the bid team must insert. */
-const PLACEHOLDER =
-  /\bTBC\b|\bTBA\b|\bXX+\b|\bN\/A\b|\[[^\]]{0,60}\]|<[^>]{0,60}>|\bbid team must (?:insert|supply|confirm)\b|\binsert\b\s+(?:the\s+)?(?:figure|number|name|date)\b|\blorem ipsum\b/i;
+/**
+ * A marker the bidder left behind — always the bidder's own, never the buyer's.
+ * A `TBC`, an instruction to the bid team, an unfilled "insert the number".
+ */
+const PLACEHOLDER_MARKER =
+  /\bTBC\b|\bTBA\b|\bXX+\b|\bN\/A\b|\bbid team must (?:insert|supply|confirm)\b|\binsert\b\s+(?:the\s+)?(?:figure|number|name|date)\b|\blorem ipsum\b/i;
+
+/** A bracketed span — an unfilled `[insert …]`, OR the buyer's own `[and principal designer]`. */
+const BRACKETED = /\[[^\]]{0,60}\]|<[^>]{0,60}>/g;
+
+/**
+ * Figures as comparable tokens, so a figure the buyer stated can be told from one
+ * the model introduced. "30%", "30 %" and "30 per cent" all reduce to the same
+ * token, so a draft that restates the buyer's "70% Price / 30% Quality" is not
+ * accused of inventing a number the buyer themselves wrote.
+ */
+function figureTokens(text: string): string[] {
+  const re = new RegExp(FIGURE.source, 'gi');
+  return (text.match(re) ?? []).map((f) => f.toLowerCase().replace(/per\s?cent/g, '%').replace(/\s+/g, ''));
+}
+
+/**
+ * Whether a drafted section still carries a placeholder of its own.
+ *
+ * The buyer's requirement is discounted first: a drafter told to restate the
+ * buyer's wording will faithfully reproduce the buyer's own square brackets (a
+ * clause written "the duties of a designer [and principal designer]"), and that
+ * is the requirement, not an unfilled blank. A bracketed span that appears in the
+ * requirement is the buyer's; one that does not is the bidder's to resolve.
+ */
+function carriesPlaceholder(body: string, requirement: string): boolean {
+  if (PLACEHOLDER_MARKER.test(body)) return true;
+  const req = requirement.toLowerCase();
+  return (body.match(BRACKETED) ?? []).some((span) => !req.includes(span.toLowerCase()));
+}
 
 function reviewsOf(ctx: EngineContext): AssuranceReview[] {
   return ctx.ledger.list(ctx.projectId, 'AssuranceReview').map((record) => record.state as unknown as AssuranceReview);
@@ -346,8 +391,11 @@ export function evaluatorFindings(input: {
   waivedKeys: Set<string>;
   claims: Array<{ reference: string; claim: string; covers: string[]; standing: string; expiresAt?: string }>;
   staleKeys: Map<string, string>;
+  /** References answered by a confirmed compliance undertaking — a declared statement, not a document. */
+  undertakingRefs?: Set<string>;
 }): AssuranceFinding[] {
   const { pack, matrix, waivedKeys, claims, staleKeys } = input;
+  const undertakingRefs = input.undertakingRefs ?? new Set<string>();
   const lineOf = new Map(matrix.map((line) => [line.reference, line]));
   const findings: AssuranceFinding[] = [];
   const returnBy = pack.returnBy.slice(0, 10);
@@ -422,8 +470,9 @@ export function evaluatorFindings(input: {
       );
     }
 
-    // A placeholder in a submission is the classic disqualification.
-    if (PLACEHOLDER.test((section.body ?? []).join(' '))) {
+    // A placeholder in a submission is the classic disqualification — but the
+    // buyer's own bracketed clause text, faithfully restated, is not one.
+    if (carriesPlaceholder((section.body ?? []).join(' '), line?.requirement ?? '')) {
       findings.push(
         finding({
           lens: 'ADVERSARIAL',
@@ -441,7 +490,17 @@ export function evaluatorFindings(input: {
 
     // A figure the drafting constraint forbade: the model cannot know it, so
     // wherever one appears it was either invented or inserted without a source.
-    if (section.authorship === 'AI_DRAFTED' && FIGURE.test((section.body ?? []).join(' '))) {
+    // A figure the buyer themselves stated in the requirement is the exception —
+    // restating "70% Price / 30% Quality" is quoting the source, not inventing a
+    // number — so only figures the draft introduces beyond the requirement count.
+    const introducedFigures =
+      section.authorship === 'AI_DRAFTED'
+        ? (() => {
+            const sourced = new Set(figureTokens(line?.requirement ?? ''));
+            return figureTokens((section.body ?? []).join(' ')).filter((f) => !sourced.has(f));
+          })()
+        : [];
+    if (introducedFigures.length > 0) {
       findings.push(
         finding({
           lens: 'CONTRACT',
@@ -450,9 +509,9 @@ export function evaluatorFindings(input: {
           reference: section.key,
           title: `${section.key} states a figure the drafting rule forbade`,
           detail:
-            'An AI-drafted section carries a sum or a percentage. The drafting constraint forbids stated figures ' +
-            'precisely because the model has no source for one, and a number in a submission is a representation to ' +
-            'the buyer.',
+            'An AI-drafted section carries a sum or a percentage the buyer did not state in the requirement. The ' +
+            'drafting constraint forbids stated figures precisely because the model has no source for one, and a ' +
+            'number in a submission is a representation to the buyer.',
           remedy: 'Check the figure against the record it should come from, or take it out.',
         }),
       );
@@ -557,13 +616,30 @@ export function evaluatorFindings(input: {
     }
   }
 
+  // A requirement answered by a written response section is answered — in prose,
+  // which is how a contractual obligation ("complete the Services with all
+  // reasonable skill and care") is met in a bid. The claims register proves
+  // documentary assertions — an insurance certificate, a CV, a policy — and was
+  // never where a method statement lives. Reporting "nothing answers this" about
+  // a clause the bidder has written a full method statement against is the lens
+  // looking in the wrong drawer, and on a contract-heavy tender it was the bulk
+  // of the findings. A reference with a drafted section is therefore not reported
+  // as unevidenced; a genuinely documentary line still needs its claim, and the
+  // returnables register tracks the documents a return must carry.
+  const answeredInProse = new Set(
+    pack.sections.filter((s) => s.status === 'DRAFTED' && (s.body ?? []).length > 0).map((s) => s.key),
+  );
+
   // Evidence, against the day the buyer reads it rather than against today.
   for (const line of matrix) {
     if (!line.evidenceRequired) continue;
     const covering = claims.filter((claim) => claim.covers.includes(line.reference));
     const held = line.evidenceHeld !== undefined && line.evidenceHeld !== '';
+    // A requirement the bidder has answered — a drafted method statement, or a
+    // confirmed compliance undertaking they have declared true — is answered.
+    const answeredByProseOrUndertaking = answeredInProse.has(line.reference) || undertakingRefs.has(line.reference);
 
-    if (covering.length === 0 && !held) {
+    if (covering.length === 0 && !held && !answeredByProseOrUndertaking) {
       findings.push(
         finding({
           lens: 'EVIDENCE',
@@ -679,6 +755,105 @@ export function scoreFrom(
   return { percent: Math.round((awarded / weight) * 1000) / 10, basis };
 }
 
+/** A fingerprint of each drafted section's prose, for telling an edited section from one left alone. */
+export function draftedSectionDigests(pack: BidResponsePack): Record<string, string> {
+  const digests: Record<string, string> = {};
+  for (const section of pack.sections) {
+    if (section.status === 'DRAFTED' && (section.body ?? []).length > 0) {
+      digests[section.key] = sha256((section.body ?? []).join('\n'));
+    }
+  }
+  return digests;
+}
+
+/** The sections whose prose is identical to what the prior review saw — the ones nobody has touched. */
+export function unchangedSections(
+  prior: AssuranceReview | undefined,
+  currentDigests: Record<string, string>,
+): Set<string> {
+  const unchanged = new Set<string>();
+  const priorDigests = prior?.sectionDigests;
+  if (!priorDigests) return unchanged; // No fingerprints to compare: nothing is known-unchanged, which is the safe answer.
+  for (const [sectionKey, digest] of Object.entries(currentDigests)) {
+    if (priorDigests[sectionKey] === digest) unchanged.add(sectionKey);
+  }
+  return unchanged;
+}
+
+/**
+ * Carry a person's recorded decisions forward onto a freshly rebuilt review, in
+ * place.
+ *
+ * A re-run rebuilds every finding from scratch with a new id, so a decision
+ * keyed by finding id would be lost on every re-run — which is the busywork that
+ * made a bidder re-decide 27 findings to clear one critical, and stop trusting
+ * the tool. A decision carries where the finding is the *same concern*, and that
+ * is judged two ways:
+ *
+ * - **Exact match.** Same severity, reference, section and title. Every
+ *   deterministic finding has a templated title that does not drift, so this
+ *   carries all of them; a model finding the challenge happened to word
+ *   identically carries here too.
+ * - **Same concern on an untouched section.** A model challenge re-words the
+ *   same finding on every pass, so its exact title changes between runs while
+ *   the concern does not. On a section whose prose has not been edited since the
+ *   last review, a decision about that section's model finding is still the
+ *   person's decision about the same thing — so it carries, keyed on what does
+ *   not drift: the section and the severity. Only where the pairing is
+ *   unambiguous — exactly one decided model finding and one new model finding
+ *   for that section and severity — so a decision is never silently applied to a
+ *   concern the person did not actually see. A section the person *did* edit is
+ *   deliberately excluded: there the model may be raising something new, and a
+ *   fresh look is right.
+ */
+export function carryForwardDispositions(
+  prior: AssuranceReview | undefined,
+  findings: AssuranceFinding[],
+  unchanged: Set<string>,
+): void {
+  if (!prior) return;
+
+  const exactKey = (entry: AssuranceFinding): string =>
+    `${entry.severity}\u0000${entry.reference ?? ''}\u0000${entry.sectionKey ?? ''}\u0000${entry.title}`;
+  const sectionKey = (entry: AssuranceFinding): string => `${entry.sectionKey ?? ''}\u0000${entry.severity}`;
+
+  const decidedExact = new Map<string, FindingDisposition>();
+  const priorModel = new Map<string, FindingDisposition[]>();
+  for (const earlier of prior.findings) {
+    if (!earlier.disposition) continue;
+    decidedExact.set(exactKey(earlier), earlier.disposition);
+    if (earlier.raisedBy === 'MODEL' && earlier.sectionKey && unchanged.has(earlier.sectionKey)) {
+      const list = priorModel.get(sectionKey(earlier)) ?? [];
+      list.push(earlier.disposition);
+      priorModel.set(sectionKey(earlier), list);
+    }
+  }
+
+  // How many new model findings fall on each (section, severity), so the
+  // section-and-severity carry is only taken when it is one-to-one.
+  const newModelCount = new Map<string, number>();
+  for (const entry of findings) {
+    if (entry.raisedBy === 'MODEL' && entry.sectionKey && unchanged.has(entry.sectionKey)) {
+      newModelCount.set(sectionKey(entry), (newModelCount.get(sectionKey(entry)) ?? 0) + 1);
+    }
+  }
+
+  for (const entry of findings) {
+    if (entry.disposition) continue;
+    const exact = decidedExact.get(exactKey(entry));
+    if (exact) {
+      entry.disposition = exact;
+      continue;
+    }
+    if (entry.raisedBy === 'MODEL' && entry.sectionKey && unchanged.has(entry.sectionKey)) {
+      const candidates = priorModel.get(sectionKey(entry));
+      if (candidates && candidates.length === 1 && newModelCount.get(sectionKey(entry)) === 1) {
+        entry.disposition = candidates[0]!;
+      }
+    }
+  }
+}
+
 /**
  * Attack the pack.
  *
@@ -687,7 +862,14 @@ export function scoreFrom(
  */
 export async function challengeSubmission(
   ctx: EngineContext,
-  input: { packId: string },
+  /**
+   * `withModel: false` runs the deterministic lenses only, by choice, at no
+   * cost. The review was already partial-but-honest wherever no provider
+   * answered; a company that does have one cleared had no way to ask for the
+   * free half alone — every review sent the pack to a model and charged for
+   * it, and an empty wallet blocked even the checks that cost nothing.
+   */
+  input: { packId: string; withModel?: boolean },
 ): Promise<{ review: AssuranceReview; acuConsumed: number }> {
   authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3', lifecyclePhase: currentPhase(ctx) });
 
@@ -702,7 +884,16 @@ export async function challengeSubmission(
 
   const analysis = complianceMatrix(ctx, pack.analysisId);
   const waivedKeys = new Set(liveWaivers(ctx, pack.analysisId).map((waiver) => waiver.reference));
-  const register = evidenceRegister(ctx, pack.returnBy.slice(0, 10));
+  // Claims are filed on the tenancy, not the bid (the `Assert a claim` route runs
+  // on the governance scope), so a red team that read only this project's claims
+  // saw none — and reported "evidence nothing answers" against every requirement
+  // however many certificates the company had filed and linked. Read them where
+  // they live: tenant-wide, which also means a document linked on one tender
+  // answers the same clause on the next.
+  const asAt = pack.returnBy.slice(0, 10);
+  const tenantClaims = ctx.ledger
+    .listByTenant(ctx.tenantId, 'EvidenceClaim')
+    .map((record) => record.state as unknown as EvidenceClaim);
   const staleKeys = new Map(
     openImpacts(ctx, pack.analysisId)
       .filter((impact) => impact.material)
@@ -713,17 +904,29 @@ export async function challengeSubmission(
     pack,
     matrix: analysis.matrix,
     waivedKeys,
-    claims: register.claims.map((claim) => ({
+    claims: tenantClaims.map((claim) => ({
       reference: claim.reference,
       claim: claim.claim,
       covers: claim.covers,
-      standing: claim.standing,
+      standing: standingOf(claim, asAt),
       ...(claim.expiresAt === undefined ? {} : { expiresAt: claim.expiresAt }),
     })),
     staleKeys,
+    undertakingRefs: new Set(confirmedUndertakingReferences(ctx, pack.analysisId)),
   });
 
-  const { challenge, added, acuConsumed } = await modelChallenge(ctx, pack, analysis.matrix);
+  const { challenge, added, acuConsumed } =
+    input.withModel === false
+      ? {
+          challenge: {
+            ran: false,
+            reason: 'Run as checks only, without a model — by choice, at no cost',
+            findings: 0,
+          } satisfies ModelChallenge,
+          added: [] as AssuranceFinding[],
+          acuConsumed: 0,
+        }
+      : await modelChallenge(ctx, pack, analysis.matrix);
   findings.push(...added);
 
   // Everything except a section with no prose on it. A requirement the platform
@@ -795,6 +998,19 @@ export async function challengeSubmission(
       : []),
   ];
 
+  // Carry forward the decisions a person already recorded.
+  //
+  // Every re-run rebuilds the findings from scratch with fresh ids, so without
+  // this, fixing one critical finding and re-running would discard the recorded
+  // decision on every other finding — forcing the whole review to be decided
+  // again, 27 times over, which is exactly the busywork that makes a reviewer
+  // stop trusting the tool. `carryForwardDispositions` carries a decision onto a
+  // finding that is the same concern, and the two ways it decides that are below.
+  const prior = latestReview(ctx, pack.id);
+  const sectionDigests = draftedSectionDigests(pack);
+  const unchanged = unchangedSections(prior, sectionDigests);
+  carryForwardDispositions(prior, findings, unchanged);
+
   const id = ulid();
   const counts = (severity: FindingSeverity): number => findings.filter((entry) => entry.severity === severity).length;
   const review: AssuranceReview = {
@@ -811,6 +1027,7 @@ export async function challengeSubmission(
     qualityFloorPercent: floorPercent,
     modelChallenge: challenge,
     limits,
+    sectionDigests,
     summary:
       findings.length === 0
         ? `Nothing found against ${pack.reference}. ${percent}% of the weighted marks are findable.`

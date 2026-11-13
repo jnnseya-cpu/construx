@@ -958,6 +958,662 @@ error — so the one export failure that has a next step now offers it. The stri
 refusal stands; what changed is that a tenancy can now satisfy it.
 `consoleforms` covers the new command against the route schema.
 
+### The spreadsheet export went out unbranded while the PDF and Word did not
+
+Found checking that the company's identity reaches **everything** it produces.
+The PDF and the Word pack were fully branded — the mark, the brand colour, the
+legal footer, and the issuer named in the file's own properties — but the
+**Excel** pack was a bare grid: `renderXlsx(sheets)` took only the data, and its
+styles were hardcoded with no colour, no logo, no cover and no document
+properties. A tender pricing schedule or questionnaire returned as a workbook is
+the tenancy's own outbound instrument like the other two, and it was the one
+going out looking like a printout.
+
+`renderXlsx(sheets, branding?)` now brands the workbook **without disturbing a
+single data cell**, which is the whole constraint: a buyer's returned
+questionnaire must keep its sheet-per-section, row-per-question structure and its
+numbering, or it fails a format check. So the branding is additive — a **cover
+sheet** (sheet 1) carrying the mark, the issuing name in the brand colour and the
+legal footer; the brand colour on each section's existing **header row** (a style
+change, not a structural one); the logo embedded through DrawingML from the
+tenancy's `logoRef` data URI (or the evidence store when a resolver is supplied),
+PNG or JPEG, an undecodable mark left off rather than written broken; and the
+issuer named in `docProps` as author and company, the same decision the PDF and
+Word renderers make. The colour is parsed from hex **or** the seeded `rgba(...)`
+form (`brandArgb`), where the shared `hex()` helper would have dropped `rgba` to
+grey. Omit `branding` and the file is byte-for-byte the unbranded grid it was, so
+nothing that does not pass branding changes; with branding it stays deterministic,
+so an export's hash still means two renders are the same instrument. Verified in a
+real browser-class renderer (LibreOffice opens it; the cover shows the logo, the
+orange title and the footer, and each section's header row sits in the brand band)
+and covered in `bidonbid` (the cover is sheet 1, the sections keep order after it,
+the brand colour reaches the stylesheet, and the file is authored as the issuer).
+The one format still unbranded is the copy-ready **TEXT**, which carries no
+formatting at all by design. **PowerPoint is not produced by any stage**, so there
+is nothing there to brand; a branded deck would be a new export, built against a
+named deliverable rather than invented.
+
+### Autonomous Consultancy — the Five Case Model business case (vertical 1)
+
+Built to the *CONSTRUX Autonomous Consultancy Feasibility & Business Case*
+developer spec (v1.0). The spec is a large product — engagements, an agent
+workforce, CDE ingestion, buyer/bidder isolation, a monitoring lifecycle — and
+its own build sequence (§8) puts a **vertical slice** first: an agent-led combined
+appraisal that produces a baseline, options, model, forecast, review and a
+controlled deliverable. That slice is what is built and verified here; the rest is
+sequenced, not pretended.
+
+`backend/src/domain/consultancy/` holds three modules. **`model.ts`** is the
+deterministic appraisal service the spec (§5) insists the economics come from, not
+a model writing numbers: operating break-even, the minimum uses within a subsidy
+cap, served-vs-capacity with unmet demand surfaced rather than silently satisfied,
+funding gap and residual, and reproducible demand scenarios. It implements the
+spec's concrete acceptance test **C07** exactly — a service costing 450,000 at a
+net receipt of 3 per use with a 100,000 subsidy cap breaks even at **150,000**
+uses and needs a minimum of **116,667** whole uses within the cap. **`engagement.ts`**
+is the engagement shape and the deterministic decision logic: the minimum-intake
+check that turns missing inputs into recorded blockers (**C02**), the
+hard-constraint **screen** that runs before scoring so *a weighted score cannot
+clear a fatal constraint* (**C06**), and the proceed / hold / stop recommendation a
+complete pack carries, with **STOP** when nothing clears the screen (**C12**) and
+**HOLD** (conditional appraisal) when a confirmation or a residual funding gap
+remains. **`businesscase.ts`** assembles the public **Five Case Model** deliverable
+as export blocks — the figures and the prose built from them deterministic, the
+Economic Case (value for money) and the Financial Case (funding) kept separate per
+the §7 validation contract, the options screen and scenarios reconciling to the
+model run, and the decision and its conditions on the cover. An optional AI layer
+adds advisory judgement prose per case, best-effort and production-only; following
+the spec's conduct rule (§3) it reasons as a competent specialist **without
+claiming chartership**, shows its basis, says what could change the conclusion, and
+never produces a figure — and it runs the Independent-Challenge verify-and-improve
+pass over its own draft. Two routes expose it: `POST /v1/consultancy/appraisal`
+(the deterministic assembly, with blockers, screen, model, scenarios and decision)
+and `POST /v1/consultancy/business-case` (the branded Five Case document, PDF or
+DOCX, through the same exporter every issued document uses). Covered in
+`consultancy.test.ts` (C02, C06, C07, C12 and the document contract — all five
+cases present, value and funding separate, figures reconciling, nothing fabricated
+when no model was run), and proven end-to-end against the spec's Doncaster–Scunthorpe
+UAT fixture: one brief renders a complete branded business case recommending a
+**conditional HOLD** on the outstanding operator confirmation (**C01**).
+
+Both generators have a **console door on the Consultancy screen**, so neither is
+curl-only. The workboard carries a *Generate deliverables* panel with two seeded
+forms: a Five Case **business case** (title, objectives, options, and optional
+service economics in £ — operating cost, net receipt per use, subsidy cap, capex)
+with a free **Preview appraisal** that shows the recommendation, break-even and any
+residual gap from `POST …/appraisal` before the branded **PDF/DOCX** is drawn from
+`POST …/business-case`; and an **RFQ issue pack** (mandate, scope, deadline,
+evaluation weights, deliverable acceptance, price lines) with a free **Validate**
+against `POST …/rfq/validate` before the branded document from `POST …/rfq`.
+Preview and validation are free JSON; only the documents charge the wallet, exactly
+as any export does. The forms are **seeded from the engagement's intake** — and the
+open-engagement form now carries an optional **client requirement / brief** that is
+attached verbatim at intake, persisted on the engagement (it is captured evidence,
+never a gate, so it does not block authorisation — proven in
+`consultancystore.test.ts`), shown back under the engagement header, seeds the RFQ
+mandate rather than being re-keyed, and is **carried into the business-case
+narrative AI's payload** so the reasoning layer grounds the Five Case prose in the
+client's own words — the brief reaches the agents that work on it, not just the
+ledger.
+
+**Vertical 2 — the stateful engagement and workboard.** The appraisal now has a
+home that persists. `backend/src/domain/consultancy/store.ts` writes a
+`ConsultancyEngagement` and its `ConsultancyTask` work-packages through the one
+Golden Thread `write` path — so tenant isolation, the actor, the role-at-action
+and the hash chain apply for free — under four new closed-catalogue event types
+(`CONSULTANCY_ENGAGEMENT_OPENED/UPDATED`, `CONSULTANCY_TASK_REGISTERED/UPDATED`,
+BUSINESS_DEVELOPMENT group, the entities classified COMMERCIAL_L3). Two state
+machines are kept separate as the spec (§4) insists: the engagement's **workflow
+state** (INTAKE → IN_PROGRESS → IN_REVIEW → ISSUED → MONITORING → CLOSED/CANCELLED)
+and each task's **agent-run state** (QUEUED, RUNNING, WAITING_INPUT,
+WAITING_AUTHORITY, RETRYABLE_FAILURE, BLOCKED, COMPLETE, CANCELLED). Opening an
+engagement checks the minimum intake and returns the gaps as blockers, opening in
+INTAKE — never silently authorised; **AUTHORISE is refused while mandatory intake
+is outstanding** (a timeout never implies approval), SCOPE_CHANGE bumps the scope
+version, CANCEL is terminal. The **workboard** reports the live state, the blockers
+with their owners, the next permissible actions, and the spec's completion measure
+(§7): **verified digital coverage = completed *and validated* required tasks over
+all required digital tasks**, with blocked tasks staying in the denominator (a task
+is covered only when COMPLETE *and* independently validated; a non-digital gate is
+excluded from the denominator). Routes: `POST …/consultancy/engagements`,
+`…/engagements/{id}/actions`, `…/engagements/{id}/tasks`, `…/tasks/{taskId}` and
+`GET …/engagements/{id}/workboard`. Reads are tenant- and engagement-scoped, and
+the engagement records its `partySide` — the basis the buyer/bidder isolation
+builds on. The workboard has a real console door — `frontend/pages/consultancy.js`,
+a **Consultancy** screen in the Commercial group (gated on `BUSINESS_DEVELOPMENT`)
+that opens an engagement, registers tasks, drives the actions and renders the live
+coverage bar, blockers and next action from the server's workboard (so `doors`
+and `navreach` both stay satisfied — a read capability is a screen or it is
+nothing). Covered in `consultancystore.test.ts` (intake blockers persisted,
+authorise refused while incomplete, the coverage arithmetic including a blocked
+task held in the denominator, 100%-and-ready, scope-version bump, terminal cancel,
+invalid run-state rejected, and workboard scoping so one engagement's tasks do not
+leak into another's).
+
+**Task execution grounded in the client requirement.** A work-package is not only
+a checklist row — it can be **executed by an agent**, and that execution is wired
+to the attached client requirement. `runTask` guards first (the engagement must be
+IN_PROGRESS; the task must be runnable — every dependency COMPLETE *and* validated —
+or it is parked in WAITING_INPUT naming what it waits on, with nothing run), then
+runs the reasoning engine against `taskExecutionBrief(eng, task)` — a pure,
+provider-free function that carries the engagement's `clientRequirement` in
+verbatim (surfaced explicitly, `null` when none is attached, never fabricated), with
+the intake and the task's own capability and title. A completed run records the
+grounded output as the task's `lastRun` and sets COMPLETE but leaves `validated`
+false, so an executed task still owes its Independent Challenge before it counts
+toward coverage (spec §7); a run with no reasoning provider configured releases its
+hold uncharged and parks the task rather than faking a result. Route
+`POST …/consultancy/tasks/{taskId}/run`; the Consultancy screen gains a **Run agent**
+action per task, a ◆ marker on tasks grounded in the brief, and an **Agent outputs**
+panel showing each executed task's result. Covered in `consultancystore.test.ts`
+(the brief grounds in the requirement and is null without one; execution refused
+while unauthorised; a task on an unfinished dependency parked in WAITING_INPUT and
+never run; an already-complete task refused).
+
+**The misfile guard — stop a document going into the wrong project.** With several
+live engagements in one tenancy, the operational risk is not cross-tenant leakage
+(the platform already prevents that) but filing the right document against the
+*wrong* engagement — pasting one tender's brief into another's workspace.
+`backend/src/domain/consultancy/misfile.ts` is a pure, deterministic check:
+`assessPlacement(target, documentText, others)` compares a document's own identity
+signals — the client, authority, asset/service and location words it actually
+contains, and any reference codes it cites — against the engagement it is being
+filed under and the other engagements in the project. It returns **CONFLICT** (the
+document matches another engagement far more closely, or cites a reference that is
+not this engagement's), **REVIEW** (it mentions none of this engagement's identity
+at all), or **OK**, and it never raises a false CONFLICT on a weak or absent signal.
+`openEngagement` runs it over a client requirement attached at intake: a CONFLICT is
+**refused with `MISFILED_DOCUMENT`** unless `confirmPlacement` is set (the human
+takes responsibility), and a REVIEW is returned as a non-blocking warning. The
+Consultancy screen catches the refusal and offers an explicit "attach anyway"
+confirm. Covered in `consultancymisfile.test.ts` (identity-token extraction with
+generic words dropped; reference-code extraction across shapes; the NLC brief OK on
+its own engagement but CONFLICT on a South Yorkshire one; a foreign-reference
+conflict; a REVIEW with no identity match; and no false positive on weak/empty
+input) and `consultancystore.test.ts` (a misfiled brief refused at
+`openEngagement`, allowed only on `confirmPlacement`, and a matching brief filed
+without complaint). The target carries no engagement reference into the check — an
+internal ENG-id never appears in a client's brief, so comparing against it would
+misfire.
+
+**The misfile guard extended to the bid pipeline.** The same risk exists where a
+tender is recorded — the two North Lincolnshire documents filed against a Telford
+project. The placement check (`misfile.ts`, now a shared `backend/src/domain/`
+module serving both the consultancy engine and the pipeline) is bound to projects
+and tenders by `backend/src/domain/misfileguard.ts`. Its pure `assessAgainstBuyer`
+decides on two signals: a **buyer-name mismatch** (the document names a client that
+shares no distinctive word with the project's established buyer — the high-precision
+signal) and a **content cross-match** against the other projects and opportunities.
+`assertProjectPlacement` guards the project-scoped ITT route
+(`POST …/projects/:projectId/tender/itt`), reading the project's own `client` or the
+client on the opportunity that pursues it; `assertInvitationPlacement` guards the
+pipeline tender route (`POST /v1/pipeline/tenders/:invitationId/requirements`),
+reading the invitation's `clientName`. Both refuse with `MISFILED_DOCUMENT` on a
+clear conflict unless `confirmPlacement` is set, and **no-op where there is no
+established buyer to compare against**, so ordinary use is never obstructed. The
+"Read the invitation into a compliance matrix" form carries a clearly-labelled
+override checkbox for the confirmed case. The project picker now also shows
+**client — project name** (with a short id tie-breaker) so two tenders for the same
+buyer can be told apart before anything is filed. Covered in `misfileguard.test.ts`
+(buyer-mismatch and content-cross-match verdicts; the project and invitation guards
+refusing a misfile, allowing it on `confirmPlacement`, allowing a matching buyer,
+and no-opping with no established buyer or a missing invitation).
+
+### Grid Connection AI — the HV grid-connection delivery module (IN PROGRESS)
+
+Built to the *CONSTRUX Grid Connection AI* add-on spec (v1.0): an optional module
+that runs the 42-step, eight-gate HV Grid Connection Delivery Playbook as executable
+CONSTRUX workflows. It is being built in tested vertical slices on the primitives
+that already exist — the Autonomous Consultancy engine (engagements, agent tasks,
+verified coverage, evidence & lineage, grounded task execution), `stagegate.ts`, the
+`misfileguard`, and the existing billing layer (`billing/{subscription, seats,
+entitlement, stripe, webhookdelivery}.ts`) — rather than rebuilding any of it.
+
+**Slice 1 — the playbook domain pack (done).**
+`backend/src/domain/grid/playbook.ts` is the module's engineering truth as a closed,
+validated catalogue: the **42 steps** (id, gate, owning agent capability, what the
+agent executes, the controlled output, required-digital flag), the **eight gates
+G0–G7** (with the electrical-authority gates G4–G7 marked), the **ten agent
+capabilities** (§4), and the deterministic gate logic. `gateState` enforces the
+spec's §6.5 rule: a gate is PENDING until its required digital steps are validated,
+BLOCKED if one is blocked, then — for a non-electrical gate — CANDIDATE_READY and
+APPROVED on its decision, but for an **electrical gate AWAITING_AUTHORITY until a
+verified authority record exists** (digital readiness alone never advances it;
+EXPIRED/SUPERSEDED take precedence on a reopened candidate). Safety is in the shape
+of the data: a step is a digital task an agent owns, and there is **no field for a
+switching, set-point or relay action** to be carried. `coverage` gives verified
+digital-task coverage. Covered in `gridplaybook.test.ts` (42 ordered unique steps;
+every step on a known gate and capability; the gate step-ranges; only G4–G7
+electrical; no OT field on any step; the full gate-state table including an
+electrical gate refusing to advance on a decision without authority; coverage
+arithmetic).
+
+**Slice 2 — the persisted engagement and gates (done).**
+`backend/src/domain/grid/store.ts` gives the playbook a home. `openGridEngagement`
+writes a `GridEngagement` (connection, route, point of connection, the 42 steps
+started PLANNED) against a project; `updateStep` moves a step through its agent-run
+states (PLANNED, WORKING, WAITING_EVIDENCE, WAITING_AUTHORITY, VALIDATED, RELEASED,
+STALE, BLOCKED) with validation, owner and blocker; `decideGate` records a gate
+decision; `gridWorkboard` returns every step with its run state, each gate's
+computed `gateState`, verified coverage and the next actions. The spec's §6.5
+authority rule is **enforced, not described**: a gate decision is refused with
+`GATE_BLOCKED` unless the gate is at digital readiness, and an electrical gate
+(G4–G7) is refused with `AUTHORITY_REQUIRED` unless a verified authority record
+(`authorityRef`) is supplied — a decision flag alone never advances it. Three new
+closed-catalogue events (`GRID_ENGAGEMENT_OPENED/UPDATED`, `GRID_GATE_DECIDED`, the
+DELIVERY group; entity `GridEngagement`, QUALITY_COMMISSIONING / COMMERCIAL_L3).
+Writes authorise against QUALITY_COMMISSIONING and are **not phase-gated** — a grid
+connection runs G0 (agreement) through G7 (handover) across the whole lifecycle.
+**Operator decision (2026-11): `ENTERPRISE_ADMIN` now holds `QUALITY_COMMISSIONING`
+`C`/`U`/`A`** (was `R` only). This is a deliberate, scoped carve-out from the usual
+read-only-on-delivery boundary so a small firm whose administrator is also the person
+running the connection playbook can open and work a Grid engagement on the admin role
+alone, without standing up a second `OWNER`/delivery identity. It widens the commissioning
+area only — the admin stays read-only on every other delivery area — and `OWNER` (which
+already carries everything) and the founder→OWNER reconciliation are unchanged. Proven in
+`founders.test.ts` (the carve-out is present and scoped; other delivery areas stay `R`).
+Routes: `POST …/grid/engagements`, `…/engagements/{id}/steps/{stepId}` and
+`…/engagements/{id}/gates/{gateId}/decision`. Covered in `gridstore.test.ts` (open
+with 42 PLANNED steps and every gate PENDING; unknown step and bad run-state
+rejected; a non-electrical gate CANDIDATE_READY→APPROVED; a decision on an unready
+gate refused; an electrical gate AWAITING_AUTHORITY refusing a decision without an
+authority record then advancing with one; a blocked step blocking its gate).
+
+**Slice 3 — the workboard route and delivery UI (done).** `GET …/grid/engagements`
+(the engagements on a project, each with coverage) and `GET …/grid/engagements/{id}/
+workboard` expose the board; `frontend/pages/grid.js` is a **Grid Connection** screen
+in the Deliver group (gated on QUALITY_COMMISSIONING) that opens an engagement, picks
+one, and renders the eight gates as delivery cards — each with its computed gate
+state and an ELECTRICAL AUTHORITY marker on G4–G7 — over the 42 steps with their
+agent-run states, a verified-coverage bar and the next action. A non-electrical gate
+offers an **Approve gate** button only at CANDIDATE_READY; an electrical gate offers
+**Record authority & approve** with a required authority-reference field, and the
+server refuses anything less. `doors`/`navreach` satisfied (the GET routes are
+referenced by the screen; the nav is reachable by every commissioning writer).
+The screen's write-check is **phase-exempt** (`can('QUALITY_COMMISSIONING','C',
+{ phaseExempt: true })`): grid writes carry no `lifecyclePhase` on the server and
+are accepted in any phase, so the browser must not apply the generic
+`QUALITY_COMMISSIONING` phase gate (CONSTRUCTION/COMMISSIONING/HANDOVER) and hide
+an "Open engagement" the API would accept — a grid connection runs G0→G7 across
+the whole lifecycle, including a project still at tender. `blockedReason` gained a
+`phaseExempt` option for exactly this (frontend/backend drift fix). The workboard
+also **shows each agent's output** — `gridWorkboard` now returns each step's
+`lastRun`, and the screen renders an **Agent outputs** panel (the grounded result,
+or why a step is parked) so a run is visible work, not just a state badge. An
+engagement can be **archived** (`archiveGridEngagement`, `POST …/archive`, an
+**Archive** button on the board) to take a finished or test connection off the
+picker — **not a delete**: it sets an `archivedAt` marker and `listGridEngagements`
+filters it out, but the append-only record and everything filed against it stay
+readable (who archived it and why are recorded). Proven in `gridstore.test.ts`.
+
+**Slice 4 — agent execution and reappraisal triggers (done).** Reusing the
+consultancy task-execution pattern: `stepExecutionBrief` (pure, provider-free)
+grounds a step in the connection identity and the step's own instruction and
+expected output under `GRID_CONDUCT` — a conduct rule that forbids any claim of
+chartership or electrical authority and any instruction to switch, energise or set
+plant; `runStep` executes the owning agent against it, records the grounded output
+as the step's `lastRun` **without validating it** (the agent produces a readiness
+candidate; independent validation is separate), and a run with no reasoning provider
+**parks the step WAITING_EVIDENCE, uncharged, faking nothing**. `recordTrigger` is
+the event-driven reappraisal (§6.3): a revision, withdrawn outage, failed test or
+new notification reopens the named steps to STALE (losing their validation) and
+marks the named gates SUPERSEDED. Routes `POST …/steps/{stepId}/run` and
+`POST …/engagements/{id}/triggers`; the screen gains a **Run agent** action per step
+and a reopen-trigger control. Covered in `gridstore.test.ts` (grounding carries no
+OT field; a no-provider run parks WAITING_EVIDENCE and never validates; a validated
+step refuses re-run; a trigger reopens a step to STALE and supersedes an approved
+electrical gate; unknown step/gate rejected).
+
+**Slice 5a — the commercial add-on contract (done).** `backend/src/billing/addon.ts`
+is the spec §1–2 money maths and entitlement state machine as **pure, tested logic**:
+`addonMonthlyMinor`/`addonMonthlyMinorForSeats` (£100 base incl. one seat + £50 per
+additional seat, in GBP minor units, integer-validated); the `ProviderStatus` →
+`Effective` map (`effectiveEntitlement` — LOCKED without a Platform-Admin grant
+whatever the provider says; ACTIVE/ENDING usable, GRACE/STOPPED read-only, PENDING
+locked); `moduleUsable`/`historyReadable`; and seat capacity (`canAllocateSeat`,
+`seatsToUnassign`). `effectiveEntitlement` takes an optional `{ freeExempt }` — a
+free-of-charge package makes the add-on ACTIVE on the grant alone, whatever the provider
+says, and reverts to the paid machine the moment the exemption's term lapses. It **creates
+no charge, calls no provider and persists nothing** — price and entitlement are decided
+here, server-side, never from a client. Proven by `tests/addon.test.ts` (10 cases: the
+price table, the three-state map, the free-exempt override and its reversion,
+usable-vs-readable, and seat capacity).
+
+**Slice 6 — the §9 acceptance plan, proven for everything built (done).**
+`tests/gridacceptance.test.ts` maps all eighteen acceptance scenarios (A01–A18) to
+where each is proven, and proves against the real engine every one that does not
+depend on the deferred billing: **A08** (a distribution offer is grounded on the
+distribution route and still demands a verified authority — no assumed transmission
+approval), **A10/A13** (an electrical acceptance gate holds until a verified record
+exists), **A12** (a withdrawn outage supersedes an approved gate so release cannot read
+it as current), **A14** (a blocked cutover raises a blocker while unaffected work still
+reaches APPROVED), **A15** (no switching/set-point/relay capability exists in the
+catalogue, the conduct rule or the execution brief, and the store exports no path to
+one), and **A17** (a complete synthetic 42-task project carries all eight gates to
+APPROVED, every electrical approval reconciling to an authority record). A11/A16 are
+proven in `gridstore.test.ts`, pricing in `addon.test.ts`, the persisted
+grant/seat/entitlement scenarios (**A01, A03, A05, A06**) in `addonstore.test.ts`, and
+A07/A09/A18 by the platform's existing account-layer separation, tenant isolation and
+green core suite. Only **A04** (duplicate / out-of-order provider webhooks) awaits the
+live reconciliation below — this file does not assert a behaviour the engine does not
+implement.
+
+**Slice 5b — the persisted three-state store and its enforcement (done).** Built across
+the platform↔tenant account-layer boundary the platform enforces, each half on the side
+that owns it. The **Platform-Admin grant is the module allocation itself**: Grid
+Connection AI is a catalogued private module (`identity/modules.ts`' `GRID_CONNECTION`),
+so it appears in the admin console's **Private modules** allocation dropdown alongside
+ETABLIX and Bid-On, and the operator allocates it to a company there exactly as for those
+two. Holding that `ModuleGrant` is what confers the add-on's admin grant
+(`billing/addonstore.ts`' `hasAdminGrant`, reading `ctx.grantedModules`; a legacy
+`setAddonGrant.adminGrant` still counts, so a tenancy provisioned before the module was
+catalogued is not silently locked). The **verified provider status** and the **paid seat
+quantity** are still provisioned operator-side by `platform.setAddonGrant`
+(`POST /v1/admin/tenants/:tenantId/addons/grid`, PLATFORM_ADMIN only), written on the
+platform tenancy — never landing on the customer's own ledger (proven) — and resolved onto
+every engine context as `ctx.addonGrant` beside `grantedModules` (`billing/addongrant.ts`).
+The add-on is **fully priced and whoever is allocated it must pay**: the allocation makes
+it usable only once the billing provider confirms an active charge.
+
+**The one exception — a free-exemption account (done).** A tenancy whose package the
+operator has granted free of charge holds the paid add-on **free too**: its allocation
+alone makes the add-on ACTIVE and usable, with no billing provider in the loop, and every
+use is free (no named seat need be bought). This is resolved onto the context as
+`freeExempt` (from the single subscription accessor, so the exemption's **term is already
+applied**): the day the term ends `freeExempt` reads false and the add-on falls straight
+back to the grant-AND-provider machine — **chargeable like everyone else**. The grant is
+still required; an exemption covers the *charge*, it does not allocate the module.
+`effectiveEntitlement(adminGrant, providerStatus, { freeExempt })` is the pure rule;
+`addonEntitlement` surfaces `freeExempt` so the console shows "included free" rather than a
+price the company will never be asked for.
+
+*Exemption vs. group coverage — the line that matters (done).* "Granted free" on a
+subscription is **not** sufficient on its own, because `coverCompany` marks every company
+of an ordinary **paying** group granted-free to mean "the group pays centrally, nothing is
+billed to me" — coverage, not exemption, and the add-on is a priced product that paying
+group still owes for. `Platform.#addonFreeExempt` draws the line by the entity that
+actually settles the bill: a company standing alone answers on its own free grant; a
+company in a group answers on the group's **primary** company's free grant — true only for
+a genuinely exempt group (e.g. the one account free until a fixed term), false for a
+paying group whose members merely carry coverage. Proven by `tests/addonfreeexempt.test.ts`
+(a paying group's member is LOCKED until paid; an exempt group's member and its primary are
+free; a solo company is free only by its own exemption).
+
+The **named seats** are tenant-side: `billing/addonstore.ts` assigns them within the paid
+quantity (`BILLING_ACU:'U'`), idempotently, refusing the overflow — except for a free-exempt
+tenancy, which is not seat-capped. It derives the tenant's entitlement
+(`GET /v1/billing/addons/entitlement`, a door on the Grid Connection screen with seat
+assign/release for the enterprise admin). `requireModuleSeat` enforces the full A01 check —
+active grant AND billing that permits new use AND a held seat (a free-exempt tenancy
+needs only the allocation) — and the grid *delivery* write routes are gated on it behind
+`GRID_CONNECTION_ENFORCE_SEATS` (off by default so a deployment provisions and assigns
+seats before enforcement bites; the machinery is always live). A provisioning decrease that
+would strand an assigned seat is refused (A05). Proven by `tests/addonstore.test.ts`
+(15 cases, including the free-exemption account and its reversion to chargeable when the
+term ends) and `tests/addon.test.ts` (the free-exempt override in the pure contract). The
+grant/status are recorded from verified provisioning or reconciliation, **never from a
+client** and never from a manual write standing in for a verified payment.
+
+**Slice 5c — the seat console reads for a human, not an id (done).** The Grid Connection
+screen's seat panel (`frontend/pages/grid.js`) was asking for a raw user id, which nobody
+knows, and started at zero seats. It now (1) assigns a seat by **choosing a person** from a
+name/email picker fed by `GET /v1/users` (the raw-id input survives only as the fallback
+when that list cannot be read), shows seat holders and the toasts by **name**, not id;
+(2) reflects the **included seat** — the base fee covers one named seat (`addonEntitlement`
+now returns `includedSeats`), shown as "1 seat included" and, for a free-exempt account,
+"included free (no cap)"; and (3) **auto-assigns that included seat once** to the admin
+setting it up when the add-on is usable and no seat is held yet, so the module is usable
+immediately rather than sitting at zero (idempotent, silent, guarded; they can release it or
+seat someone else). The screen also carries a one-line explanation of what an **engagement**
+is (one HV grid connection run through the whole G0–G7 playbook). `includedSeats` covered in
+`tests/addonstore.test.ts`.
+
+**Still to build (named, not pretended):** only the **live provider (Stripe) webhook
+reconciliation** that would set the provider status automatically from a verified
+billing event, and the idempotent handling of duplicate / out-of-order webhooks (A04) —
+**left behind commercial sign-off**. Until then an operator provisions the status
+explicitly through the route above; no chargeable billing flow is wired, and the pure
+`addon.ts` contract is the authority all of it computes against. No agent is given any
+OT/switching tool.
+
+### Trend Intelligence AI — the invisible demand-reading control layer (IN PROGRESS)
+
+Built to the *Trend Intelligence AI* spec (v2.3) as a CONSTRUX **module** (not the
+spec's standalone Python/FastAPI reference stack): a control layer that reads a change in
+what a platform's customers are searching for or buying, scores whether the business can
+serve it, and — through a shared, versioned **Growth Brief** — retargets the existing SEO
+and marketing automation at run time without rewriting their prompts. It reuses the
+golden-thread ledger, identity/roles, the AI orchestrator + ACU wallet (satisfying the
+spec's "keyless / reuse the host's AI" requirement) and the add-on entitlement machinery.
+Existing agent roles, product facts and brand policy stay authoritative; a brief changes
+priorities, never permissions.
+
+**Invisible by design.** This module has **no user-facing screen, nav entry or user
+route** — it is a background control layer (the spec's own framing: "a control layer for
+existing agents"), wired like the collection / marketing / tender-reminder sweeps that run
+on timers with no UI. Its event types are emitted from `domain/trend/store.ts`, so the
+closed-catalogue invariant holds without any command surface; its records are read by the
+background driver and the agent runtime, never a console page.
+
+**Slice 1 — the detection/scoring engine and the Growth Brief contract (done).** Two
+pure, tested modules, persisting nothing and calling no model:
+- `backend/src/domain/trend/scoring.ts` — the spec §5/§17 maths: `logLift`, the robust
+  anomaly `z` (MAD-based, with the 0.2 floor), the count-feed gate (`c≥20 ∧ z≥2`), the
+  thin-history floor (<4 comparable periods), the count-feed demand map `clamp(50+10z)`,
+  corroboration 0/80/100, the 0–100 **opportunity score** (25/25/20/15/15) and the
+  independently-computed **confidence** (35/25/20/20, single-family capped at 69), the
+  hard vetoes (including readiness = 0), and the decision bands (archive / watch / brief /
+  auto — a veto never reaches brief or auto; auto needs both scores ≥85 **and** an
+  explicit tenant opt-in). Full precision, rounded only for display.
+- `backend/src/domain/trend/brief.ts` — the Growth Brief v1 **closed** contract
+  (`validateGrowthBrief`): enumerated channels, ISO alpha-2 (or ZZ) market, bounded
+  lengths, window-after-start, unknown fields refused — because an agent treats a brief as
+  authority and must never honour an unvalidated extra field.
+
+Proven by `tests/trendscoring.test.ts` (19 cases), including the spec's own worked example
+(**TI-03**: component inputs → 86.25 opportunity / 83.5 confidence, un-rounded, a
+*reviewable brief*), the veto and band rules, the §5.3 movement maths, and the §6 fixture
+(accepted; unknown field / bad market / unknown channel / reversed window / wrong schema
+version all refused).
+
+**Slice 2 — persisted signals → scored opportunities, on the Golden Thread (done, internal).**
+`backend/src/domain/trend/store.ts`, embedded in the existing event catalogue (not a
+separate store), and **internal — no HTTP route or screen**, called by the background
+driver and the agent runtime. `recordObservations` ingests a batch idempotently: the
+spec's §15 uniqueness `(installation, source, source record, revision)` is the ledger
+refId, so an exact replay is a counted **duplicate** and the same key with a changed
+evidence hash is **conflicted**, never a silent overwrite (TI-01); it returns
+accepted/duplicate/conflicted counts. `scoreOpportunity` scores a topic from its own
+observation history — demand is the count-feed anomaly the Slice-1 engine computes, with
+corroboration (independent families), coverage and the single-family flag read from the
+data and fit/intent/timing/readiness/source-quality/freshness supplied by the
+platform/strategist — persisting an opportunity snapshot with every numeric input, the
+vetoes and the band. The band is **held at WATCH** whenever the history is thin or the
+count gate is not cleared, so nothing drives a live change on evidence the engine itself
+calls insufficient. Three events (`TREND_OBSERVATION_RECORDED`, `_OPPORTUNITY_SCORED`,
+`_OPPORTUNITY_RESCORED`, all BUSINESS_DEVELOPMENT) and two entity classes — all exercised
+through the internal store functions `recordObservations` / `scoreOpportunity` /
+`listOpportunities`, with **no route or screen**. Proven by `tests/trendstore.test.ts` (TI-01 replay
+and conflict; a corroborated 5-window spike → a reviewable brief, opt-in → auto; a
+single-family spike capped at confidence 69 and held at WATCH; a thin-history topic held at
+WATCH; a zero-readiness veto; **TI-02** project-scoped isolation — an opportunity scored on
+the delivery project is invisible from another project of the same tenant).
+
+**Slice 3 — the invisible driver: real activity → demand → marketing retarget (done).**
+The chosen signal (operator decision) is CONSTRUX's own first-party activity, and the
+chosen target is the existing marketing/SEO automation. Two pure modules and one
+flag-gated integration, all headless:
+- `domain/trend/signal.ts` — `activityObservations` turns a stream of Golden-Thread events
+  into per-capability-area, per-week demand observations, counting only **closed** windows
+  so a re-read is an idempotent replay (the count is the evidence hash); `GROUP_TO_AREA`
+  maps each EventGroup to the area the marketing topics carry; `marketingDemand` is the
+  lightweight platform path — real demand per area with no profile and no writes (an area
+  counts as live demand only with enough history and a cleared count gate).
+- `domain/trend/retarget.ts` — pure ordering: `preferredTopic` / `rankByDemand` pick the
+  topic whose area carries the most live demand, and **never drop, add or re-permission a
+  topic** — a weak or absent signal leaves the automation's own order untouched.
+- `site/visibility.ts` — the daily marketing release now prefers the highest-demand
+  uncovered topic **behind `TREND_RETARGET_ENABLED` (default off)**, reading the platform's
+  own recent activity from the ledger. Same topics, same checks, same approvals — only the
+  order changes, and only when real demand says so.
+Proven by `tests/trendsignal.test.ts` (closed-window counting and idempotent hashing; the
+area mapping; an end-to-end case where a real spike in one area becomes a live-demand
+retarget and a flat area does not). Nothing new is visible to users; no demand number is
+invented — every count is real platform activity.
+
+**Slice 4 — the retarget is auditable (done).** The daily `MarketingRelease` record now
+carries a `retarget` block — the audit answer to "why this topic today": the area whose
+demand drove it, the demand score, the topic the written order would otherwise have taken,
+and whether demand actually changed the choice (`applied`). It rides in the existing
+`MARKETING_RELEASE_RUN` golden-thread event — no new event type — so the invisible decision
+is traceable without a screen. `tests/trendretarget.test.ts` proves the production wiring:
+with the control layer on, the release still publishes, falls back to the written order
+when no area carries live demand (a quiet signal changes nothing), and stays idempotent for
+the day.
+
+**Still to build (named, not pretended):** (1) A **platform profile** (spec §9/§16) that
+supplies the full per-topic strategist inputs (fit, intent, timing, readiness, source
+quality, freshness) so the richer `store.ts` opportunity scoring (confidence, vetoes, the
+brief/auto bands) runs automatically on a background sweep — the marketing retarget above
+uses demand alone, which needs none of this. (2) The **Growth Brief store** + effective-brief
+resolver + expiry (TI-05). (3) The typed action / approval / execute / rollback state
+machine with the owned-surface adapter (TI-07, TI-08). (4) Experiments + native outcome
+measurement. (5) The **brief-SDK run-time resolution** that lets other existing agents pick
+up the effective brief invisibly (TI-06 prompt-injection safety). The engine, store and
+signal above are the authority every one of those computes against.
+
+**Vertical 3 — evidence and lineage.** `backend/src/domain/consultancy/evidence.ts`
+makes the spec's completion measure checkable: "every released material finding
+traces to a cited source, governed assumption or reproducible calculation."
+A `ConsultancyEvidence` record carries the source, its revision, locator (page,
+sheet + scale + method, IFC GUID, cell), authority, time period, licence,
+extraction method and confidence; a `ConsultancyClaim` records a statement with
+its `sourceRefs`, `calculationRefs` and `assumptionRefs` — the lineage, written to
+the chain, not a convenience view. Two invariants hold by construction: a claim
+**cannot be recorded against nothing** (cite a source, assumption or calculation,
+or be refused — no unsupported finding), and it **cannot cite a superseded
+source** (the spec's prohibition on silent reuse of a stale fact); an unknown
+source is refused too. `claimLineage` resolves the cited evidence and flags any
+source **superseded since** the claim was made, so a released finding whose ground
+has moved is visible rather than quietly stale. Routes: `POST …/engagements/{id}/evidence`,
+`…/evidence/{id}/supersede`, `…/engagements/{id}/claims`, `GET …/engagements/{id}/evidence`
+and `GET …/claims/{id}/lineage`, with the two reads given their door on the
+Consultancy screen (an Evidence & lineage panel). Covered in
+`consultancyevidence.test.ts` (register + list, confidence default, lineage
+resolves a cited source, unsupported claim refused, assumption/calculation-only
+claim accepted, unknown and superseded sources refused, supersede-since flagged on
+the lineage, and register scoped to its engagement).
+
+**Vertical 4 — RFQ and bid packs with their acceptance contracts.**
+`backend/src/domain/consultancy/rfq.ts` makes the spec's §7 deliverable-validation
+contracts executable. The **RFQ issue pack** composes to branded export blocks
+(mandate, scope, data responsibilities, evaluation, deliverable acceptance,
+pricing schedule, instructions, contract schedules) and validates against its
+contract — the reconciliation that bites being the scoring: **evaluation weights
+must sum to 100%** or the pack scores on a basis that does not add up, alongside
+checks for mandate, scope, deadline, a priced core and an acceptance test on every
+deliverable. The **bid issue pack** validation enforces the other side: **every
+mandatory requirement has a response or a named blocker**, and the **price
+schedule total reconciles including tax, disbursements and optional items** — a
+stated total that does not match its lines is named, not left for the buyer to
+find. Routes: `POST /v1/consultancy/rfq` (branded PDF/DOCX), `…/rfq/validate` and
+`…/bid/validate`. Deterministic throughout — whether a pack is complete and
+reconciles is a check, not an opinion, which is what lets a hold/stop
+recommendation be trusted. Covered in `consultancyrfq.test.ts` (a complete RFQ
+passes; weights ≠ 100% flagged; missing mandate/scope/deadline/scoring/acceptance/
+core flagged; the pack carries its sections and prices the core; a complete bid
+reconciles including tax and disbursements; a mandatory gap and a price mismatch
+are flagged; a blocker counts as addressing a requirement).
+
+**Vertical 5 — award, reappraisal and the controlled release.**
+`backend/src/domain/consultancy/lifecycle.ts` adds the late lifecycle with the
+spec's safety rules made checkable. **Award promotion (C05):** a won tender is
+promoted to an award that links the winning bid and the signed terms and transfers
+*only* the commitments named — refused without signed terms to reconcile against.
+**Reappraisal (C08):** a cost/programme/consent event produces the **decision
+delta** between the approved baseline figures and the revised ones, line by line,
+while the approved baseline version persists — the event does not overwrite it.
+**Controlled release (C09/C11/C14):** a release re-authorises **current
+authority** at release time, so a permission revoked after the work was queued
+fails before exposure (C14); it rechecks the cited **evidence** and blocks a
+release citing a **superseded** source rather than shipping a stale artifact
+(C09); and it is **idempotent** on its key, so a duplicate or a retry after a
+partial failure yields one visible side effect, not two (C11) — via a new
+`ConsultancyRelease` record under a single `CONSULTANCY_RELEASE_ISSUED` event.
+Routes: `POST …/engagements/{id}/award`, `…/reappraise`, `…/release`. Covered in
+`consultancylifecycle.test.ts` (award links bid + terms and transfers only the
+named commitments, refused without terms; the reappraisal delta with the baseline
+persisting; a superseded cited source blocks release then issues once current; a
+repeated idempotency key yields one release; a release by an actor without issue
+authority is refused).
+
+**Vertical 6 — the orchestration runtime.** `backend/src/domain/consultancy/orchestrator.ts`
+is the deterministic scheduler the spec's orchestration sequence (§4) needs:
+"Build dependency graph … Schedule independent analyses concurrently." The
+*execution* of a task is the agent work; this owns the **scheduling** — reading
+the dependency graph off the engagement's own tasks (`dependsOn` carries task
+keys) and computing which tasks are **runnable** now (QUEUED with every dependency
+done, where *done* means COMPLETE **and** validated, so nothing unblocks on an
+unvalidated predecessor), which are **waiting** and on what, the concurrent
+**waves** the graph resolves into (a Kahn's-algorithm layering, so independent
+analyses land in the same wave), and whether the graph is **complete**. A cycle is
+**detected and returned**, not looped on — a scheduler that can deadlock is worse
+than none. Exposed at `GET …/engagements/{id}/plan` with its door on the
+Consultancy screen (an orchestration summary line). Covered in
+`consultancyorchestrator.test.ts` (runnable vs waiting, an unvalidated dependency
+does not unblock, a chain lays into ordered waves, independent tasks share a wave,
+a cycle is detected, and completeness needs every required task done).
+
+**Vertical 7 — buyer/bidder isolation (C03).** `backend/src/domain/consultancy/isolation.ts`
+is the per-party visibility rule the spec (§1, C03) demands: "A party acting as a
+bidder must not see buyer deliberations or another bidder's data … Evaluations and
+bidder margins stay compartmentalised." Tenant isolation already keeps different
+organisations apart; this is the finer filter for when buyer and bidders look at
+the *same* procurement. `partyView` is pure and total, and builds the view by
+**copying in only what the viewer is entitled to** rather than hiding fields with
+a flag: the published pack is visible to all; buyer deliberations and evaluations
+are the buyer's alone; a **bidder sees only their own submission, with their own
+margin**, never another bidder's and never any margin but their own; and the
+**buyer sees every submission's content but not any bidder's internal margin** —
+margins are compartmentalised to the bidder, stripped even from the buyer. An
+`isolationLeaks` self-check expresses the guarantee as a property a caller or test
+can run over any view. Covered in `consultancyisolation.test.ts` (a bidder sees
+only their own submission with margin and no deliberations/evaluations/other
+bidders; a bidder with no submission sees the pack but no submissions; the buyer
+sees all content and evaluations but no margins; and the leak-check is clean for
+both). The deterministic filter *is* C03's guarantee.
+
+**Vertical 7b — the persisted shared procurement (C03 bound to the Golden Thread).**
+`backend/src/domain/consultancy/procurement.ts` persists the isolation so the
+filter is enforced at the read, not just proven as a pure function.
+`openProcurement` records a `ConsultancyProcurement` whose buyer is whoever opened
+it (`buyerPartyId = ctx.auth.actorId`); `addDeliberation` and `recordEvaluation`
+are buyer-only (`assertBuyer` → `NOT_BUYER`) and their content lives in the
+procurement state, never in a bidder-visible record; `submitBid` writes a separate
+`ConsultancySubmission` and refuses the buyer bidding on their own procurement
+(`BUYER_CANNOT_BID`). The decisive property is that `viewProcurement` **derives the
+viewer's side from the authenticated caller** — buyer if `ctx.auth.actorId` opened
+it, bidder otherwise — and hands that to `partyView`. A client cannot ask to be the
+buyer; a bidder gets only their own submission (with their own margin) however they
+ask, because the server decides who they are from who they are. Routes:
+`POST …/consultancy/procurements` (+ `/deliberations`, `/evaluations`,
+`/submissions`) and `GET …/procurements/:id/view`, with a console door in
+`frontend/pages/consultancy.js`. Covered in `consultancyprocurement.test.ts` (the
+view derived from who is asking — buyer sees all content and evaluations but no
+margin, a bidder sees only their own submission with margin and no
+deliberations/evaluations; `NOT_BUYER` for a bidder deliberating or evaluating;
+`BUYER_CANNOT_BID`; a bidder sees only their own submissions). Within one tenancy
+this compartmentalises several parties; extending read access to a bidder in a
+*different* tenancy rides on the platform's group/sharing layer, and the filter it
+is handed is exactly this one.
+
+With this the Autonomous Consultancy spec's build sequence (§8) is complete across
+all seven verticals: the Five Case business case, the stateful engagement and
+workboard, evidence and lineage, RFQ and bid packs, award/reappraisal/release, the
+orchestration runtime, and buyer/bidder isolation — every spec acceptance test
+that is deterministic (C01, C02, C03, C05, C06, C07, C08, C09, C11, C12, C14) made
+checkable and green.
+
 ### The submission export leaked internal citation machinery
 
 Reading the exported pack the way the buyer would, after the branding door was in
@@ -1220,6 +1876,30 @@ the chain as a third option, so the redundancy is deliberate rather than
 incidental. A test pins that injected adapters stay isolated — otherwise a
 suite exercising the exhausted-provider path would quietly reach a real vendor
 whenever the environment happened to hold a key.
+
+**Cheapest-first routing is a switch, off by default.** `AI_SELECT_CHEAPEST`
+(default off) makes `adapterFor` rank the cleared, healthy, large-enough
+candidates by estimated cost at the measured input size and take the lowest,
+instead of trying the configured chain in order. It reads the rate through a new
+optional `costAtTokensMinor(inputTokens)` on the adapter — implemented by the
+remote adapters (same `priceFor` basis as `estimateCostMinor`) and the local
+stand-in, absent-able so an adapter with no meaningful rate simply sorts last
+rather than ahead of a priced one. The two existing preferences survive the
+re-sort: health is still a condition, and a vendor already in `avoid` (tried for
+this piece of work) is still passed over where another is available, so the
+quality-escalation path does not get trapped on the cheapest weak model the red
+team just rejected. With one provider configured the flag changes nothing. Off
+by default because the configured order is a deliberate choice on most
+deployments and a scored submission written by the cheapest model can lose more
+in marks than it saves in pennies. Two tests in `ai.test.ts` pin both the cost
+pick and the avoid-still-wins behaviour.
+
+`controlPlaneStatus` publishes the active mode as `routing: { mode, selectCheapest }`
+(`CHEAPEST` or `CONFIGURED_ORDER`) and the AI-engine screen shows it on the
+"Providers live" card, so an operator can confirm which mode is live from inside
+the platform rather than reading `AI_SELECT_CHEAPEST` off the container — the
+"did the env var take effect?" question answered in the UI. A third test pins
+the published mode against the flag.
 
 Anthropic is wired to the Messages API, which differs from the other two in
 ways that matter: `max_tokens` is required, media is an `image` content block,
@@ -2123,6 +2803,26 @@ the guard holds even if the runtime one were bypassed. Approved commands run as
 the approving human through the same engine path any manual command takes. A
 rejection needs a reason and stays in the record. Repeat findings are suppressed
 rather than raised again.
+
+**The autonomy boundary, named and asserted.** `backend/src/goldenthread/autonomy.ts`
+states this boundary in the terms the Tier-1 Agent Delivery OS specification uses
+— the A0–A4 action classes and the §5 reason-code vocabulary — as a typed reading
+of the event catalogue the platform already runs on, not a second system beside
+it. `actionClassOf` derives each catalogue event's class from the attributes it
+already carries: accepting or refusing a thing (`APPROVE`/`REJECT`) is a reserved
+decision (A3), a human act; a formal issue the catalogue lets an agent produce is
+delegated outbound (A2), one it does not is a reserved issue (A3); everything else
+is an internal reversible record (A1); reads (A0) write no event, and prohibited
+acts (A4) are absent by construction. `autonomy.test.ts` asserts the invariant
+across the whole live catalogue — **no accept/refuse event is executable by an AI
+actor** — so the spec's "self-authorising a reserved decision is prohibited" is a
+checked property of the system, not a convention. The module introduces no runtime
+behaviour; it makes the boundary one thing the OS can state and test. (A grounded
+map of the full specification against the codebase found most of its architecture
+already built — the agent-proposes boundary, the hash-chained evidence ledger,
+gates and holds, the tender/bid lifecycle, cost and CPM, commissioning, change and
+notices, handover, portfolio and the red-team — with a durable workflow/timer
+engine and a broad external-connector gateway the two largest genuine gaps.)
 
 The four watchers added for the front end — radar, pipeline, supply chain and
 HSEQ — are observation-only, because none of them can fix what they see. The
@@ -3149,6 +3849,394 @@ sentence the business puts to a buyer, and a document the business does not hold
 is a gap, not something the platform conjures. The matching is advisory, so it is
 allowed to be generous where the probes are exact; the safe direction, again, is
 to surface a candidate for a person to confirm rather than to assert a match.
+
+From the same read, `evidenceCoverage` also derives the **two action lists a
+submission actually needs**, as a projection that invents nothing:
+`toAttach` — the distinct documents the register already holds that answer the
+matrix, de-duplicated so a single certificate covering three requirements is one
+line carrying all three references, each flagged where the match is only
+proposed (confirm it) or the document is still pending (verify it before it is
+sent); and `toObtain` — the evidence to add to the library before the bid can go
+in, mandatory first because those end the bid on the day. `toObtain` is
+deliberately **only the pass/fail evidence gates a document answers** —
+insurances, accreditations, DBS, policies, references — and excludes the scored
+questions (a weighting at stake is answered in the submission, not filed as
+evidence) and the `SUBMISSION`-category process instructions (followed, not
+obtained). That split keeps "the evidence to go and get" clear of "the questions
+to go and answer", which are two different acts the bidder does in two different
+places. Surfaced on the opened matrix as "Attach these when you submit" and "Add
+these to your library before you submit". Verified on a six-requirement fixture
+and a dual-purpose document that answers two lines at once.
+
+**The matrix now tells you the route per line, not just the status.** A bidder
+could see a `GAP`, a `toObtain` line and an AI clarification and still have to
+work out *which of three different acts* each one needs. A **"What's needed, and
+how to add each"** panel at the top of the opened matrix (`matrixDetail` in
+`pipeline.js`) groups everything still outstanding by how it clears, each group
+carrying the button that does it: **Record a company fact** (the `GAP` lines —
+every one is profile-backed, so saving the insurance/accreditation/turnover/DBS/
+reference flips it to Satisfied — wired to the existing `company-facts` command);
+**File a document & assert a claim** (`toObtain`, minus any ref already in the
+record-a-fact group so nothing is listed twice — wired to `assert-claim`); and
+**Raise a clarification** (the analysis's own questions — wired to the existing
+`tender-clarifications/from-analysis` raise). `UNKNOWN` lines that need no
+document are named as answered in the response pack, not here. The panel is a
+pure projection of what the matrix read already computed — one source of truth,
+no new endpoint — and it states plainly that raising a clarification puts it on
+the register for the bidder to send from Tender & Procurement, because the
+platform does not transmit to the buyer's portal itself. The `company-facts`
+click binding was made delegated on the view (the same pattern the other two
+dispatchers already used) so the panel's button fires it, not only the bar on the
+company card.
+
+**Agents reason as the named construction professional, across the whole RIBA
+lifecycle, not as a general model.** `backend/src/ai/expertise.ts` is the single
+home for the framing every AI reasoning task opens with, so an agent reads a
+tender as a chartered QS, a programme as a planner, a method as a CDM principal
+contractor, a clash as a design manager, a handover as a commissioning manager —
+and names the real UK standards that profession works to (RICS NRM1/2/3, NEC4
+compensation events and the clause-61.3 time bar, JCT, CDM 2015 with the F10
+thresholds, BS EN ISO 19650, BS 5975 temporary works, CIBSE Commissioning Code M,
+the SCL Delay and Disruption Protocol, the Building Safety Act 2022, the
+Procurement Act 2023, and so on per discipline) rather than reasoning as a model
+with no feel for the industry. Eleven disciplines are framed (including a
+DEVELOPMENT_MANAGER for feasibility and the early RIBA stages, working to RICS
+NRM1 and viability, RIBA 0–2, the NPPF and local plan, biodiversity net gain and
+the Future Homes Standard). `expertBriefing(
+discipline, { stage })` returns the opening — the professional, the judgement
+they bring, the standards they work to, and, when the task sits at a known point
+in the lifecycle, the **RIBA Plan of Work 2020 stage context**: a `RibaStage` 0–7
+model (`RIBA_STAGES`, `stageBriefing(stage)`) carrying each stage's canonical
+outcome, what an experienced Tier-1 contractor's team actually does there, and the
+judgement call that decides whether the stage goes well — Strategic Definition
+through Use. Every briefing ends with the discipline that separates a professional
+from a plausible guess and that the whole platform keeps: reason only from the
+documents and facts supplied, quote the passage behind every point, never invent a
+figure, clause, reference or standard, and propose rather than decide. It frames
+the reasoning and relaxes no guard (the orchestrator still refuses a synthetic
+answer where a model is required; output becomes state only through the engine's
+deterministic `toWrites`; no mandate exceeds PROPOSE). Wired into the judgement
+reasoning across the lifecycle — the tender clarification review (BID_MANAGER);
+the planning engine's WBS weighting and delay-driver forecast (PLANNER, stage 5);
+the cost engine's CVR margin analysis (COMMERCIAL_MANAGER, stage 5); the safety
+engine's RAMS method review (HEALTH_AND_SAFETY, stage 5); the contracts/claims
+engine's clause-and-time-bar extraction, entitlement assessment, delay-concurrency
+argument and evidence chronology (COMMERCIAL_MANAGER); the handover engine's
+readiness assessment (COMMISSIONING, stage 6) and maintenance prioritisation
+(stage 7); the BIM engine's clash-resolution sequencing (DESIGN_MANAGER, stage 3);
+the bid-response section drafting (BID_MANAGER), so each section sent to a buyer is
+written in an experienced bid manager's voice; and the feasibility brief's vision
+and strategy narrative (DEVELOPMENT_MANAGER, stage 2), so an early appraisal reasons
+as a development manager at concept stage. The bid-response *shorten-to-limit* task
+is left unframed (it is precise editing, not professional judgement), as are the
+pure perception/extraction tasks (title-block OCR, O&M extraction, site-reality
+comparison) — the "reason from the documents" opening is for judgement, not extraction
+or mechanical editing. Covered in `expertise.test.ts` (every discipline
+names a real profession and real standards; every briefing carries the
+no-fabrication, propose-not-decide discipline; every RIBA stage 0–7 carries a named
+stage, outcome, contractor focus and watch-for; a discipline composes with a stage
+so both the professional and the stage context are present).
+
+**Every platform role has an AI agent: the professional it reasons as.** Seventeen
+disciplines are now framed, and **every one names the UK chartership that
+profession holds** — MRICS (QS, development, commercial, estimating, FM), MCIOB
+(construction manager, planner, design manager, BIM, supervisor), ChPP/MAPM
+(project manager), CEng MCIBSE (commissioning), CMIOSH (health & safety), MCQI CQP
+(quality), a RIBA architect or CEng engineer (Principal Designer) and C.Build E
+MCABE (building safety) — so each agent reasons as a chartered professional, not a
+generic one. And each is told to **act to that chartership, not just carry it**:
+every briefing and persona closes on `CHARTERED_CONDUCT` — bring professional
+judgement and a duty of care, work within your competence, and refer a point on to
+another chartered discipline rather than reach past what you know or what the
+evidence supports. A chartership is a standard of conduct, so the reasoning carries
+the conduct, not only the letters. And beyond conduct, every briefing and persona
+carries `WORK_STANDARD` — the quality bar the *deliverable* is judged by, which is
+what the user is actually paying for: be specific and quantified (a figure, a rate,
+a clause number, a date, a named party, never a generality that fits any project),
+take a clear reasoned position rather than hedging, make every point traceable, say
+what to do and who owns it by when, catch the omissions and contradictions an
+experienced hand would, and — where the facts do not support a firm answer — say
+exactly what is missing and what it would take to close it, because a generic or
+hedged answer is not professional work however fluent. The framing raises the floor
+of what every agent produces; the *ceiling* is the live reasoning provider
+(`AI_MODE=production`) and the verification loops (e.g. the red-team evaluator that
+marks a bid draft and drives a rewrite) — a prompt shapes quality but does not
+manufacture a capability the model lacks, and the platform is honest about that.
+`ROLE_EXPERTISE` (in `expertise.ts`) joins the
+identity model's roles (`roles.ts`) to them — the one place a *seat in the
+business* is mapped to the *profession* the person in it practises, so an agent
+working for a QS reasons as a chartered QS, for the Construction Manager seat as a
+**chartered construction manager (MCIOB)** running the works, for an FM as a
+facilities manager operating the asset, for a BIM manager as an ISO 19650
+information manager. The Construction Manager and the Supervisor are kept apart
+(they were one SITE_MANAGER discipline): CONSTRUCTION_MANAGER is the chartered
+construction manager (CIOB Code of Practice, CDM principal contractor, BS 5975
+temporary works, the short-term programme and Last Planner), and SITE_MANAGER is
+now the site supervisor overseeing the works at the coalface — a supervisor is not
+chartered, and the two seats should not read as one person. The map is exhaustive over `Role`
+(the compiler refuses a role added without an expert), and is `null` only for the
+seats that are not a construction profession: the platform operator and enterprise
+administrator, the read-only viewer, and the OWNER (who holds every delivery seat
+at once and is shown the whole team). Six disciplines were added for the seats
+that had no professional of their own — PROJECT_MANAGER (NEC/JCT PM role),
+QUALITY_MANAGER (ISO 9001, ITP, NCR/CAPA), BIM_MANAGER (ISO 19650, CDE, COBie),
+PRINCIPAL_DESIGNER (CDM 2015 pre-construction duty), FACILITIES_MANAGER (ISO 41001,
+SFG20, statutory compliance, soft landings) and the chartered CONSTRUCTION_MANAGER
+(MCIOB). `roleExpertise(role)` and
+`expertBriefingForRole(role, { stage })` expose the mapping. It is **surfaced in
+the platform**: `GET /v1/permissions/matrix` publishes `roleExpertise` (role →
+{ discipline, title, judgement, standards }), and the "What your role can do"
+screen (`permissions.js`) now opens with *the AI expert behind your role* — who
+reasons for you and the real UK standards they work to — and a table of the whole
+AI expert team across every role, with the signed-in person's own seat marked.
+Covered in `expertise.test.ts` (the map covers every role and no stale key; every
+delivery seat maps to a defined discipline whose briefing opens as the professional
+and keeps the no-fabrication discipline; the administrative and read-only seats map
+to null; a stage carries through to the role briefing) and `api.test.ts` (the
+matrix endpoint publishes the per-role expert, with the PM's discipline and
+standards and a null for the viewer).
+
+**A chartered risk manager and a change manager.** Risk and change had no
+professional of their own — change was folded into the commercial manager and risk
+had no AI surface at all. Two disciplines added: RISK_MANAGER (chartered risk
+manager, CMIRM / IRM, ISO 31000, APM risk guidance, QSRA Monte-Carlo P50/P80, and a
+live register with cause→event→impact, owners, triggers, mitigations and residual
+exposure) and CHANGE_MANAGER (chartered change manager, MRICS, NEC4 compensation
+events and the clause-61.3 time bar, JCT variations and the instruction regime, the
+change register reconciled to the final account). The change entitlement assessment
+(`claims.ts`, `impact_assessment`) now reasons as the change manager rather than
+the commercial manager. And risk gained a real AI surface: `reviewProjectRisks`
+(`riskreview.ts`, `POST …/risks/ai-review`) — a chartered risk manager reads the
+live register and project context and proposes the risks worth adding or
+strengthening (a missing risk, an event with no cause, no owner or no trigger, a
+control that watches rather than acts, a misallocated client/contractor risk), each
+stated as cause→event→impact with the party, trigger and control, and saying what
+it rests on. Advisory (proposes; adding or re-scoring a risk stays a person's act),
+`requireModel` refuses the local stand-in, and it carries the verify-and-improve
+loop — an independent reviewer marks each proposed risk and the weak ones are
+sharpened or dropped. The **Risk & Safety screen** now carries the button that
+calls it ("Ask the risk manager to review the register"), gated on
+`RISK_REGISTER` create — the same gate as "Register risk", so everyone who manages
+the register can ask for the review and nobody is offered an action on a screen
+they cannot open (checked by `navreach.test.ts`); each proposal renders as a card
+(subject, category, owner, cause→event→impact, trigger, control, basis) with the
+unavailable and empty-register paths handled, and nothing is written — registering
+or re-scoring a proposed risk stays the person's act through the existing commands.
+Nineteen disciplines now framed. Covered in `riskreview.test.ts`
+(the shaper keeps a real cause→event→impact with a control, drops stubs and
+duplicates, caps at ten; the review refuses the stand-in and charges nothing;
+proposes from a real model and touches nothing on the register) and
+`expertise.test.ts` (both name their standards).
+
+**Verify-and-improve: the loop that makes the *job* experienced, not just the
+agent.** The framing asks for quality; this checks for it. `backend/src/ai/refine.ts`
+is the reusable core — a critique vocabulary (KEEP / SHARPEN / DROP), the response
+shape a reviewer returns, and the pure merge that applies a critique to a draft
+(`shapeCritiques`, `partitionByCritique`; covered in `refine.test.ts`, including
+that a malformed review never silently discards work and a whole set can be cut).
+The author drafts; an **independent** reviewer — reading the work the way the party
+on the other side will — marks each item against the bar it actually has to clear
+and names the fault; then the author rewrites only what was faulted, or the weak
+item is dropped before a person ever sees it. Wired first into the **tender
+clarification review** (`clarificationreview.ts`): after the first pass proposes
+questions, a senior reviewer (not the author) marks each — material? specific?
+genuinely supported by the passage it cites? — then `tender_clarification_sharpen`
+rewrites the loose ones to the fault named and the immaterial, already-answered,
+generic or unsupported ones are cut. Best-effort: a provider or wallet failure
+mid-review leaves the first-pass questions standing. The note tells the person how
+many were dropped and sharpened, so the cull is visible. Rolled across next to the
+**stage-gate chair** (`stagegate.ts`, `gateNarrative`): the first read's risks and
+required actions are flattened to findings, an independent reviewer — the person
+who must sign the gate decision — marks each (material? specific? tied to a clause
+the report marks not met or not assessable? for an action, actually actionable?),
+the loose ones are rewritten to the fault named by `stage_gate_sharpen` and the
+ones that merely restate a clause, duplicate another or claim an unsupported
+problem are dropped, then the findings split back into risks and actions
+(`shapeGateFindings`, covered in `stagegate.test.ts`; the note says how many were
+dropped and sharpened). Same shared core, a different reviewer rubric — the pattern
+this was built to roll. And onto the **feasibility brief** (`feasibilitybrief.ts`,
+`sharpenFeasibilityProse`) with the second reusable pattern — a *holistic*
+critique-and-rewrite for a single reasoned output (`HOLISTIC_CRITIQUE_SCHEMA`,
+`shapeHolisticCritique` in `refine.ts`): a development manager who did not write the
+paragraph marks whether it is specific to THIS scheme's figures or a sentence that
+would fit any scheme, names the faults, and the loose paragraph is rewritten before
+it reaches the brief (production only — the synthetic draft is dropped first, so
+tests are unaffected). The **claims assessment** (change entitlement,
+`claims.ts` `impact_assessment`) carries both forms of the loop, chosen by AI mode,
+for a reason worth recording. It writes `IMPACT_ASSESSED` to the hash-chained ledger
+under the AI Output Standard, and that written event carries the AI linkage the stage
+gate's `AI_ACCOUNTED` clause and the human-disposition flow depend on (the `ai` block
+is attached by `runAI` only to `toWrites` events — an advisory call creates no counted
+AI event, which is what makes the advisory loops safe). The independent two-pass loop
+had to be kept *off* that write: a draft and an independent senior reviewer's critique
+run as **advisory** calls that write nothing, and only their result is carried into the
+single writing call, which still validates to the Output Standard. So in production
+(`AI_MODE` other than `local`) the change manager drafts the assessment, an independent
+reviewer who did not write it marks it (entitlement founded on a cited clause, time kept
+apart from money, every notice and time bar named with its period, no entitlement the
+contract does not support), and the writing call finalises from the draft and those
+marks — still one `IMPACT_ASSESSED` write, one counted AI event, the gate accounting and
+disposition flow unchanged; the two review calls are advisory and uncounted against the
+gate. On the local stand-in (the mode the suite runs) the loop is skipped entirely and
+that same writing call is **byte-for-byte** the single-call self-critique assessment it
+has always been — the change manager drafts and reviews its own draft before answering —
+so the synthetic test path is unchanged. Honest limit: the independent branch runs, and
+can be verified, only against a real provider; the suite exercises the local path (that
+it is byte-identical and the single write is unchanged) and typechecks the production
+branch, but cannot run it — it is verified live on the box, not in-suite (the repo-root
+`verify-claims-loop.sh` runbook does exactly that: it raises a change, assesses it, and
+checks three `impact_assessment*` AI executions appear against one `IMPACT_ASSESSED`
+write — PASS — versus one execution in local mode). The one write
+both paths make is factored into a shared `impactAssessedWrites` closure so the ledger
+record does not depend on which path produced the validated answer. The *ceiling* is
+still the live model — this raises the floor and checks the output; it does not
+manufacture a capability the model lacks.
+
+**The framing reaches every AI reasoning surface, not a chosen few.** The expert
+opening is now on every judgement task the platform runs — the tender clarification
+review, bid-response drafting, feasibility, the stage-gate narratives, and across
+the engines: planning (WBS, delay), cost (CVR), safety (RAMS review, leading
+indicators), claims (clause/time-bar, entitlement, concurrency, chronology),
+handover (readiness, maintenance), BIM (clash sequencing, as-built reconciliation,
+specification reading), tender (bid drafting, enquiry assessment, return variance),
+the market-rate estimator (`bidrun.ts`), the correspondence commitment reader
+(`commitments.ts`), the clarification pack-check (`tenderpackcheck.ts`), and the
+Bid-On question-extraction, answer-planning, answer-writing and rewrite tasks.
+Two framings are used: `expertBriefing` for tasks that analyse a supplied document
+and should cite it (it keeps the "quote the exact passage" clause), and the lighter
+`expertPersona` for tasks that advise, draft or guide — the copilot, the
+cover-letter drafts, the market-rate estimator — which carries the professional and
+the never-invent discipline but drops the document-quote clause that only fits an
+analysis. The **copilot** (`explainPlainly`, the universal "Ask for help" on every
+screen, for every user) now answers as the experienced professional whose seat the
+person holds — a QS hears a QS, a site manager a CDM principal contractor — via
+`expertPersonaForRoles(ctx.auth.roles)`, so the framing is genuinely everywhere and
+for everyone, not only on the specialist screens. Deliberately left unframed: pure
+perception/extraction (title-block and drawing OCR, O&M extraction, take-off from a
+drawing, hazard-photo classification, site-reality capture), where "reason from the
+documents, never invent a figure" is about judgement, not transcription; and the
+red-team evaluator, which already reasons as a different expert on purpose — the
+buyer's own scorer.
+
+**An AI construction-expert review of the tender for clarifications.** The
+mechanical reader catches what arithmetic catches — weightings that do not add
+up, a clause that cannot be insured. It does not read the scope the way a bid
+manager does and ask the question a person would: the contradiction between two
+clauses (an ITT demanding schedules "written in ink and the original copy" while
+submission is electronic-only via the portal), the quantity the price list
+omits, the responsibility split left unsaid. `reviewTenderForClarifications`
+(`clarificationreview.ts`, `POST …/tender-clarifications/ai-review`, "Ask the AI
+to review the tender" on Pipeline) is that read — a senior QS / bid manager
+reasoning over the ingested tender documents. It carries the same three guards
+as the rest of the AI surface: it reasons only over the documents that yielded
+text and names them; it is told to quote the passage each question comes from,
+so a person sees the basis rather than trust the question; `requireModel`
+refuses the local stand-in before a penny is charged, because a fabricated
+clarification is the exact thing the mechanical path was just cleaned of; and it
+proposes only — nothing reaches the register until a person presses "Raise this",
+after which it follows the ordinary copy-and-send flow. It is told not to ask the
+buyer to confirm a requirement already stated, nor anything that reveals the
+bidder cannot meet a clear one. Covered in `clarificationreview.test.ts` (refuses
+without a model and charges nothing; says so with nothing ingested; shapes,
+de-duplicates and caps the model's output; proposes with a basis and raises
+nothing). Note: the question *quality* runs on the configured providers and is
+not exercised by the suite, which stubs the model.
+
+**The weighting-reconciliation question is read by direction, not by a flat
+sum.** Weightings are read per requirement line and grouped by category, which
+cannot tell a top-level weight ("Quality 30%") from a sub-criterion weight that
+is a percentage *of* that block ("approach 30%, of the quality mark"). A properly
+nested scheme — a 30% quality block split into seven sub-criteria that themselves
+sum to 100%, plus 70% price — therefore flattens to ~180%. The old rule raised
+"your weightings total 180%, not 100%" on exactly those well-formed tenders,
+which made the bidder look unable to read the tender on a bid where understanding
+it carries marks, and it fired on almost every real ITT. Now `weightingStatus`
+(`itt.ts`) reads the total by direction: **over 100% is `NESTED`** and carries no
+concern (we cannot prove the top-level scheme is wrong); **under 100% is a
+genuine `SHORT`fall** — part of the marking is undisclosed — and is the one
+weighting question put to the buyer; 100% is `COMPLETE`, nothing stated is
+`NONE`. The frontend banner shows the nested case neutrally ("sub-weightings …
+normal nesting, not a gap") rather than as a warning. Already-stored analyses
+self-heal: `readAnalysis` drops the weightings clarification a record was written
+with and re-derives the current one, so a re-read clears the old false positive
+without a re-analysis. Covered in `itt.test.ts` (SHORT raises, NESTED does not,
+COMPLETE is clean).
+
+**A gap is the bidder's to close, never a buyer question.** The reader used to
+turn every mandatory requirement nothing on file satisfied into a clarification
+addressed to the buyer — "Please confirm the requirement that we become CHAS
+accredited… nothing on file currently does." That is backwards: the buyer stated
+the requirement clearly, and the gap is that the bidder has not met it yet, so
+the fix is to obtain the accreditation, write the response or file the document —
+all already surfaced on the matrix ("add these to your library", "file a document
+& assert a claim", the compliance undertakings). Asking the buyer to confirm
+their own clear requirement reads as a firm that can neither read the tender nor
+meet it. Now mandatory gaps never become buyer clarifications (removed from both
+`analyseITT` and `tenderClarificationDrafts`); only genuine buyer questions — a
+real weighting shortfall and risky commercial terms — are drafted. Existing
+analyses self-heal on read: `readAnalysis` drops any stored gap line, so a
+re-read clears the old false questions without a re-analysis. Covered in
+`itt.test.ts` (gaps and scored questions stay off the buyer list; the genuine
+question is still drafted).
+
+**The analysis raises its own questions in one act.** The matrix produces the
+"Questions for the buyer" — a genuine weighting shortfall, uninsurable or bar
+terms — when it reads the invitation. Until now a person
+had to retype each one into the batch box in a `subject | question | reference`
+format they had no way to know, and a plain paste failed with "must contain at
+least one item" — the agent did the thinking and the human did transcription.
+`tenderClarificationDrafts` (`itt.ts`) turns those questions into the structured,
+linked form the register needs (a mandatory gap linked to its requirement by
+scope item; a term or weighting question linked to the invitation), inventing
+nothing, and `raiseClarificationsFromAnalysis` (`tenderintel.ts`;
+`POST …/tender-clarifications/from-analysis`) raises them to the client in one
+call. It is idempotent — a question already on the register is skipped, not
+duplicated — so the **"Raise these to the client"** button on the matrix's
+Questions-for-the-buyer list is safe to press again. Raising is not issuing:
+they land OPEN, to be sent and answered, exactly as a hand-raised one is
+(`CLARIFICATION_RAISED` is `aiAllowed`, `CLARIFICATION_ISSUED` is not). Verified:
+a mandatory certificate gap becomes a client-side draft linked to its
+requirement, a scored question does not, and a second press raises nothing new.
+
+**One press puts every question on the clipboard to send.** The platform drafts
+and registers the questions; it is not wired into the buyer's portal, so the one
+manual step left is copying each one out to paste there — a question at a time,
+which is where the deadline gets missed. The **"Copy all N questions to send"**
+button on the Clarification register (Tender & Procurement) collects every open
+*client-side* question — not the internal notes or bidders' own queries —
+numbers them, keeps each one's reference and what it concerns, and puts the lot
+on the clipboard in one press, with a reminder that the paste into the portal is
+still the human's to do before the deadline. It reads from the register already
+on the page and invents nothing; the register now carries each question's full
+text (`tenderIntelPosition` exposes `question`, not only the short `subject`), so
+what is copied is the real question the buyer answers. Frontend-only action
+(`procurement.js`), backed by the one projection field; covered in
+`tenderintel.test.ts` (the register exposes the full question, distinct from its
+subject).
+
+**A compliance undertaking is drafted, not bounced back.** Many mandatory lines
+are answered by a statement, not a document — "comply with CDM 2015", "the
+tender remains open 90 days", "submit via In-Tend". The matrix used to list
+these under "nothing on file — file the document", which is work handed to a
+person for a thing no document answers, and made the agent look as if it did
+nothing. `undertakingFor` (`itt.ts`) classifies a line as an undertaking only
+when it names no document or credential to evidence, carries no weighting, and
+reads as an obligation — conservative on purpose, because a wrong draft against
+a line that needed a certificate would hide a real gap. For each, the platform
+drafts the confirmation (`We confirm that, if awarded this contract, we will
+meet this requirement in full: "…"`), and `evidenceCoverage` surfaces them in
+their own `undertakings` list — out of the documents-to-obtain list, which is
+left as the real document gates. `confirmUndertakings`
+(`POST …/analyses/:id/undertakings`, `REQUIREMENT_UNDERTAKEN`) records that a
+person has confirmed each true, mirroring the waiver register: idempotent by
+reference, and it refuses a line that is not an undertaking. The drafting is the
+agent's; the truth of it is a person's — the platform never confirms on the
+company's behalf (`REQUIREMENT_UNDERTAKEN` is not `aiAllowed`). Surfaced on the
+matrix as "Compliance undertakings — the platform drafted these; confirm each is
+true", with one-click "Confirm all as true". Verified: an obligation becomes a
+drafted undertaking kept out of toObtain/toAttach, a certificate line and a
+scored question do not, confirming marks the line covered, and a second confirm
+writes nothing.
 
 The commercial terms are the half that decides whether the job is worth winning,
 and each is assessed against this business rather than transcribed. Liquidated
@@ -4476,11 +5564,190 @@ written to an append-only ledger. They are **mapped, not renamed** — renaming
 orphans every record carrying the old name — and a test asserts the mapping so
 it stays readable.
 
+**The guided journey now carries the whole arc, through to award.** `bidFlow`
+stopped at the red team; the stages after it — pricing the risk register, settling
+and approving the price, and recording how the bid ended — lived on screens but
+not in the step-by-step. The flow now carries `RISK`, `SETTLE` and `AWARD` as
+visible steps with their own doors (`register-risk`, `open-settlement`,
+`record-award`), each NOT_NEEDED on a price-only enquiry and each computed from
+the record (a settlement is DONE once approved; an award is DONE once an outcome
+is on a submitted pack). All three are held out of the headline `nowDo` — an
+`ADVISORY_STEP_IDS` set — so they are shown and clickable but never displace the
+pricing or submission step a bidder is told to do next. The result is that the
+guide walks the full standard process — receive, decide, read, return register,
+matrix, risk, price, settle, write, red-team, submit, award — rather than the
+pricing-and-writing middle of it (`bidflow.ts`).
+
+**Post-submission control — the loss, by reason, and the standstill, counted
+down.** The opportunity outcome already captured the marks, the rank, the winning
+price and the evaluator's feedback; what it did not capture was *why* a bid was
+lost as a class the calibration can separate — a loss on price and a loss on a
+weak answer both score badly and are fixed in opposite places. `recordBidOutcome`
+and `recordTenderOutcome` now take an optional `reasonClass` (`UNCOMPETITIVE_PRICE`
+/ `WEAK_QUALITY` / `COMPLIANCE_FAILURE` / `POOR_FIT` / `NO_FEEDBACK` / `OTHER`),
+refused on a win, recorded on the same outcome the calibration reads, and offered
+on the "Record how a bid ended" form (`learning.ts`, `routes.ts`,
+`frontend/pages/pipeline.js`). Separately, the **standstill** window an award
+notice opens is now recorded on `recordAward` (`standstillEndsOn`) and **counted
+down** in `awardPosition` (`standstill.daysRemaining`), so a challenge is not filed
+out of time — and `recordAward`, which had no console door at all, gains a
+compact **"Record the award outcome"** door on the estimating screen (outcome,
+reference, standstill, winner/terms) (`award.ts`, `routes.ts`,
+`frontend/pages/procurement.js`). Covered in `learning.test.ts` and
+`award.test.ts`.
+
+**Post-tender control — the query log and the price challenge — is now built.**
+Between submission and award the bid is not idle, and both ways it is tripped up
+after the work is done now have a home on the submission pack. A **post-tender
+query log**: `logPostTenderQuery` records the buyer's question against the pack,
+`answerPostTenderQuery` records our reply and names what it changed (`NONE` /
+`PRICE` / `SCOPE` / `PROGRAMME`) — a reply that quietly moved the scope is the one
+the award departs on, so it is not filed as a clarification. A **price challenge**:
+`recordPriceChallenge` logs the buyer's abnormally-low challenge (starting the
+Procurement Act clock to demonstrate the price can be performed at), and
+`substantiatePriceChallenge` records the evidence — the cost build-up, productivity,
+supplier coverage, programme and exclusions, with the direct cost and net margin —
+so the response that kept the bid in is on the thread rather than in an inbox. Both
+surface in `awardPosition` (open queries counted, the challenge's substantiated
+state and response deadline) and in its summary, and both have doors in the
+estimating screen's **"After submission"** card (`log-query`, `answer-query`,
+`price-challenge`, `substantiate-price-challenge`). Four new closed-catalogue
+events on `BidSubmissionPack`, no AI mandate. Covered in `award.test.ts`. That
+closes the stage-10 list — nothing in the standard post-submission process is now
+"named but not built".
+
+**The settlement pack, on one screen.** The settlement engine was complete —
+`openSettlement`, `recordAdjustment`, `raiseAction`/`settleAction`,
+`approveBidProgramme`, `approveSettlement`, with `settlementPosition` assembling
+the cost-to-price `bridge`, the adjustments by category, the actions and whether
+the price and programme share a cut-off — and it had **no screen**. The estimating
+screen now carries a **"The settlement pack"** card that puts the four things an
+approver signs against in one place: the bridge (pre-settlement → adjustments →
+settled price, reconciled), the **risk held as contingency** (the P80 from the
+register), the **contract departures** the submission carries (from
+`awardPosition`, with any outstanding flagged), and whether the programme shares
+the price's cut-off, plus the conditions carried and actions open. Three doors
+drive it — **Open the settlement**, **Move the price** (signed, with category,
+reason and owner) and **Approve the price** (under a named authority and its
+limit). All reuse the existing routes; no engine change
+(`frontend/pages/procurement.js`).
+
+**One-director business, and clearing the register in one act.** Two fixes for a
+solo-director tenancy, where the role-per-owner model reads as work going to people
+who do not exist and assigning returns one modal at a time is the busywork the
+platform exists to remove.
+
+- **One-director mode.** The company profile gains `singleOwnerBids`. With it set,
+  `analyseITT` defaults every matrix line's owner to `OWNER` instead of the
+  role-per-category suggestion (QS, EPC, Safety…), and `complianceMatrix` applies
+  the same override **on read** — so it is retroactive on an existing matrix and
+  reversible, the ledger keeping what was computed while the view reflects current
+  policy, exactly as the status column is already re-derived. A toggle on the
+  company facts form ("One-director business — every requirement and return is
+  mine") sets it (`radar.ts`, `itt.ts`, `routes.ts`, `frontend/pages/pipeline.js`).
+  The same flag also unlocks **owner-attestation of evidence claims**: with it
+  set the owner may verify a claim they asserted themselves, because there is
+  nobody else to ask. It is recorded honestly, not relabelled — the claim is
+  stamped `selfAttested: true` under a distinct `EVIDENCE_CLAIM_SELF_ATTESTED`
+  event, the verify-claim form on Pipeline reads "Verify or attest a claim" and
+  explains the self-attestation, and a genuine second checker is still recorded
+  as an independent `EVIDENCE_CLAIM_VERIFIED`. Multi-person firms get the
+  segregation refusal unchanged (`evidenceclaim.ts`, `eventTypes.ts`,
+  `frontend/pages/pipeline.js`; covered in `evidenceclaim.test.ts`).
+- **Clear every blocking return at once.** `assignDeliverablesBulk` fills the
+  owner, internal date and source on every mandatory return still missing one, in
+  a single event — touching only what is missing, so a return deliberately given a
+  different owner or date is left alone. The **source defaults to the invitation
+  itself**: these returns were read *out of* the invitation, so "where in the
+  invitation it comes from" is the invitation — never the bidder's to invent. A
+  "Clear all N blocking returns" button on the Returnables card drives it; it
+  refuses when nothing is missing (`tenderintake.ts`, `routes.ts`,
+  `frontend/pages/pipeline.js`). Covered in `itt.test.ts` and `tenderintake.test.ts`.
+
+**The returnables matrix — the day-one control, as one table.** Everything a
+returnables matrix holds was already on the record (the return register bound to
+each invitation), but a bid manager had no single list of it: the returns were
+reachable only through the "Assign a return" picker and the cross-tender "returns
+unowned" attention line. The Pipeline screen now carries a **"Returnables —
+everything that has to go back"** table: per return, the reference, what it is,
+mandatory or optional, format, owner, internal date, where in the invitation it
+comes from, and whether it still blocks the submission (and with what missing).
+It is focus-aware like the board and the matrices — the tender in focus, or every
+live tender when none is — and draws entirely from `t.returns`, adding no new
+model (`frontend/pages/pipeline.js`).
+
+**The conditional bid — the third decision.** Beyond bid and no-bid, a bidder
+often wants to commit *limited* effort to resolve a hard-stop before a full
+commitment: "spend two days establishing whether an approved HV switching
+contractor can meet the outage dates." `decideBidNoBid` takes an optional
+`conditional` — a condition, an owner, a spend cap and a kill date — recorded on
+the decision as `conditional: true` with its `conditionalCommitment`. It is a kind
+of bid (refused on a no-bid, `CONDITIONAL_REQUIRES_BID`), each field is required
+(`CONDITION_*` errors — in particular no open-ended commitment: the cap must be
+positive), and because it is the act that goes to resolve the open question it is
+**not** held behind the invitation being fully read, unlike a full commitment. The
+`decide` command carries a "Conditional — authorise limited work to a condition"
+tick with the four fields, and confirms with a toast that says it becomes a full
+commitment once the condition is met and the decision is taken again
+(`business.ts`, `routes.ts`, `frontend/pages/pipeline.js`; `tenderintake.test.ts`).
+
+**The decision to bid is a commercial go/no-go, not a production sign-off.**
+`decideBidNoBid` used to refuse a "bid" decision until every mandatory return on
+the invitation had an owner, an internal date and a source — so a bid manager
+scoring a tender and deciding to pursue it was handed seventeen assignment forms
+*before* the decision would record, which is production admin standing in front
+of a commercial call. The decision now needs the invitation **read** (there is
+something recorded about what the submission contains) but not the returns
+assigned: the returns still without an owner, date or source are carried on the
+decision as `outstandingReturns` so the commitment is honest about what it still
+owes, and assigning them is the planning that follows. The real safety is
+unchanged and lives where it belongs — `issueBidResponse` still refuses to issue
+a pack with an unanswered, undated or over-limit mandatory response, so nothing
+incomplete goes out. `bidApprovalPosition` now exposes `invitationRead` and
+`deliverableBlockers` separately (keeping the combined `blockers` for the guide),
+and the decision gates only on the first. An opportunity with no formal
+invitation still has no gate at all. The `decide` command toasts what remains
+("Bid recorded — N returns still to assign"), and the guide, the board badge
+("needed to submit") and the assign-a-return copy now say the returns block the
+*submission*, not the decision (`business.ts`, `tenderintake.ts`, `bidflow.ts`,
+`frontend/pages/pipeline.js`; `tenderintake.test.ts`).
+
 **Verified in a browser against a running server**, not only by the tests: the
-QS records an ITT with no stated zone and gets the Critical clarification; a bare
-mandatory deliverable is recorded and the Owner's decision to bid is refused,
-naming it; an addendum moves the deadline and the board shows the re-review. The
-panel and the command are screenshotted.
+QS records an ITT with no stated zone and gets the Critical clarification; a
+mandatory return left unassigned is carried on the decision as outstanding rather
+than blocking it, and the submission is what refuses to issue incomplete; an
+addendum moves the deadline and the board shows the re-review. The panel and the
+command are screenshotted.
+
+**The deadline now reminds the company, instead of waiting to be looked at.**
+Every recorded invitation's deadline was in the record and resolved to a single
+instant, and nothing read it on a clock — a bid lost on the date is the one loss
+pricing skill cannot save, and it was the one the platform was best placed to
+catch and did not. `backend/src/ops/tenderreminders.ts` is the sweep that closes
+that: on a timer (`TENDER_REMINDER_INTERVAL_MINUTES`, every six hours by default)
+it reads every invitation's deadline in force and, a set number of days before it
+(`TENDER_REMINDER_LEAD_DAYS`, five by default — the "five days before" a first
+bidder asked for), tells the company's own owners and administrators through the
+same durable outbox every other notice uses. It is **not a new delivery path** —
+the catalogue gains one event, `tender.deadline_approaching` (EMAIL + in-app,
+not mandatory, so a pursuit somebody has set down can be muted), and everything
+after it is the existing `notify` → outbox → SMTP pipeline, branded with the
+tenant's own identity. Where no SMTP host is configured it is recorded, not sent,
+exactly as every other notice is.
+
+**One reminder per deadline, and the memory is the outbox, not this process.**
+The sweep runs on its own clock and must not email the same person every few
+hours; it skips an invitation whose current deadline already has a queued
+`tender.deadline_approaching` notice, read back from the ledger-backed outbox —
+so a restart does not re-send, which a process-local flag would. The idempotency
+key is the invitation *and the instant in force*, so an addendum that moves the
+deadline is a new instant and earns a fresh reminder on its own schedule; the old
+one stays on the record as what was true then. A deadline already past, a pursuit
+decided a no-bid or already converted to a won project, and the platform's own
+tenancy are each skipped and the skip is named. Primary only — a follower that
+also swept would double every reminder. Four tests in `tenderreminders.test.ts`:
+inside the window it reminds and names the days remaining, past it it does not,
+a second sweep the same day sends nothing, and a no-bid is left alone.
 
 ### The settlement meeting, and the bridge that has to reconcile
 
@@ -4716,6 +5983,63 @@ activity, the highway order reports 64 days late, the planner cannot close their
 own hazard, the logistics plan returns three criticals and a major, and the
 report comes back as a three-page PDF with the photograph embedded under
 `DCTDecode`.
+
+**The method is on the screen beside the register.** A register tells somebody
+what to write down; it does not tell them what to look at, and an inexperienced
+visitor photographs the wrong eleven things. `frontend/lib/sitevisitguide.js` is
+a collapsed-by-default guidance panel — the pre-construction walkover methodology
+as structured reference, not prose, in thirteen sections: the three kinds of site
+and the dangerous assumption each invites; the desk study to do first; the
+four-part visit structure; the per-site inspection checklists (greenfield
+access/ground/water/ecology/utilities; brownfield
+obstructions/contamination/services/retained structures; live-site
+critical-systems tracing, interface plan and tie-in/rollback); the
+observed/measured/reported/verified/unknown discipline that sits behind the "How
+it is known" basis on every finding; the targeted survey programme; site
+establishment as an engineered system; the phased layouts; the programme and
+estimate built from the constraints (dependency chains and distinct cost
+categories); the readiness gates before releasing work; and what the completed
+assessment should deliver. It is a Great Britain framework; the statutory and
+environmental points are flagged as England-specific and needing local
+verification, rather than implied universal. It is reference content only —
+static, holds no project data, invents nothing, and presents nothing as this
+project's own facts — built entirely from the existing
+`card`/`details`/`table`/`notice` design-system components (the `<details>`
+pattern already in `team.js` and `performance.js`).
+
+**One source, rendered on both surfaces the subscriber named.** The same
+`siteVisitGuide()` is rendered under the site-visit register on the field screen
+(`frontend/pages/field.js`), where the walk is recorded, and under the
+pre-construction brief in the ETABLIX site-services module
+(`frontend/pages/siteservices.js`), where section 13's deliverables convert a
+client's request for cabins, roads and utilities into a phased, priceable
+operating requirement. One function, not two copies — the method cannot drift
+between the two places it appears. Added because a subscriber testing a live
+tender asked for the walkover method to sit both where the walk is recorded and
+in the ETABLIX module.
+
+**ETABLIX is an exclusive module, so its name is gated, not shared.**
+`siteVisitGuide(opts)` renders the one ETABLIX-specific note (section 13's
+value statement) only when `opts.etablix` is true. The ETABLIX site-services
+module passes `true`; the standard Field Modules page — which every subscriber
+can see, not only ETABLIX holders — passes nothing and gets the generic
+methodology with no mention of ETABLIX. The brand must never appear on a
+non-ETABLIX surface; the public marketing site (`backend/src/site/`) has never
+referenced it and still does not (verified: zero occurrences).
+
+**Two readings of the same walk.** The panel opens with two collapsible
+perspectives. The first is the project-wide method (the thirteen sections
+above). The second, `As principal contractor — the delivery-readiness view`, is
+the same walk read from the party that has to take control of the site: the
+three things being assessed (buildability, temporary infrastructure, site
+control), the delivery-stage visits (tender, post-award, pre-mobilisation,
+specialist-package, phase-change) each with its required output, the by-site
+priorities, the twelve-row inspect-and-decide table, site setup as a managed
+construction package, laying the compound out around production, agreeing
+authority with the operator before dates, recording findings so they control
+delivery, turning unresolved issues into programme and commercial items, and the
+documented readiness decision before mobilisation. It is the same reference
+object — static, inventing nothing — so both surfaces carry both views.
 
 **One defect found by opening the PDF and reading the viewer's tab.** It said
 *"Site visit report Š SV-001"*. A literal string outside a content stream is read
@@ -5049,6 +6373,38 @@ The estimate already worked and is not rebuilt: twenty cost heads, time-related
 costs by the week, contingency from the risk register at P80. What did not exist
 is the layer underneath, where a bid is actually lost, and always the same three
 ways.
+
+**The risk register is now a step on the bid road, with a door in the estimating
+screen.** The scoring engine was always there — `registerRisk`, `rescoreRisk`,
+`setRiskMitigation`, `assessContingency` over `scoreRisk` (probability × PERT-
+weighted three-point cost and schedule impact → expected cost, residual, P80
+contingency) — but a tender's risks could only be registered through the generated
+command catalogue, so in practice they were not, and "contingency from the risk
+register at P80" sat on an empty register. Three changes close that, reusing the
+engine rather than adding a second one:
+
+- A risk is now one record of **cause → event → impact**: `RiskInput` gains an
+  optional `cause` (the condition the control acts on, distinct from the event)
+  and an `allocation` (`CLIENT` / `CONTRACTOR` / `SHARED`). A **client-owned risk
+  is left out of our contingency** — `assessContingency` filters it — so the same
+  exposure is never funded twice, once in our price and once in the client's
+  budget. Absent allocation is treated as ours, the safe default
+  (`maths/risk.ts`, `engines/safety.ts`).
+- **`bidFlow` carries a `RISK` step**, "Price the risk register": NOT_NEEDED on a
+  price-only enquiry, READY once the bill is priced (a risk is sized against the
+  job it sits on), DONE once risks are on the register. It is deliberately kept
+  out of the headline `nowDo`, so it is visible and clickable but never displaces
+  the pricing or submission step a bidder is told to do next (`bidflow.ts`).
+- The estimating screen gains a **"The risk register, priced" card** (expected
+  value, P80 contingency, worst case, top drivers) and a **"Register a tender
+  risk"** door (cause, event, category, allocation, probability, three-point cost
+  and schedule). `registerRisk`'s route accepts the new fields and no longer
+  requires a caller-supplied id. The Tender & Procurement screen's nav gate gains
+  `RISK_REGISTER` so everyone who can register a risk there can reach it
+  (`frontend/pages/procurement.js`, `frontend/app.js`, `routes.ts`). Covered in
+  `record.test.ts` (cause + allocation persisted, client-owned left out of
+  contingency, bad allocation refused) and `bidrun.test.ts` (the RISK step's
+  states and that it never becomes the headline).
 
 **A quantity nobody can trace.** Somebody measured 1,240 m² of blockwork off a
 drawing eleven weeks ago. Which drawing, at which revision, off which sheet? If
@@ -6057,6 +7413,31 @@ pre-construction information; the cut-off reconciles the delivery plan against
 the baseline. Clause 7 is `NOT_ASSESSABLE` for the same honest reason as the
 tender gate's — the worklist is derived without re-entry, but mobilisation tasks
 with owners and dates are not built and the report says so by name.
+
+#### The chair's AI read of the gate
+
+The deterministic report answers *whether* the seven clauses are met. It does not
+say what the verdict means to the person deciding the gate: which outstanding
+clause is the real risk, what a condition would have to cover, what would be
+reckless to pass. That read is the senior professional's, and it differs by stage.
+`gateNarrative(ctx)` (`stagegate.ts`, `POST …/stage-gate/narrative`, "Ask the AI to
+chair this gate" on the Command Centre) is that read, chaired as the discipline
+that owns the phase: a concept gate as a **development manager** (RIBA 2), a design
+gate as a **design manager** (RIBA 4), a tender gate as a **commercial manager**, a
+construction gate as a **project manager** (RIBA 5), a commissioning gate as a
+**commissioning manager**, a handover gate as a **facilities manager** (RIBA 6) —
+through the shared `expertBriefing`. It is grounded entirely on the deterministic
+report: the model is handed the clause results and told to reason only from them,
+name the clause behind every risk and action, and invent no blocker the report does
+not carry; `shapeGateNarrative` binds any clause the model names to a real
+`GATE_CLAUSE` (an invented one becomes null, not a plausible-looking authority) and
+caps each list. It carries the same guards as the rest of the AI surface:
+`requireModel` refuses the local stand-in before a penny is charged (a synthetic
+gate review is not a review, and the free seven-clause report always stands on its
+own); it writes no state; and passing or holding the gate stays a person's act under
+`decideGate`. Covered in `stagegate.test.ts` (the shaper drops stubs, binds clauses
+to real ones and caps at eight; the narrative refuses the stand-in, charges nothing
+and still names the professional who would chair it).
 
 ---
 
@@ -8928,6 +10309,94 @@ first pass and produced the two tests that were missing: a permit that ran out
 last week and was never handed back, and a question whose only match is a plural
 word.
 
+#### The platform teaches how it works — a step-by-step guide
+
+The copilot answers from project *state* and is told to invent no mechanics,
+which keeps it honest about figures but leaves it unable to explain the one
+thing a first-timer most needs: how CONSTRUX itself works — which screen, which
+button, in what order, and what each step produces. A model asked that from
+general knowledge would make the platform up.
+
+So the mechanics are a curated knowledge base, `backend/src/ai/platformguide.ts`
+— the step-by-step road from an empty account to a won, delivered job, grouped
+the way the work happens (set up · find work · work a tender · price, assemble
+and submit · win and deliver · how it works). Every topic is true by
+construction: it names a real console screen (an `AREA_CONSOLE_PAGE` value, which
+a test pins), the real buttons, the real order the engines enforce, what you get,
+and the traps worth naming — one tender has one matrix, a reading cannot land on
+a closed tender, the construction duration comes from the priced works and not
+from the ITT text, "issue the pack" is not "record the award".
+
+One copy, two surfaces, so neither can drift from it. The **Copilot page**
+(`frontend/pages/copilot.js`) renders it in full as "How CONSTRUX works — step by
+step": deterministic content from `GET /v1/guide/topics`, so it is there on every
+deployment, provider or not, with an "Explain this with AI" hand-off on each
+topic that seeds the copilot. And the copilot's paid explanation
+(`explainPlainly`) folds the topics relevant to a question into its grounding
+(`relevantGuideTopics` scores keywords, title and summary; `guideGroundingLines`
+flattens them), so when a reasoning provider is live Claude explains the real
+platform — screen, button, order — instead of a plausible invention of it, while
+still barred from stating any figure or project detail not on the record. The
+knowledge base is all the AI knows about the platform; there is no second copy in
+the browser. Eight tests pin that every topic is well-formed and points at a real
+screen, that the relevance scorer lands a "how long does the job take" question
+on pricing-the-works (not the ITT) and a "mixing tenders" question on the focus
+topic, and that a question matching nothing returns nothing rather than guessing.
+
+There is no per-topic read route: the page reads the whole guide at once and the
+grounding runs in-process, so a `/v1/guide/topics/:id` endpoint would have been a
+read nothing reached — the door invariant in `doors.test.ts` is what caught it.
+
+#### Insight at the tender stage, with or without a project
+
+The AI Insight panel reads one *project's* agent proposals, so on the
+tenant-wide pipeline — before a tender is worked — it had no project to read and
+mounting it fetched `/v1/projects/undefined/proposals`, which errored where an
+insight belonged. That was "no insights at the tender stage". Now the panel
+mounts only when a project is in scope (a focused tender, or one opened from the
+board); with none, `tenderAttention(board)` renders in its place — a
+deterministic reading *across* the live tenders, arithmetic over the board
+already on screen, so it is there on every deployment with no model called. It
+names what is closing within ten days, what is not ready to bid, what has a
+critical clarification outstanding and which mandatory return has no owner, each
+with a **Work on this** button to the tender that carries it (shown plain where
+the pursuit names no project to focus onto). Terminal tenders are excluded, and
+an all-clear says so rather than showing an empty card (`frontend/pages/pipeline.js`).
+
+#### Report when stuck, report the error
+
+The honest counterpart to "the AI gets help when it struggles". The platform
+cannot silently reach a developer or repair itself — "AI proposes, a person
+confirms" and "no agent mandate exceeds PROPOSE" are settled — but it can make a
+struggle or a bug reach a watched place automatically, with the person seeing it
+happen. `fileSupportReport` (`backend/src/ops/support.ts`) takes a report from a
+person — `STUCK` (the copilot could not help), `ERROR` (a request failed,
+carrying its `x-correlation-id` so a developer can find it in the logs), or
+`FEEDBACK` — and does three things, telling the caller which: puts it on the
+tenancy's governance chain as `SUPPORT_REPORT_FILED`; notifies the tenancy's
+owners and administrators in-platform through the durable outbox (the floor, so
+a deployment with no ops webhook still surfaces it to a human); and forwards it
+to `OPS_ALERT_WEBHOOK_URL` where one is configured — the same channel the watch
+fires to, now shared through `postOpsWebhook` (`backend/src/ops/opswebhook.ts`,
+extracted from `watch.ts` so there is one POST to the ops webhook). Filed by a
+person, never an AI: `SUPPORT_REPORT_FILED` is not `aiAllowed`, because a report
+is a human saying "this is wrong", which an AI must not fabricate on their
+behalf. Held by every seat (`PROJECT_SETUP` R), so a subcontractor can report a
+bug. `POST /v1/support/reports`; five tests in `support.test.ts` pin the record,
+the in-platform delivery, the correlation-id capture, the empty-report refusal
+and the unknown-kind normalisation.
+
+On the browser side, `ApiError` now carries the response's `x-correlation-id`
+(`frontend/lib/api.js`), and `openReport` (`frontend/lib/report.js`) is the one
+control that opens the standard command modal, posts the report, and shows the
+person the reference and who it reached — nothing about them is reported
+silently. The Copilot page wires it three ways: a **Report a problem** button,
+a **This didn't help — report it** on every answer (carrying the question), and
+a **Report this** on a failed answer (carrying the correlation id the person
+never has to see). A report from anywhere else in the console is a possible next
+step — the error path in `command.js` could carry the same `Report this` — not
+yet built.
+
 ---
 
 ### The project on site now has a site record
@@ -9421,6 +10890,18 @@ submission missing a mandatory response is not marked down, it is rejected, and
 everything else in it is spent for nothing. A section marked drafted carrying an
 empty body counts as unanswered: a heading with no answer under it is the
 deliverable being unanswered.
+
+**Getting the submission out.** The reader that shows every drafted section in
+full (each with Edit and Copy) now also carries a **"Copy all answers"** button
+per pack. It assembles the whole pack in order — each answer under its question
+key and title, exactly as edited on the record — onto the clipboard, for the
+person at the portal who has to attach one document rather than fill thirteen
+boxes. An unwritten section is named `[Not written yet]` in the paste so a gap
+is a stated fact rather than a surprise on the return date. It is the same
+record the per-section Copy reads, so the attached document and the platform
+cannot disagree (`frontend/pages/pipeline.js`, `data-copy-pack`). The price does
+not go in this document: it belongs on the buyer's own Annex 1 / pricing
+schedule, drawn from Tender & Procurement.
 
 Planning and issuing are decisions and neither is an event an agent may author;
 only the section write carries `aiAllowed`. Drafting is refused outright on the
@@ -11430,6 +12911,95 @@ Re-opening these is what caused churn before.
 
 ---
 
+## Feasibility appraisal — a site and a brief into numbers
+
+The platform could read an invitation into a compliance matrix, price a measured
+take-off and generate the construction-phase documents, but it had no way to go
+the other direction: from a plot and a one-line brief ("a council hectare, social
+rent, a mix of houses and flats") to a **schedule of accommodation, a land
+budget, an order-of-cost and an indicative programme** — the quantitative spine
+of a feasibility study or an Employer's Requirements brief. A development manager
+kept that in a spreadsheet nobody could audit. `backend/src/domain/feasibility.ts`
+builds it, and `frontend/pages/feasibility.js` (the **Feasibility** screen, in the
+Pipeline section) is its console door.
+
+**It is deterministic, and honest about it — which is the whole point.** Every
+figure is computed, not judged, so the engine has no model in it. Dwelling areas
+are the published Nationally Described Space Standard plus a stated design uplift;
+the land budget apportions the real site area and balances to a flexibility line
+(and flags `overSite` rather than silently overflowing when the mix is too dense);
+the cost plan builds up from elemental rates that carry a basis and a base date,
+through preliminaries, overhead-and-profit, fees, risk and inflation to a forecast
+outturn with per-home and per-m² metrics; the programme scales published RIBA
+stage bands by the size of the scheme. Nothing is presented as a surveyed fact:
+the rates are *concept allowances to be replaced by measured design and QS data*,
+and `assumptionsNarrative` and `limits` say so on every result. This is the
+no-fabrication rule applied to feasibility — the honest way to produce a brief
+full of assumptions is to compute each from a transparent rule and label it,
+which is exactly what a good feasibility study does. The AI narrative and policy
+citations that would wrap these figures into prose are a separate advisory layer,
+not yet built; this module is the part that has to be *right*.
+
+`GET /v1/feasibility/archetypes` publishes the dwelling archetypes (with NDSS
+areas) and the default assumptions; `POST /v1/feasibility/scheme` computes a
+scheme — deterministic, nothing persisted, authorised `PROJECT_SETUP` `R`. A
+short brief need not carry a mix: `suggestMix` fills the site to a target density
+with a family-weighted social-rent mix as a transparent starting point the person
+then edits. Seventeen tests in `feasibility.test.ts` pin the reconciliation: the
+schedule sums to the GIA, the GIA drives the cost, the cost lines total, the land
+uses plus the balance equal the site exactly, M4(2) never drops below policy, and
+an over-dense mix is flagged rather than overflowed.
+
+**The narrative brief and its DOCX/PDF export.** `feasibilitybrief.ts` assembles
+the scheme into a readable project description / Employer's Requirements document
+and renders it through the existing export pipeline. Two layers, with the honesty
+rule between them: the **prose is composed deterministically from the figures**
+(a sentence stating the home count, density and outturn is built from the
+computed totals, so it cannot drift from the tables beside it — it is the figures
+written out, never presented as reasoning), and an **optional AI layer** adds
+advisory prose for the two judgement sections (vision/placemaking, delivery
+strategy) where a model earns its place. `feasibilityNarrative` is best-effort:
+where no reasoning provider answers — or the local stand-in does — the layer is
+absent and the deterministic fallback prose stands, and it never throws out mid-
+document, so the brief is complete with or without a model. `POST
+/v1/feasibility/brief` returns the structured blocks (deterministic); `POST
+/v1/feasibility/brief.docx` renders a branded DOCX or PDF — tenant-level (empty
+projectId, so branding falls back to the tenancy and `#finalise` needs no project
+record), charged through `renderAndCharge` against the tenant wallet exactly as
+the pricing-schedule and bid-submission exports are. The **Feasibility** console
+screen carries a "Download brief (DOCX)" button. Nine tests in
+`feasibilitybrief.test.ts` pin the assembly: the seven numbered sections, the
+schedule/cost/programme tables, the totals row, that the prose carries the
+scheme's own figures (home count, density, outturn) and not invented ones, the
+over-site warning, and that the AI layer is genuinely optional (fallback prose
+when absent, marked advisory when present). The DOCX renderer itself is the one
+`docx.test.ts` already exercises for these block kinds.
+
+**What it is not, stated plainly.** The brief covers the quantitative spine and
+the standard narrative sections; it does not yet draft a full ten-field policy
+justification per requirement, or embed a scale site-layout drawing (the export
+model has a `DRAWING` block the land budget could drive — a later increment).
+
+## One client, many projects
+
+A project carries an optional `client` label, so one client can hold many
+projects under its name. A plain string rather than a separate entity — the
+firm types it, or picks a client it has used before — which is the simplest
+thing that meets the need without a parallel CRM to keep in step. The
+create-project form offers the existing clients as a datalist (pick-or-type via
+the form builder's `suggestions`), fed by `GET /v1/clients`, whose list is
+`structure.clientsOf` — derived from the projects' own `client` field with a
+count each, not a second register. That derivation is the point: a client cannot
+exist that no project is for, the count cannot drift, and the pick-list is what
+stops one client becoming three near-identical strings nobody can group on. The
+label is trimmed on the way in and absent (no key) when blank, so an internal or
+speculative project keeps the shape it always had. `clientlist.test.ts` pins the
+storage (trimmed; absent when blank) and the grouping (count per client, busiest
+first). Until this, the only "one name, many projects" grouping was the
+portfolio, which is a time/programme dimension — so a firm using portfolios for
+quarters had nowhere to record the client, and the client ended up typed into the
+project name.
+
 ## Concept, stage 6 — C-WF-01 to C-WF-08 and the 6.4 gate
 
 The head of the lifecycle, and the last stage to be built. That is the right way
@@ -12580,6 +14150,46 @@ that is not true, which is worse than a narrow one that is.
 **An ungranted act is queued, not lost.** The runtime degrades an `ACT` proposal
 to `PROPOSE` and attaches the reason. Refusing outright would trade a small
 safety gain for the loss of the finding entirely.
+
+**A per-project cumulative budget caps the aggregate, not just the single act**
+(Tier-1 Agent Delivery OS spec §1 A2 / AT-22, filled after a gap audit found the
+enforcement model otherwise already complete). The envelope's `valueCeilingMinor`
+caps one act; `setActBudget` (`agents/mandate.ts`, `ENTERPRISE_STRUCTURE` `G`,
+events `AGENT_ACT_BUDGET_SET`/`_CHANGED`) caps the running total of unattended-act
+value across every agent and envelope in the project. `mayActUnattended` sums
+`projectAutonomousSpend` and refuses — falling back to a proposal — when this act
+would pass the budget, so a fleet cannot inch past a cap one in-ceiling act at a
+time. Additive and off by default (no budget = the prior behaviour); shown on the
+autopilot screen beside the grants (`GET …/agents/envelopes` now returns the
+budget and committed spend). Today's one ACT-eligible agent (`health`) carries a
+value of zero, so this is the aggregate safety rail for a future value-bearing
+autonomous act, exactly as the per-act ceiling already is. Proven by
+`tests/actbudget.test.ts` (set/validate/authorise; the running total sums only
+executed enveloped acts; the aggregate ceiling refuses the act that would pass it
+and permits it once raised; no budget = no cap). The audit confirmed the rest of
+the Tier-1 §1 enforcement (A0–A4, reserved decisions, delegation envelope, no-OT)
+was already built; this was the one genuine money-safety gap worth closing now.
+
+**Dispatch reconciliation — no blind retry of a served notice** (Tier-1 spec §5/§7,
+AT-17, the second gap the audit found). `backend/src/domain/dispatch.ts` is the
+transmission lifecycle an outbound intent (a notice, a bid, a PO) has *outside* its own
+contractual state in `correspondence.ts`: `PENDING → SENT_UNCONFIRMED → RECEIPT_VERIFIED`,
+plus `UNKNOWN_OUTCOME`, `REJECTED`, `CANCELLED` (a verified receipt may arrive straight
+from PENDING for a synchronous endpoint). The safety property is **structural**: an
+`UNKNOWN_OUTCOME` has no edge back to `SENT`, so a send that timed out — and may already
+have landed — cannot be blindly retried. The only way back toward a send is
+`reconcileNotDelivered`, a **human-authored** event (`DISPATCH_REDISPATCHED`,
+`aiAllowed: false`) that returns it to PENDING once non-delivery is confirmed on the record,
+so a retry is always a fresh send, never a double service. Idempotent on a stable dispatch
+key — the same key with a changed payload is refused (a changed payload under a used key is
+how a replay becomes a second effect). Routes `…/dispatches` (open + the transitions + a
+GET), shown on the Contracts screen as *Outbound dispatches* with the unknown-outcome ones
+flagged. Proven by `tests/dispatch.test.ts` (idempotency + changed-payload refusal; a
+timed-out send parks UNKNOWN_OUTCOME and a direct re-send is refused; it clears by a verified
+receipt or a reconciled fresh send; the rest of the state machine). The audit's remaining
+items — the agent-*ownership* model and its coverage metric (G1/G2) — are an architectural
+choice held for a decision, and the RIBA-stage playbook structure (G5) is low priority; the
+engine, store and enforcement they would build on already exist.
 
 Exactly one agent is ACT-eligible — `health` — and its envelope carries a value
 ceiling of zero and writes no governed state: it may tell somebody the platform
@@ -15779,6 +17389,139 @@ own observer.
 `extractRequirements`, which is exactly what a person typing the clauses would
 have run — same authorisation, same ACU cost, same events. Machine-read data
 still gets no private door into the register.
+
+**One tender, one matrix — a second reading merges in.** This was the failure a
+first bidder hit hardest, and named precisely: a highways framework came as a
+dozen documents — the ITT, the NEC templates, the specification, Appendix C, D,
+E — and reading each of them minted a *separate* `ITT_ANALYSED`, so the tender
+had a dozen fragments and nothing to price from. `analyseITT` still only knows a
+requirement list, but confirming a reading now first recovers the requirements
+already on the tender (from its bound matrix, via `requirementsFromMatrix`) and
+`mergeRequirements` unions the new ones in by reference — a reference read again
+updates its line rather than duplicating it, and order is kept. The result is one
+matrix per tender that grows as its documents are read. Two guards make the merge
+safe rather than lossy: `mergeCommercialTerms` keeps the tender's stated terms
+(the damages, retention and bond it is priced against) when a later document — an
+appendix — states none, replacing them only when the new reading states its own;
+and the return register is merged, not replaced, so a re-read never wipes the
+owner, date and source a person assigned to a deliverable. A reading that finds
+requirements but no returns still binds its matrix to the tender (`bindAnalysis`),
+so the next reading has something to merge into. Proven end to end in
+`ittreading.test.ts`: two readings of one invitation leave it with one matrix of
+five requirements, the ITT's terms intact and both readings' returns present;
+`itt.test.ts` pins the union, the dedup, the term-keep and the matrix round-trip.
+
+The screen shows it the same way. Every analysis stays on the append-only ledger,
+so a tender read one document at a time before this had a dozen `ITT_ANALYSED`
+records, all listed together — "it is mixing everything." "Compliance matrices
+on file", and the pickers that plan a pack or set submission rules against one,
+now show only the matrix each live invitation currently points to — the one its
+documents merge into — with the superseded fragments counted but not listed.
+Where nothing is bound yet, nothing is hidden, so a first analysis is never
+swallowed (`frontend/pages/pipeline.js`).
+
+A matrix bound to a tender that is **closed, won or lost** drops out of the live
+list and the pickers too — the "it went to an old closed project" a reading
+confirmed onto the wrong tender by mistake, which could not be cleared, stops
+cluttering the live list the moment that tender is terminal, which is what "when
+an opportunity is closed it must be closed" means for its matrix. It is counted
+among the superseded, stays on the append-only record, and is reachable by
+focusing that tender (the focused view draws from every analysis, not only the
+live ones, so a tender opened on purpose still shows its own matrix). The list
+falls back to showing everything only when no tender has a matrix bound at all,
+so the first-analysis safety holds without re-showing a closed one.
+
+Hidden is not lost, and the panel no longer lies about what is hidden. "Compliance
+matrices on file" carries a collapsed **"Show N earlier and closed-tender
+matrices"** panel, but it splits what is inside into the two different things it
+holds, because calling all of them "superseded or closed-tender" confused a bid
+manager who knew most of them were neither — just earlier readings of the live
+tender they were still working. `analysisBoard` (`itt.ts`) now returns `bound` on
+each summary — true only for the matrix an invitation currently points at — and
+the panel groups by it:
+
+- **Earlier readings of a live tender** (`!bound`): previous versions of a
+  tender's matrix, from before the next document was read and merged in. The
+  current matrix is in the list above; these are kept only so nothing read is
+  ever lost. They were never "sent to the wrong project".
+- **Bound to a closed, won or lost tender** (`bound`, but hidden from the live
+  list): the matrix a reading was confirmed onto by mistake shows up here. Open
+  it, then re-read the invitation against the right tender to move its
+  requirements across.
+
+Each row still carries an **Open** that loads the same matrix detail as a live
+one. The count summary counts only the matrices bound to a live tender — one per
+tender — not every intermediate reading, so "3 compliance matrices on file" means
+three tenders, not thirty fragments (`frontend/pages/pipeline.js`, `itt.ts`).
+
+**The merged matrix keeps the tender's name, not the last appendix's.** A re-read
+used to rename the whole matrix after whatever the last document called itself —
+reading "Appendix 3a — List of Publicly Maintainable Roads" into a tender left the
+consolidated 71-requirement matrix labelled "Appendix 3a", so the live list showed
+a fragment's title over the full set. `perception.confirm` now keeps the tender's
+identity — its reference, client and return date — from the matrix already on the
+tender whenever a later document is merged in; a second, third or fourth document
+adds its requirements without renaming the matrix. A first reading still takes its
+identity from the document (or the invitation), and a later reading still fills a
+blank identity — it only cannot overwrite one the tender already carries
+(`backend/src/engines/perception.ts`).
+
+**One tender per page.** The reader, the response packs and the red team on the
+lower half of the Pipeline screen were already scoped to the project selected in
+the session — writing a section spends that project's ACUs, so they could be
+nothing else. The procurement half above them was not: "Invitations in hand" and
+"Compliance matrices on file" listed every tender at once, so a bid manager
+working one job read it against every other — "it is mixing everything,
+regardless of the selected project." A tender carries the project it is bid from
+(`t.projectId` on the board row), so when the selected project owns an invitation
+on the board the two lists narrow to it, a bar at the top names the tender in
+focus and carries a **Show all tenders** button, and every row on the full board
+carries a **Work on this** button that selects that tender's project through the
+same `openProject` the menu uses — so the lower half follows without a second
+call. `closeProject` (new, `frontend/app.js`) clears the selection the focus
+reads from, the counterpart to `openProject` that `selectProject` would not do.
+Focus engages only when the selected project actually has a tender on this board,
+so a delivery project opened for its costs — which has no invitation here — shows
+everything exactly as before, never a board blanked behind a bar. The analytics
+further down (win rate, the decided pipeline) stay tenant-wide, because they read
+*across* bids and narrowing them to one would be a lie (`frontend/pages/pipeline.js`).
+
+The focus narrows what the page *does*, not only what it shows. A focused page's
+commands — read the invitation, record a price-only return, assign a return,
+plan a response pack, set submission rules, confirm what the AI read — offer only
+the focused tender's invitation, returns and matrix, built as `scoped*` lists
+filtered by the focused invitation ids. So the wrong-tender slip a tenant-wide
+dropdown invites (confirming a reading onto the wrong invitation — the mistake
+that started this) cannot happen from a focused page. When the focused tender has
+nothing live to act on — a won or lost tender opened for its costs — the command
+is disabled with a reason that says so and points at **Show all tenders**, rather
+than the tenant-wide "record one first" that would be a lie. Off focus the
+`scoped*` lists are the originals unchanged, so nothing about the unfocused screen
+moves.
+
+The **Opportunities** table narrows under focus too — "why is everything listed
+in score an opportunity" was that table showing every pursuit in the tenancy while
+a bid manager worked one job. An opportunity belongs to the focus when it is tied
+to the focused project (`o.projectId`, or `o.convertedProjectId` once it became a
+project) or carries the same reference as a tender in focus (`shownOpportunities`,
+`frontend/pages/pipeline.js`). The focused empty state says no pursuit is tied to
+the tender in focus and points at **Show all tenders**; off focus the whole list
+shows unchanged.
+
+**A graded accreditation is matched by its tier, not waved through.** Constructionline
+is tiered — Gold is the full prequalification a highways framework demands, Silver
+is not — and the evidence probe matched it tier-blind, so a "Constructionline Gold"
+requirement was marked **satisfied** by a held **Silver**: a false pass on a
+mandatory bar that loses the bid at the preferred-tenderer check with everything
+already spent. The named-certificate catalogue now carries the tiers as distinct
+entries (Gold/Silver/Bronze, and a plain entry that excludes them), so a Gold
+requirement is satisfied only by a held Gold; and the general accreditation probe
+no longer fires where the requirement named a specific scheme the named probe
+could not satisfy — answering a named-but-unheld scheme off the whole
+accreditation list was the other half of the false pass. Unmatched falls to a
+gap, which prompts the check rather than hiding it (`backend/src/domain/itt.ts`;
+`itt.test.ts` pins Gold-held satisfied, Silver-held a gap, and not answered off
+the general list).
 
 The confirmation answers what a bid manager asks first rather than reporting
 that a matrix exists: which mandatory requirements have no evidence behind
@@ -21299,10 +23042,20 @@ asserted, what proves it, who checked, and when it stops. It points at an
 
 **Four rules, each a refusal.**
 
-- **The asserter may not be the verifier.** Attaching a certificate to a
-  sentence is clerical. Deciding it proves the sentence is a judgement, and one
-  person doing both is not a check — the same segregation the payment cycle and
-  the signature ceremony already carry.
+- **The asserter may not be the verifier — with one honest exception.**
+  Attaching a certificate to a sentence is clerical. Deciding it proves the
+  sentence is a judgement, and one person doing both is not a check — the same
+  segregation the payment cycle and the signature ceremony already carry. The
+  exception is the one-director firm: where the company profile has
+  `singleOwnerBids` set there is genuinely nobody else to ask, so the owner may
+  attest their own claim. It is not relabelled as independent verification — the
+  claim is stamped `selfAttested: true`, and it is recorded under a distinct
+  `EVIDENCE_CLAIM_SELF_ATTESTED` event so the audit trail never passes an
+  owner's own word off as a segregated check. A firm with more than one person
+  gets the refusal unchanged (segregation is available, so it is required), and
+  even in single-director mode a genuine second checker is recorded as a normal
+  `EVIDENCE_CLAIM_VERIFIED` — the exception widens who *may* check, it does not
+  relabel a real one.
 - **Verification cannot be granted over something already lapsed.** An approved
   claim nobody can stand behind is worse than no claim.
 - **A method, not a signature on nothing.** "Compared against the insurer's
@@ -21517,6 +23270,18 @@ content may not provide the assurance result. Two mechanisms.
 submission effect and the effect is enforced: `CRITICAL` is a hard block nobody
 can dispose of, `HIGH` blocks until a named person records what they decided,
 `MEDIUM` and `LOW` are reported. A severity with no consequence is a list.
+
+**A pack with no return date no longer 500s the review.** `challengeSubmission`
+builds the evidence register as of the pack's return date — `pack.returnBy.slice(0,10)`
+— and a pack whose tender return date has not been set yet carries an empty
+`returnBy`, so that slice is `''`. `evidenceRegister` defaulted its day only when
+the argument was `undefined`, so `''` slipped through to `new Date(NaN)` and
+`.toISOString()` threw `RangeError: Invalid time value`, surfacing to the bidder
+as `INTERNAL_ERROR` on "Attack the pack". The register now resolves an absent,
+empty **or malformed** day to today rather than crashing — an unknown day is
+today, never a 500 — which also hardens the `?asAt=` query parameter the evidence
+route exposes against a bad value. The undated deadline itself is still caught, as
+a `PROGRAMME` finding, the way it always was.
 
 **A model may not hard-block and may not clear itself.** A model-raised finding
 is capped at `HIGH` — it stops the submission until a person decides, which is
@@ -25141,6 +26906,19 @@ distinguishes a title block's worth of text from a substantial document that
 genuinely contains none. Each task carries its own `absent` wording, so no
 refusal prints a schema field name at somebody.
 
+And the heading over that body no longer contradicts it. A bidder reading a
+highways framework uploaded the two reference schedules — 167,690 and 171,730
+characters of street names and road designations — and the reader correctly
+found no requirements in them and said so: *"the text came through, so this is a
+document that does not contain them rather than one that could not be read."* But
+the toast over it was titled **"Not read"**, in red, which is the one thing the
+body says is not true — and the bidder read it as the reader being broken on a
+file it had in fact read perfectly. `pipeline.js` now titles a
+`PERCEPTION_NOT_LEGIBLE` outcome **"No requirements in this file"** in the warning
+tone, not "Not read" in the error tone: a file that read cleanly and holds no
+requirements is an answer, not a failure. A genuine read failure, and a provider
+that was unavailable, still read as what they are.
+
 ### A customer could read this platform's margin from their own browser
 
 Reported as *"USERS DON'T NEED TO SEE ALL OF THESE"*, against a billing screen
@@ -25227,6 +27005,256 @@ priced nor excluded is **not quoted** — `ESTIMATE_INCOMPLETE`, naming the head
 measured line with no rate against it is **named in the warnings** rather than
 priced at nothing, which was the silence that made the whole flow able to
 produce a confident, wrong number.
+
+**The priced take-off exported as a pricing schedule.** `pricingSchedule(ctx)`
+(same file, `GET /v1/projects/:projectId/tender/pricing-schedule`, read-only)
+returns the same priced lines `quoteFromEstimate` composes — every measured line
+with the tender total apportioned across it, reusing `lineNetCostMinor` and the
+identical apportionment so the schedule and the quotation can never disagree —
+but as data rather than a legal instrument, for transcribing into a buyer's own
+pricing schedule (an "Appendix B") or attaching as the priced breakdown. It
+reads the latest *complete* estimate and refuses an incomplete one
+(`NO_COMPLETE_ESTIMATE`) rather than exporting a total built on an unpriced head.
+Its console doors on Tender & Procurement (`frontend/pages/procurement.js`) are a
+**"Download pricing schedule (PDF)"** button and a **"Copy for Appendix B"**
+button under the bill. The copy puts the apportioned lines, the total and the
+qualifications on the clipboard; the download produces a **branded PDF/DOCX** from
+the same data.
+
+**Fixed and provisional sums the contractor does not mark up.** A buyer's pricing
+schedule asks for provisional sums (a soakaway, an asbestos allowance) and
+nominated sums, and a contractor pricing all-in lump sums that already carry their
+own overhead and profit must not have them marked up again — `costModel.ts` took
+every input into the cost the margin was applied to, so there was no way to add a
+sum *after* margin. `CostModelInput.fixedSums` now carries them: each is added to
+the tender total after overhead and profit, never into the cost they are computed
+from (`fixedSumsMinor` on the subtotals, `fixedSums` on the priced estimate). The
+margin percent falls accordingly — you do not profit on a provisional sum — and
+the weekly burn, prelims percentage and contingency, all about the works, do not
+move. It is strictly additive: absent, the tender total is cost plus overhead plus
+profit exactly as before, and all 8,000+ existing tests pass unchanged. The
+quotation and the pricing schedule apportion the *works* total across the measured
+lines and list the fixed sums beside them under their own labels, so the lines
+still sum to the tender total to the penny (`pricingschedule.test.ts` pins both the
+no-markup property and the sum). Entered on "Price the bill" as "label: amount" per
+line (`frontend/pages/procurement.js`). This is what lets the platform hold the
+*complete* tender — measured works plus all-in allowances — so the download is the
+whole price, not just the fabric.
+
+**Downloadable, branded, in the platform — never finished outside it.** A tender
+whose price or answers can only be copied out and pasted into another tool is a
+tender being *completed out* of the platform, which the brief ruled out from the
+start. Both tender outputs now render through the existing branded-export engine
+(`platform.exports.document()` + `renderAndCharge`, the same path as the project
+report), so each downloads as a branded PDF or DOCX produced in the platform:
+`POST /v1/projects/:projectId/tender/pricing-schedule.pdf` (the priced schedule,
+from `pricingScheduleBlocks`) and
+`POST /v1/projects/:projectId/bid-responses/:packId/submission.pdf` (every answer
+under its question). The bid reader on Pipeline & Bids carries a **"Download
+submission (PDF)"** button beside "Copy all answers". The governing rule this
+serves: **every project must be deliverable end-to-end inside the platform,
+regardless of stage — nothing is produced here that can only be finished
+elsewhere.** Covered by `pricingschedule.test.ts`: the
+lines sum to the tender total to the penny, the assumptions and non-margin
+exclusions carry as qualifications, and the refusal fires where no complete
+estimate exists. It answers the gap a real bidder
+hit — the platform priced the building fabric but had no way to hand that pricing
+out into the buyer's own schedule, which also asks for M&E fix, external works
+and provisional sums the take-off does not itself contain; those remain the
+bidder's to price, and the export is honest about carrying only what was measured.
+
+**The downloaded file reads as the firm's own, and is named as a person would
+name it.** Three faults on the first real downloads, each on a binding
+client-facing instrument:
+
+- *The filename was the document reference* (`render.ts`), which on a tenancy
+  with no reference prefix of its own inherits the project's name — so a tender
+  submission came down as `RFX1000209 - EPC Assessments-00002.pdf`, the name of
+  an unrelated project. It is now the document's **title**, with the subtitle
+  appended to tell one project's schedule from another's and folded to printable
+  ASCII a bare `Content-Disposition` header can carry
+  (`Tender Submission - South Holland District Council - SHDC 000189.pdf`). The
+  reference stays on the page and in every footer, where traceability belongs.
+- *The cover was a slab of colour.* A full-bleed band across the top third of
+  the page stood in for a cover image; on a document with no logo it read as an
+  unfinished template rather than as something issued. The cover now keeps the
+  full-bleed band **only where a real cover image is set**, and otherwise draws a
+  restrained masthead — a slim brand stripe, then the logo where one is set and
+  the issuing party's name as a wordmark where one is not, which is what
+  letterhead does and reads as deliberate on any colour (`pdf.ts drawCover`).
+- *"Generated by" named a raw user id.* `01M1S26DD4K6R0…` means nothing to a
+  recipient. The exporter now resolves the generator against the tenancy's
+  governance-scoped user directory — the same place `documents/engine.ts` reads
+  people from — and the cover prints the name, falling back to the id only where
+  none is on record (`ExportDocument.generatedByName`).
+
+Covered in `docx.test.ts` (filename from the title, ASCII-folded) and
+`pdf.test.ts` (the cover names the resolved person, falls back to the id, and
+resolves end to end through the platform).
+
+**A line priced at nothing is not on the schedule.** A placeholder line removed
+from the take-off but still carried in the estimate apportions to £0 and printed
+as "£0.00" against a buyer's item — which reads as work left unpriced or a
+duplicate, and is what a bidder kept seeing after deleting the lines. The pricing
+schedule now drops zero-cost measured lines where there is a cost to apportion
+(the lines still sum to the tender total to the penny, and the numbering stays
+contiguous); where every rate is excluded and nothing is apportioned, the works
+still stand as one sum with the lines as drawn (`quotation.ts pricingSchedule`,
+pinned in `pricingschedule.test.ts`). The quotation's own apportionment is left
+as it was — the complaint and the fix are on the schedule that goes out.
+
+**The schedule stops contradicting itself once sums are on it.** With the
+measured works alone, the schedule honestly says "measured works only — a buyer
+also needs a contingency, provisional sums and any M&E/external works not in the
+take-off." Once a bidder adds those as fixed/provisional sums, that note and the
+"Contingency and risk: not included" exclusion become lies the buyer can check
+against the lines in front of them. Fixed now at the source: the pricing schedule
+drops the risk-register exclusion when a contingency sum is on it (the P80
+register is still unquantified, but the offer does now carry a contingency), and
+both the PDF note and the "Copy for Appendix B" note state what the schedule
+actually carries — "the measured works and the provisional and fixed sums listed
+above, including a contingency" — rather than telling the buyer to add what is
+already there. Pinned in `pricingschedule.test.ts`; the note lives in
+`quotation.ts pricingScheduleBlocks` and `frontend/pages/procurement.js`.
+
+**A project inherits the account's logo rather than going out unmarked.** Export
+branding resolves a project's own identity ahead of the tenancy's — right, so a
+document prepared for a named client carries that client's name, not the
+contractor's. But it replaced the tenancy's branding *wholesale*, so a project
+that set a name and no logo lost the firm's mark entirely and the cover fell back
+to type — the gap behind "our account has a logo, so why isn't it on the
+document". `ExportService.branding` now inherits the tenancy's `logoRef` onto a
+project that has none of its own, and only the logo: the name, colour and
+reference prefix a project set are deliberate and still win (`branding.test.ts`).
+
+**A standalone project finds the invitation it is for.** The bid flow finds the
+tender invitation on the project, or on the opportunity the project was
+*converted* from (`originOpportunityId`). A bidder who created the project
+*separately* — not through "convert a won opportunity into a project" — had no
+`originOpportunityId`, so the flow found no invitation, told them to "Record an
+ITT", and the record refused because the invitation was already on the
+opportunity: a dead-end loop. The flow is advisory and writes nothing, so
+`bidflow.ts` now adds a third lookup — the governance invitation whose buyer
+name, reference or title names the project (a job called "South Holland District
+Council" is the one the "South Holland District Council" invitation belongs to),
+which disambiguates correctly between several invitations and can only change
+guidance, never the ledger (`bidroad.test.ts`: a standalone project matches its
+own invitation, not another's).
+
+**Issued documents name their generator and wrap their title.** On the path that
+*issues* a numbered legal instrument (`issuedDocumentModel`), "Generated by"
+printed the raw actor id and a long cover title ran off the page edge. The
+generator now resolves to a person's name (falling back to the id), and the cover
+title wraps like every other heading (`pdf.ts`, `pdf.test.ts`).
+
+**Re-running the red team keeps the decisions already recorded.** A bidder fixed
+one critical finding, re-ran "Attack the pack", and found every decision they had
+recorded against the other twenty-seven findings gone — to be recorded again,
+one at a time. Each run rebuilds the findings from scratch with fresh ids, so the
+dispositions, keyed by finding id, did not survive. `challengeSubmission` now
+carries a disposition forward onto a finding that comes back unchanged — same
+requirement, same severity, same title — because a decision true a minute ago is
+still true; a finding edited into a different one does not match and gets a fresh
+look. So fixing one finding and re-running no longer discards the rest
+(`redteam.test.ts`: a decision recorded on a finding is still there after a
+re-run, with who made it).
+
+That exact-title match carries every *deterministic* finding — their titles are
+templated and do not drift — but not a *model-raised* one, and on a live
+deployment with a reasoning provider that was most of the churn still felt. A
+fresh adversarial pass re-words the same concern every time ("Insurance
+certificates and CAR sum-insured not evidenced" becomes "No evidence of insurance
+or CAR sum insured"), so the exact key changes while the finding does not, and
+the decision on it was lost on every re-run. `carryForwardDispositions` now also
+carries a model finding's decision by what does *not* drift — the section and the
+severity — but **only on a section whose prose has not been edited since the last
+review**, and **only where the pairing is one-to-one** (exactly one decided and
+one new model finding for that section and severity). A section the bidder *did*
+edit is deliberately excluded: there the model may be raising something new, and
+a fresh look is right. The fingerprint that tells an edited section from an
+untouched one is `sectionDigests` on the review — a `sha256` of each drafted
+section's prose, absent on reviews written before this and falling back to
+exact-match there, which is safe rather than wrong. The decision between the two
+is a pure, exported function with its own tests (`redteam.test.ts`
+`carryForwardDispositions`: a re-worded model finding carries on an untouched
+section, gets a fresh look on an edited one, and is never guessed when two share
+a section and severity).
+
+**A reading can no longer be confirmed onto a tender that is already over.** The
+"Confirm what the AI read → against which invitation" picker, and the pickers for
+adding a deliverable, assigning a return and recording an addendum, all read one
+flat `invitationOptions` list built from *every* invitation the account ever had,
+whatever state it was in. A bidder reading a North Lincolnshire highways framework
+confirmed the reading onto a *closed* job by one wrong click, and could not undo
+it — the exact failure of "a tender that is not won or closed must be out of the
+way." `invitationOptions` now excludes the terminal stages the backend already
+defines — `NO_BID` (declined), `CONVERTED` (won and turned into a project) and
+`LOST` — so only a pursuit still in play is offered as a target to file a matrix,
+a return or an addendum against. A submitted bid awaiting its award stays `BID`
+and is still offered, which is correct — it is still live until its outcome is
+recorded; recording won/lost moves it out. (`frontend/pages/pipeline.js`.) Note
+for the record: the misfiled matrix itself is not destructive — it is internal
+analysis bound to the wrong invitation, and it changes nothing that was submitted
+to the buyer; the remedy is to re-read against the right invitation, and the wrong
+analysis is ignorable clutter the append-only record keeps rather than deletes.
+
+**Issuing the pack no longer hides the thing you issued.** The submission reader
+on the pipeline screen — where the drafted answers are read, copied and, most of
+all, *downloaded as the branded PDF* — was built from the open packs only, and
+"open" excludes an issued one. So the workflow dead-ended at its last step: click
+"Issue the pack", and the pack dropped out of the reader and the "Download
+submission (PDF)" button vanished with it — at the exact moment somebody needs
+the clean, frozen record of what was sent. The reader now includes issued packs,
+marked `issued · read-only`: the prose can be read, copied and downloaded, the
+per-section **Edit** button is withheld (the backend refuses an edit on an issued
+pack anyway), and the section *chooser* that offers an answer to write to or
+record a use against still excludes issued packs — an answer cannot first go out
+on a submission that has already gone. `frontend/pages/pipeline.js`; the
+`submission.pdf` route never gated on status, so the download works for an issued
+pack as-is.
+
+And the button to issue was in the wrong place to find. "Issue the pack" lived
+only in the response-pack command bar, two sections above the red team — but the
+red team is where a bidder spends the last hour, deciding each high finding, and
+when the last one is cleared the step after it is to issue. From there the button
+was off-screen, and a bidder who had done everything right could not find the one
+control that finishes it. "Issue the pack" is now repeated in the red-team command
+bar, next to "Record a decision on a finding" — same command id, same gate, so it
+still refuses unless the pack is complete and the review clears. The page's
+command dispatch is view-wide delegation over `[data-command]`, so the repeated
+button needs no new wiring.
+
+**And the pack stopped demanding an essay for things that are not essays.** This
+was the real failure, and a first bidder named it exactly: "a pure distraction
+and time waster [that] will make no one … pay to suffer." Planning a response
+pack turned *every* compliance-matrix line with no evidence attached into a
+"write an answer" section — so a priced schedule (flat roof, provisional sums),
+the submission logistics (the In-Tend portal, the file formats, the return
+deadline) and the commercial terms (the payment schedule) all arrived as blank
+essay questions, twenty-six of them on one pack, for a tender that was already
+priced and submitted. None of those is answered by prose: the price is in the
+priced schedule (Appendix B), the portal is the portal, the date is a date, the
+commercial terms are in the quotation. `needsProse` no longer means "has no
+evidence"; it means "is a written answer an evaluator reads and marks" — a scored
+question whatever its category, or an unscored requirement in one of the
+narrative categories (quality, technical, social value, environmental,
+programme, health & safety) — and still only where the platform does not already
+hold a document that answers it. A submission, qualification, insurance or
+unscored commercial line is satisfied by its own mechanism and is not dragged
+into the pack. `bidresponse.test.ts` pins each case; the whole suite is unchanged
+and green, because the existing fixtures answer scored questions, which still
+draw a section.
+
+**A job issues one quotation, not five.** A tender goes out as a single priced
+offer, but nothing stopped drawing up another and issuing it, so the first real
+bidder ended up with five numbered quotations for one job. `quoteFromEstimate`
+now refuses to draw up a quotation while an issued one already stands for the
+same project — a revised price *supersedes* it rather than taking a second
+number (`quotation.test.ts`). Drafts before anything is issued are left alone, so
+an abandoned draft is no obstacle. And "Open a draft" on Site Documents now says,
+on the document-type field, that a quotation is drawn from a priced estimate via
+"Draw up the quotation" — so it is not opened as the blank shell that goes out
+empty (`frontend/pages/documents.js`).
 
 The estimate route's schema also required `basisOfEstimate`, which its engine
 took and the schema never listed: a caller could produce an estimate whose
@@ -25497,9 +27525,109 @@ for the compliance matrix is told this job does not want one, instead of finding
 a screen that refuses without explaining.
 
 **Every outstanding step names what to do**, not only what is missing, and which
-screen does it; a test fails if one does not. The panel is on Pipeline & Bids
-and Tender & Procurement, reading one endpoint, holding no rule of its own — the
-same reason the console holds no copy of the permission matrix.
+screen does it; a test fails if one does not. The detailed panel is on Pipeline &
+Bids and Tender & Procurement, reading one endpoint, holding no rule of its own —
+the same reason the console holds no copy of the permission matrix.
+
+**The headline next step, on a submission, is the submission — not the pricing
+road.** The two roads run in parallel and the pricing road is listed first, so
+the first ready step across both was a pricing one: a bidder who had just read
+an invitation into a matrix was told the next thing to do was *"file the pack /
+measure the drawings"* — a road that does not even apply to a tender priced from
+a schedule rather than a take-off. For a `wantsSubmission` job the headline now
+prefers the submission road (the pricing steps stay in the list, they are just
+not what a just-read tender is told to do first). And **planned is not written**:
+`RESPONSE_PACK` is `DONE` only when a pack exists and every section carries prose
+(`writtenAt`); a pack planned with its sections still blank reads *"N of M
+sections written"* and stays the next step — the guide no longer reports an empty
+pack as a written submission and send the bidder on to attack it
+(`backend/src/domain/bidflow.ts`; `bidrun.test.ts` pins the submission-first
+headline and the planned-not-written step).
+
+Two more conflations tidied in the same step logic. **Recorded is not owned:**
+the return register is `DONE` only when every mandatory return has an owner, a
+source and a date (the board's own blocker rule); while any is open it reads
+*"N recorded, M mandatory returns still without an owner, a source or a date"*
+and stays the next step (door **Assign a return**), so the guide no longer calls
+the register done while the board shows returns blocking. And the matrix step no
+longer reports the **raw analysis-record count** — a tender read one document at
+a time holds a dozen superseded fragments, and *"21 compliance matrices on file"*
+counted those; it is a binary step and now reads *"a compliance matrix is on
+file, built from the confirmed reading."*
+
+### The guided walkthrough, on every screen and from an empty account
+
+`bidflow.ts` answered "what now?" well, but only on the four screens a job's road
+runs through, and only once a job existed. The person who most needs the map —
+a brand-new subscriber with no company facts and no job — saw nothing, because
+there was no project for the flow to read, and the panel sat two-thirds of the
+way down pages they had no reason to be on. *"There but not enough"* was the
+verdict.
+
+`domain/journey.ts` (`guidedJourney`) wraps `bidflow.ts` rather than restating
+it. Two stages come first, and they are facts about the **tenancy**, not the
+project: is the company's own record filled in, and is there a job open to work
+on. Once a job is open its `bidFlow` steps are folded in unchanged — one
+implementation of the pricing-and-submission road, one thing to drift — so the
+journey only adds the stretch of road before that road begins. Setting the
+company up is the matrix's prerequisite, so it stays the next step even when a
+job is already open and unmatrixed.
+
+`GET /v1/journey` is tenant-scoped, so it answers on a brand-new account with no
+job; pass `?projectId` and that job's flow is folded in, computed against the
+job's own context. A stale or forbidden project id does not fail the strip — the
+route swallows only `NotFoundError`/`ForbiddenError` and degrades to the setup
+stages, because advisory guidance that 500s is worse than guidance that narrows.
+The operator layer is barred (`ACCOUNT_LAYER_SEPARATION`): an operator runs the
+estate, not a bid.
+
+The frontend mounts a slim accent-washed strip (`lib/guide.js`, `guideStrip` +
+`loadJourney`) above the view in the shell, on **every** screen, before the
+no-project and not-authorised guards can return early — which is exactly the
+zero-state where it is most needed. It shows the one next step with the button's
+own words and a "Go to …" control that navigates by the same `data-nav`
+delegation the sidebar uses, and expands to the whole journey. It holds no rule;
+every step, its screen and its door are server-computed. Covered by
+`journey.test.ts` (the engine: empty account → company facts → open a job → the
+job's folded-in road, and the degrade) and `api.test.ts` (the endpoint through
+real HTTP: setup-only, job folded in, degrade on an unreadable id, operator
+refused). The per-screen detailed panel on the two flow screens stays, with the
+strip as the always-present header above it.
+
+### Ask for help — free first, paid on request
+
+*"If struggled, user can ask this guide and it supports them, using their own
+ACUs."* The guide strip now carries a **"Stuck? Ask for help"** button beside
+the next step. It seeds the existing **Copilot** (`pages/copilot.js`,
+`POST /v1/projects/:projectId/ask`) with the step the person is on — `app.js`
+stashes the seed on `state.askSeed` and the Copilot reads and clears it on load
+— so a stuck subscriber arrives with their question already asked rather than a
+blank box. Nothing new was built for the free answer: the Copilot was already
+wired, grounded in project state, and **free** (`acuConsumed: 0`, no provider
+called).
+
+The paid half is `conversation.explainPlainly` behind
+`POST /v1/projects/:projectId/ask/explain` (`ai: GUIDE/guide_explain/REASONING`,
+so `/v1/ai/quote` prices it). It grounds on the free answer first — the model is
+handed the facts the platform already derived and the next step it already
+chose, and told to explain **those** in plain English, so it invents no figure
+or deadline. It runs through `runAI`, which reserves, runs and only then debits
+the tenancy's own ACU wallet; a run that fails is never charged. On a deployment
+with no reasoning provider it refuses with `NO_REASONING_PROVIDER` **before**
+charging — a plain-English explanation attributed to reasoning that never
+happened is the same dishonesty the bid drafter refuses — and the free grounded
+answer is there regardless. A new `GUIDE` engine (`name: 'Guide'`,
+`ALL_PHASES`) was added to the orchestrator's `Engine` union, `ROUTING_MATRIX`
+and `ENGINE_CONTRACTS` for it to route and price through.
+
+The console offers the paid rewrite (`pages/copilot.js`, an "Explain this in
+plain English (uses ACUs)" chip under each answer) **only** outside `AI_MODE=local`,
+so it is never a button that would always refuse. Covered by `api.test.ts`: the
+action is quotable and metered (`estimatedChargeMinor > 0`), the stand-in is
+refused before a single ACU is spent (wallet balance and held both unchanged),
+and the same question is answered for free from state (`acuConsumed: 0`). The
+live-provider prose path cannot be exercised in this environment and is not
+claimed as tested — only the refuse-before-charge and quote paths are.
 
 ### Naming the step and not the door
 
@@ -25893,6 +28021,25 @@ hard-coded into an engine stays invisible until it is wrong for somebody's
 market. The figure feeds the construction-period field and seeds the WBS
 generator's `targetDurationDays` — so "how long is this job" is answered from
 the works, and then a person confirms it.
+
+**Auto-filled from the priced bill.** The two figures the estimate rests on — the
+net measured works and the number of trade phases — were still typed in by hand,
+which is the one thing the measurement already holds the moment the bill is
+priced. `programmeDurationBasis` reads them off: the net measured works is the
+direct cost summed across the project's priced schedules, and the trade-phase
+count is the number of distinct work-section codes that carry a priced line.
+`GET …/programme/duration-basis` serves them, and the `Estimate the programme
+duration` command fills its two fields from them before it opens, so the common
+case is a glance and one press rather than retyping a total off the bill.
+`proposeProgrammeDuration` takes both figures as optional and defaults each to the
+basis when omitted — a figure the estimator does pass still wins, so trying a
+different works value or phase count is one edit — and refuses with
+`MEASURED_WORKS_NOT_PRICED` where nothing is priced yet, rather than estimating a
+fortnight from a zero. The command dispatcher gained a general `prepare` hook
+(`frontend/pages/procurement.js`) that reads state and pre-fills a command's
+fields before it opens, cloning the shared spec rather than mutating it.
+Proven in `programmedurationbasis.test.ts` (the not-priced refusal, the direct-cost
+and distinct-section basis, the derive-equals-explicit path, and the override).
 
 ### The bill, rolled up by section
 
@@ -28820,20 +30967,22 @@ into a delivery project carrying the thread.
    in front of the next. The factors, the scale and what each end of it means
    come from `/v1/pipeline/criteria` rather than a second list in the browser.
 
-3. **A read invitation could never be cleared to bid.** Every mandatory return
-   must carry an owner, an internal date and a source before the decision to bid
-   is accepted. A reading files what the buyer asked for and *cannot* file the
-   first two — neither is in the buyer's document; they are this business
-   committing its own people — and `addDeliverable` refuses a reference already
-   on the invitation, correctly. The gate therefore named blockers **nothing in
-   the platform could clear**, to somebody with a return date coming. New:
+3. **Assigning a return is where this business commits its own people.** Every
+   mandatory return carries an owner, an internal date and a source. A reading
+   files what the buyer asked for and *cannot* file the first two — neither is in
+   the buyer's document; they are this business committing its own people — and
+   `addDeliverable` refuses a reference already on the invitation, correctly. New:
    `TENDER_DELIVERABLE_ASSIGNED`, `assignDeliverable`,
    `POST /v1/pipeline/tenders/:invitationId/deliverables/assign` and an
-   `Assign a return` panel. It assigns the three things the gate asks for and
+   `Assign a return` panel. It assigns the three things the submission needs and
    nothing else: it cannot rename a return, make a mandatory one optional, or
    move a limit the buyer set, because those come out of the invitation and
    correcting them is a re-reading or an addendum. Human-authored by
-   construction — no AI mandate on the event.
+   construction — no AI mandate on the event. **This is no longer a gate in front
+   of the bid decision** (see "The decision to bid is a commercial go/no-go"
+   above): deciding to bid needs only the invitation read, the returns are
+   assigned afterwards, and the submission gate (`issueBidResponse`) is what holds
+   the line on completeness.
 
    Found with it: `TenderPosition` published a *count* of the return register
    and not the register. The one list a bid manager works from for the fortnight
@@ -30803,3 +32952,1450 @@ remains as a named follow-up vertical.
   `activateOperations` refuses with `ACCEPTANCE_CONDITIONS_LAPSED` (naming the
   expired conditions and saying to re-decide) rather than raising maintenance
   obligations off a lapsed acceptance. Covered in `handoveracceptance.test.ts`.
+
+## 2026-11 live-use fix — command forms that posted their path parameter
+
+A real subscriber recording a client's clarification answer hit `"clarificationId
+is not a permitted property"` and could not save. The cause was a whole class of
+defect, not one form. A command form in `frontend/pages/*.js` builds its request
+body from every `fields[]` entry (`frontend/lib/command.js`, `collect` →
+`api.post`), unless a `transform` reshapes it. Several forms carry a `select`
+field whose only job is to name the entity in the URL — `clarificationId`,
+`planId` — and those routes are locked with `additionalProperties: false`,
+listing only the real body fields. With no `transform` to strip the id, the form
+posted it in the body and the route rejected the whole request before anything
+saved. The feature worked in every test, because the tests call the domain
+functions directly and never send the offending body.
+
+A JS-token-aware sweep of all 190 function-path forms found three missing the
+strip (the other 187 already destructure their path param out):
+
+- **`Record the client's answer`** and **`Withdraw a clarification`**
+  (`procurement.js`) — leaked `clarificationId` to
+  `…/tender-clarifications/:id/record-answer` and `…/withdraw`. Both now
+  `transform` it out, exactly as the neighbouring `Issue answer` form already
+  did. This is what blocked the SHDC TQ-01…TQ-06 answers.
+- **`Agree an inspection and test plan`** (`construction.js`) — leaked `planId`
+  to `…/quality/plans/:planId/approve`. Same one-line `transform`.
+
+No backend or schema change: the routes were already correct to refuse an
+unexpected property. The matching regression gap was in `ittreading.test.ts` —
+`"refuses to confirm without the value and the duration"` still asserted the old
+contract, from before value/duration were made optional on the perception
+confirm (the estimator cannot give a contract value before the take-off). It is
+rewritten as `"confirms without a value or a duration, and invents neither"`:
+the reading confirms into a matrix, the terms are still assessed (a
+fitness-for-purpose bar still ends the bid), and `complianceMatrix` reports
+`sizedFrom: 'NONE'` with no invented value or duration.
+
+## 2026-11 page-range take-off — reading one bundle a few sheets at a time
+
+A real tender does not arrive as a folder of drawings. SHDC's came as four
+files, and the one that carries every drawing — "ITT Appendix A – Focus
+Consultants Tender Documentation" — is a single **360-page** PDF: pre-construction
+information, a CCTV drainage survey, the Structural Engineer's Report, an asbestos
+survey, planning documents, manufacturer details. The foundation detail the
+take-off needed was 600mm mass concrete strip at 2.0m, stated on three sheets of
+the SE Report inside that bundle.
+
+The take-off could not read it, and was right not to try. A PDF is sized at
+2,000 tokens a page (`remote.ts`), so 360 pages is ~720k tokens — past every
+cleared model's window but one, and `adapterFor` refuses it with
+`AI_INPUT_TOO_LARGE` rather than send it. On the one model large enough it would
+have been worse: a measurement hunted across 360 unrelated pages. The scope was
+not missed because the reader failed; it was never handed the pages.
+
+**`extractPdfPages(bytes, from, to)` (`pdftext.ts`)** carves a page range out of a
+bundle into a new, smaller PDF. It rebuilds rather than overlays — an incremental
+update that leaves the other 357 pages physically present is refused by a provider
+that counts a file's pages by what it contains, not by what its catalogue reaches.
+The kept pages are copied with the transitive closure of everything they
+reference (fonts, images, form XObjects, colour spaces), their inherited MediaBox
+and Resources inlined so they still render once lifted out of the tree, every
+reference renumbered, `/Length` made literal, and a clean xref written. It reuses
+the existing parser (`PdfFile`, now with `pageObjectNumbers`, `catalogEntry`,
+`inheritedAttrs`); it does not decrypt, and it refuses an encrypted file, a file
+with no page tree, or a range outside the document by name (`PdfPageError`).
+Proved in `pdfpages.test.ts` against a multi-page fixture with inherited geometry,
+a shared font and an image: the slice holds exactly the selected pages and the
+resources they use, and nothing else.
+
+**The take-off takes an optional page range.** `perception.extract` accepts
+`pages: { from, to }`; for a PDF it slices first and sends — and sizes — only the
+slice, so a bundle whose whole is refused is read a few sheets at a time. The
+source hash still names the file the pages came from, and the range is recorded in
+the draft's payload. The perception route gained `fromPage`/`toPage` (both or
+neither), and the design-page take-off list shows a page box beside every held
+PDF ("pages e.g. 7-19", blank for the whole file). A range on a non-PDF, or
+outside the document, is `PERCEPTION_PAGE_RANGE`, refused before anything is
+charged. Covered in `perception.test.ts`: the provider receives only the selected
+pages, the whole file when no range is given, and neither a bad range nor a
+non-PDF reaches a charge.
+
+The cost not paid down: the slice is sent whole to the provider, so a range out
+of an 18MB bundle still sends a slim file built from those pages, not the 18MB.
+
+**The AI finds the pages — `scanPdfBundle` (`pdftext.ts`).** Naming page ranges by
+hand is the take-off's job, not the estimator's, so a bundle is scanned into
+sections first. It prefers the file's own **outline** — the bookmarks a tender pack
+carries, e.g. "Appendix 3 – Structural Engineers Report" at page 194 — resolving
+each bookmark's destination to a real page through the same page order the reader
+uses (`pdfOutline`, UTF-16BE titles decoded), and annotates each section as
+drawings, text or mixed from a per-page visual/text profile (`pdfPageProfiles`:
+few words, an image, or a stated scale reads as a visual sheet). Where there are no
+bookmarks it falls back to the runs of visual pages it can see, named by their page
+numbers. It reads and charges nothing — no provider is called; the person still
+chooses what to measure. `perception.scanBundle` adds the authorisation and file
+fetch (`BOQ_TAKEOFF` R, PDF only — `PERCEPTION_NOT_A_BUNDLE` otherwise); the route
+is `POST …/perception/bundle-scan`. On the design page, **Scan bundle** beside a
+held PDF lists the sections with a reads-as badge and a **Measure quantities**
+button on each drawings/mixed section, which runs the page-range take-off on that
+range — so the estimator clicks the structural section rather than hunting for page
+194. Covered in `pdfpages.test.ts` (bookmarks read into named ranges with the right
+kinds; visual-run fallback with none; empty for a file with no pages) and
+`perception.test.ts` (scan finds sections and charges nothing; a non-PDF is
+refused).
+
+What is still the person's call, by design: *which* sections to measure. The scan
+proposes; the governance rule that a human owns the numbers means it does not
+measure the whole bundle on its own. What is not built is automatic
+bundle-splitting at ingest.
+
+## 2026-11 one job, one package — a same-looking name never splits the bill
+
+**The defect.** A work package is a free-typed name, and the bill filed items
+under whatever string was entered. Two readings of one job entered at different
+times — one confirmed off a model, one keyed by hand — were filed under names
+that read identically on screen but differed by a character a human cannot see: a
+hyphen typed for an em dash, a trailing or non-breaking space, a different
+capital. The bill then held *two* packages for one job, and because an estimate
+prices one package at a time (`item.packageId === v.packageId`), every line in the
+second package was left out of the price with nothing to show it missing — a
+£62.4k estimate that silently omitted six measured lines, and a "Work package"
+dropdown showing the same name twice with no way to tell them apart.
+
+**The mechanism, found in the field.** The "Enter measured quantities" package
+field was a text input with a `<datalist>` of existing packages. The browser's own
+autofill ("Saved data") rendered *over* that datalist and offered the forked
+variants the person had typed before, so the platform's real list never appeared
+("there is nothing in the drop list") and the person picked a near-identical
+browser-remembered string. Autofill was the fork's actual engine.
+
+Fixed at three levels, so it is solved and cannot recur:
+
+1. **Prevented at entry (UI).** When any package exists, "Enter measured
+   quantities" offers a real `<select>` of the live packages — each labelled with
+   its live item count, so two same-named packages read as "… · 43 items" and
+   "… · 6 items" — plus one "＋ A new package — name it below" option and a
+   companion name field. A `<select>` cannot be populated by autofill. Browser
+   autofill is also switched off on every command input, select and textarea
+   (`autocomplete="off"` in `command.js`), so "Saved data" never again sits over a
+   platform list. The first package on an empty bill is still a plain text field.
+
+2. **Prevented at the source (engine).** `resolvePackageId` (`tender.ts`) snaps a
+   requested package name to an existing live package when it matches after
+   normalising the differences a human cannot see (`normaliseKey`: dash variants
+   → hyphen, any whitespace run incl. NBSP → one space, trimmed, lower-cased).
+   `runTakeoff` resolves `input.packageId` through it before writing, so *every*
+   entry path — the manual form and the model-confirm path alike — reuses the
+   exact existing id rather than forking. A genuinely new name still opens a new
+   package.
+
+3. **Repaired where it already forked.** `movePackageMeasure` (`tender.ts`) re-files
+   every live line of one package under another, keeping quantities and cost
+   codes, with a reason against the move — a new `BOQITEM_REPACKAGED` event
+   (`UPDATE`, `aiAllowed: false`: which package a priced line belongs to is a
+   commercial judgement). Route `POST …/tender/boq/move`; on the bill it is "Move
+   a measure to another package", offered only when more than one package exists,
+   with count-annotated source/destination dropdowns. Nothing is created or
+   deleted — the same append-only rule as retiring a measure. Refuses an empty
+   source (`NOTHING_TO_MOVE`), a move into itself (`SAME_PACKAGE`) and a missing
+   reason (`MOVE_REASON_REQUIRED`).
+
+Covered in `estimating.test.ts` ("One job, one package"): a second reading whose
+name differs only by dash, space and case snaps to the first package rather than
+forking; a genuinely-different stray package is moved into the home package with
+its line's quantity and cost code intact, and moving twice, or into itself, or
+without a reason, is refused. `pricingline.test.ts` (the BoQ routes end to end)
+and `typecheck` stay green.
+
+What is not changed: an estimate still prices one package, which is correct — one
+job is one package. The fix makes one job *stay* one package, and gives a way back
+when an older bill did not.
+
+### Per-line retirement — clearing a few stale lines without nuking the package
+
+Once a job is consolidated into one package, "Retire a package's measure" became
+too blunt: a bill holding the real measure plus a few stale lines — an empty
+placeholder left when the real line was measured under another cost code, or a
+line entered twice — could not be cleared line by line, because retiring the
+package would take the good lines with it. `supersedeItems` (`tender.ts`) retires
+named lines by `boqItemId` using the same `BOQITEM_SUPERSEDED` event and the same
+append-only rule; everything not named is left standing. Route
+`POST …/tender/boq/retire-items` (`boqItemIds[]` + reason); on the bill, "Retire
+specific lines" opens a checklist of the live lines (code · description ·
+quantity) so the stale ones are ticked off. Refuses an empty selection
+(`NO_ITEMS_SELECTED`), a missing reason (`SUPERSEDE_REASON_REQUIRED`) and a set
+where nothing still stands (`NOTHING_TO_SUPERSEDE`). Covered in
+`estimating.test.ts`: two zero-quantity placeholders retired out of a three-line
+package leave the one real line standing, and retiring them again finds nothing.
+
+### Multiselect labels were invisible, and a one-click clear for zero-quantity lines
+
+Two fixes to the retire-lines flow found in real use:
+
+- **Multiselect labels rendered as a near-invisible void.** A checkbox list's row
+  `<label>`/`<span>` inherited the form's `.field label` rule (9.5px, uppercase,
+  letter-spaced, dim `--text-3`) — right for a field *caption*, wrong for an option
+  label — so a 49-line checklist read as an empty box with faint boxes in it. The
+  multiselect rows now carry explicit body type and full-contrast colour
+  (`command.js`), so every checklist (the cost-head exclusions as well) is legible.
+- **Clearing the £0 lines is now one click.** Ticking six placeholders out of a
+  fifty-line checklist is the wrong tool for an exact, machine-known set. "Clear the
+  lines priced at nothing (N)" on the bill retires every live line measured at zero
+  quantity in one action, with a pre-filled reason and the affected cost codes named
+  in the panel; it reuses the `retire-items` endpoint with the zero-quantity set
+  computed in the browser. The general "Retire specific lines" checklist stays for
+  the non-zero cases.
+
+## 2026-11 a fee bid with no drawings can be priced — the guide no longer dead-ends
+
+Reported live as **"I cannot see how to price"** on a professional-consultancy DPS.
+The bid flow's pricing road (`backend/src/domain/bidflow.ts`) is modelled as *file
+drawings → measure them → price the bill*, and its `MEASURED` step was hard-gated
+on a drawing: with none filed it went `BLOCKED` with no door and the message "a
+drawing has to be filed before anything can be measured off it". A fee or services
+bid — a consultancy tender, a schedule of rates, a lump sum — has **no drawings at
+all** and is priced entirely by hand, so the whole pricing road was unreachable.
+
+The manual take-off already exists ("Enter measured quantities" on the procurement
+screen, `BOQ_TAKEOFF:C`, free-form `description | unit | quantity` lines — a single
+`Fee | item | 1` line is a valid bill). The flow was simply never offering its door
+without a drawing. Now, when there are no drawings but the job is real (an invitation
+is recorded or files are filed), `MEASURED` is `READY` and its door is "Enter
+measured quantities" → `measured-takeoff` on `procurement`; entering a bill lights up
+`ESTIMATED` ("Price the bill") as before. A genuinely empty project (nothing filed,
+no invitation) still waits at `BLOCKED` for the pack to be filed first, so the clean
+"start here" narrative is unchanged. Covered by a new `bidrun.test.ts` case (invitation
+recorded, no drawings → `MEASURED` ready with the by-hand door) and the existing
+empty-project case (still blocked).
+
+Not in scope of this fix, recorded as still-open: for a submission-road tender with
+files but no drawings, `PACK_FILED` stays `READY` ("re-read for a drawing") rather
+than advancing, so the *headline* next-step can still point back at the pack while the
+pricing door sits open in the strip below it — reachable, but not yet the headline.
+
+## 2026-11 re-reading an ITT no longer wipes the bidder's return assignments
+
+A data-loss bug in the return register (`backend/src/domain/tenderintake.ts`,
+`extractRequirements`). A reading of the ITT files the return deliverables; the owner,
+our internal date and the source are the bidder's resourcing decisions, assigned
+afterwards and never present in the buyer's document. `extractRequirements` replaced
+the whole `deliverables` array with the freshly-read set, so **re-reading the ITT after
+assigning the returns silently un-assigned every one of them** — the owner/date/source
+were gone, and the guide and the bid gate both read the register as "nothing assigned"
+on a register the bidder had already owned in full. (Consistent with a live report of a
+guide stuck on "Assign a return" over a board that showed every return owned, dated and
+sourced.) The re-read now merges by reference: the buyer's side (title, mandatory,
+format) refreshes, the bidder's assignments (owner, internal date, source) are carried
+across. Covered by a new `tenderintake.test.ts` case (read → assign → re-read → the
+owner, date and source survive while the title refreshes).
+
+## 2026-11 a professional-services fee can be priced by day-rates
+
+The pricing-door fix made the by-hand bill reachable, but a consultancy fee still had
+no honest path: the only way was to enter a dummy measured line and fight the twenty
+construction cost heads. `tender.priceDayRateSchedule` (`backend/src/engines/tender.ts`)
+is the schedule-of-rates path — resource lines (a role, the days, the day-rate), with
+optional disbursements carried at cost. Rather than a parallel pricing engine it reuses
+the two steps a construction bid already uses: it files the resource lines as a by-hand
+person take-off (`runTakeoff`, so they appear on the bill and in the pricing schedule
+like any other line), then prices them through the same cost model (`buildEstimate`) —
+own labour at the day-rates into `DIRECT_WORKS`, every construction head excluded, and
+disbursements as fixed sums added after margin and never marked up. Overhead and profit
+are excluded when the rate is all-in (the default) and priced only when the bidder sets
+a markup — without that, a nil margin left both heads zero-but-expected and the estimate
+came back `INCOMPLETE`. The result is an ordinary complete estimate, so the quotation,
+pricing schedule, Appendix B export and PDF all follow unchanged. Exposed as
+`POST /v1/projects/:projectId/tender/fee-schedule` and a **"Price as a fee (day-rates)"**
+action beside "Enter measured quantities" on the procurement screen. Covered by
+`estimating.test.ts` (a fee estimate completes with no omissions and totals labour +
+disbursements; empty/zero-day/zero-rate lines are refused).
+
+**Day counts are optional — a rate card is what a framework/DPS actually tenders.**
+Reported live: a bidder pasted an 18-role day-rate schedule (role + rate, no day counts)
+and the path refused it ("must contain at least 1 item") because every line without a
+middle `days` column was dropped. On a DPS the bidder tenders the *rates* and the buyer
+applies them to its own call-off volumes, so forcing committed days was wrong. `days` is
+now optional at every layer — the engine (`DayRateResource.days?`), the route schema, and
+the frontend parser (which accepts `role | rate` as well as `role | days | rate`). A line
+with no days prices at one person-day so the rate itself is what the pricing schedule
+carries, and when every line is a rate the estimate's basis says "Schedule of rates …
+not extended to committed day counts" so the total (the sum of the rates) is never read
+as a committed fee. An explicit day count of zero is still refused. Covered by
+`estimating.test.ts` (a three-role rate card with no days completes, totals the rates, and
+is labelled a schedule of rates).
+
+## 2026-11 the red team's evidence lens no longer looks in the wrong drawer
+
+Reported live on a contract-heavy DPS: ~57 high "X asks for evidence nothing answers"
+findings, one for nearly every contractual clause. The evidence lens
+(`backend/src/domain/redteam.ts`, `evaluatorFindings`) fired for every matrix line
+carrying `evidenceRequired` with no covering claim in the register — but it never
+looked at whether a **drafted response section already answered that reference**. A
+contractual obligation ("Complete the Services with all reasonable skill and care") is
+met in a bid by a **method statement**, which the bidder writes as a section; the
+claims register proves *documentary* assertions (an insurance certificate, a CV, a
+policy) and was never where a method statement lives. So clauses the bidder had written
+full answers for were reported as unevidenced — the lens looking in the wrong drawer.
+
+Fix: a reference with a written (DRAFTED, non-empty) response section is not reported
+as unevidenced. A genuinely documentary line with no section and no claim still fires,
+and the returnables register still tracks the documents a return must carry. Covered by
+a new `redteam.test.ts` case (a clause with a drafted section is not flagged; the same
+clause with no section still is). Recorded as still-open: the ITT analysis sets
+`evidenceRequired` on contractual *acknowledgements* too (terms a bidder accepts rather
+than answers), so references with neither a section nor a claim can still over-report on
+a terms-heavy agreement — that is an `analyseITT` extraction question, not a lens one.
+
+**Extended (same area):** a reference answered by a **confirmed compliance undertaking**
+is no longer reported as unevidenced either. Many contractual clauses are answered not by
+a method-statement section but by a declared statement — the "We confirm that, if awarded …,
+we will meet this requirement in full" undertakings the bidder confirms one by one. The
+lens never saw them, so a bidder who had confirmed every undertaking still faced a wall of
+"nothing answers" findings for exactly those clauses — the work they had already done went
+unrewarded. `itt.ts` now exports `confirmedUndertakingReferences`, `challengeSubmission`
+passes them to the lens as `undertakingRefs`, and a reference with a confirmed undertaking
+counts as answered. On a terms-heavy DPS this clears the bulk of the remaining evidence
+findings. Covered by a `redteam.test.ts` case (a confirmed clause is not flagged; an
+unconfirmed one still is).
+
+## 2026-11 a document filed once answers the same clause on every bid
+
+The real shape of "don't ask me for the same thing every time". Claims are already
+stored tenant-wide — the `Assert a claim` route runs on the governance scope, so a
+certificate filed on one bid is on the business, not that bid. Two things broke the
+reuse, and both read to the bidder as "I filed it and the warning will not clear":
+
+1. **The red team read the wrong scope.** `challengeSubmission` runs on the tender's own
+   project and read claims from *that* project (`evidenceRegister(ctx)`, project-scoped) —
+   where there are none, because claims live on governance. So it reported "evidence
+   nothing answers" against every requirement however many certificates the company had
+   filed. Fixed: it now reads claims tenant-wide (`ledger.listByTenant(tenantId,
+   'EvidenceClaim')`), which is also what makes a document linked on one tender answer the
+   same clause on the next. Proven by a cross-scope `redteam.test.ts` case — a pack on a
+   real project, a claim on governance: unlinked the finding stands, linked it clears
+   (the governance-scoped harness could never have caught this, which is why it shipped).
+
+2. **A held claim could not be linked to a requirement after assertion.** `covers` was only
+   ever set at assert time; the matrix *proposed* a match ("Consider linking: EVC-0002")
+   but there was no command to confirm it, so the proposal was a dead end. New
+   `linkClaim` (`backend/src/domain/evidenceclaim.ts`) adds requirement references to a
+   held claim's coverage (`EVIDENCE_CLAIM_LINKED` event, `POST
+   /v1/evidence/claims/:claimId/link`, a **"Link held evidence"** action beside "Assert a
+   claim"). Covered by `evidenceclaim.test.ts` (adds references, idempotent, refuses empty
+   / unchanged / rejected).
+
+Together: file the document once (tenant-wide already), link it to each tender's
+requirements as they ask, and the red team — reading where claims live — clears the
+finding. No re-filing per bid. `evidenceCoverage` already read tenant-wide (it runs on
+the governance scope), so the matrix's proposals and the red team now agree.
+
+## 2026-11 CONSTRUX AI Gateway — provider-neutral routing (IN PROGRESS)
+
+Built to the *CONSTRUX AI Provider Gateway* developer spec v1.0: one provider-neutral
+boundary ("CONSTRUX AI") where business modules name a **task**, never a vendor, and
+the gateway picks the provider from a versioned policy. Users never see OpenAI, Gemini,
+Claude or Vertex; provider identity, routing and cost stay administrative. It **reuses**
+the existing orchestrator (adapters, health/circuit-breaker, data-sensitivity clearance,
+ACU funding, Golden-Thread provenance) rather than replacing it.
+
+**Increment 1–2 — canonical contract + versioned routing policy (done).** New module
+`backend/src/ai/gateway/`:
+- `contract.ts` — the canonical, provider-neutral types: the **14 task profiles** (spec
+  §5), `AITaskRequest`, the **user-safe** response (findings, evidence, limitations and a
+  confidence *band* — and, by construction, **no provider, model or raw cost**), the
+  separate **admin route record** (which does name them), the request **state machine**
+  (§6.1) and the error catalogue (Appendix A). `GatewayProvider` includes `VERTEX` so the
+  policy is complete; `providerIsWired` marks it deferred (OpenAI/Anthropic/Gemini are the
+  wired trio).
+- `taxonomy.ts` — the **versioned** (`POLICY_VERSION`) routing matrix: each task profile's
+  primary provider, **task-specific fallback** chain (not one universal sequence, spec §10),
+  modality, risk tier and required validations, plus the provider-role policy (Gemini sees,
+  Claude reasons, OpenAI acts, Vertex governs).
+- `router.ts` — builds the route plan primary-first, keeping only **wired, healthy and
+  cleared** providers and **recording why each other was skipped** (P08 no silent fallback);
+  an empty plan means **fail closed** and refer to a human (P07) rather than fabricate.
+- `policy.ts` — §11 human approval and prohibited actions: `assertGrantAllowed` refuses a
+  tool grant naming a consequential capability (approve/certify/sign/pay/issue/award/alter
+  baseline/delete ledger); `screenInstruction` flags an instruction that asks the gateway to
+  *perform* one; `approvalRequirement` makes a human gate mandatory for consequential tasks
+  (and material ones that opt in), reusing the platform permission matrix for the approver's
+  authority.
+Proven by `tests/aigateway.test.ts` (routing per the spec's AT-01/02/04/05/06, Vertex
+skipped cleanly, the state machine, approval classification).
+
+**Increment 3 — the request lifecycle service (done).** `gateway/service.ts`'s
+`runGatewayTask` drives a canonical task through the whole §6 lifecycle — received →
+policy-checked → routed → run (walking the task-specific fallback chain, recording every
+attempt) → validated → either `AWAITING_APPROVAL` (a consequential output is a proposal,
+never auto-committed) or `COMPLETED` — emitting a `construx.ai.*` event at each transition.
+It composes the Inc.1–2 pieces and executes through an **injected seam** (`GatewayExecutor`)
+so the logic is pure and fully tested: a prohibited instruction is refused before any
+provider runs, no eligible route fails closed with nothing fabricated, an empty wallet
+contacts no provider, a failed required validator fails closed, and **the user-safe response
+never carries a provider, model or cost** (the admin record does). Covered by the service
+tests in `tests/aigateway.test.ts` (AT-04/05/06/07, wallet, validators, event emission).
+
+**Increment 3b — the canonical endpoint + the production executor (done).**
+`gateway/executor.ts`'s `orchestratorExecutor(ctx)` is the one place the provider-neutral
+gateway meets the real `AIOrchestrator`: it **reuses** `orchestrator.execute` (adapter
+selection, ACU reserve/settle, the provider call) rather than re-implementing any of it,
+forces the gateway's chosen provider by passing every *other* wired provider as
+`avoidProviders`, settles the ACU hold on success, and normalises the vendor reply into the
+canonical `UserSafeResult` — a summary, a confidence **band** (not the raw number) and
+source-anchored evidence — with the provider name, model and raw cost kept on the admin
+record and never crossing to the user. A deterministic stand-in is labelled as such in the
+result's limitations, never passed off as model reasoning. `executionDescriptor(profile)` is
+the single source mapping a task profile → `{engine, capability, taskType}`, used by both the
+executor and the endpoint's cost quote. `POST /v1/ai/requests` (`backend/src/api/routes.ts`)
+is the canonical entry point: it resolves the project, authorises `AI_EXECUTION:X` under the
+current phase gate like every other AI route, quotes the work to **fail closed on an empty
+wallet before any provider is contacted**, runs `runGatewayTask`, and returns **only** the
+user-safe half. Covered by the Inc.3b tests in `tests/aigateway.test.ts` (real orchestrator +
+funded wallet: COMPLETED with the ACU hold actually settled and no provider/model/cost leak;
+a synthetic stand-in labelled; and an input of unknown provenance failing closed with no
+fabricated body). Validation is deliberately left empty by the executor — an honest "not yet
+checked", not a faked pass — until Inc.4 installs the canonical validators.
+
+**Increment 4 — the output validators (done).** `gateway/validators.ts`'s `validateOutput`
+is the one place a task's quality floors (`ROUTE_POLICY[profile].validations`, spec §12) are
+checked, and it is **fail-closed by construction**: a floor returns `PASS` only on positive
+evidence it is met and `FAIL` otherwise — including when the output does not carry the artifact
+the floor needs. The ten checks are real and internal (they verify the output, not an
+unprovable external claim): `COMPLETENESS` (a non-empty answer), `SOURCE_ANCHORS` /
+`EVIDENCE_COVERAGE` (every anchor names a source and supplied inputs are drawn on),
+`CONFIDENCE_FLOOR` (an *explicitly* low confidence fails; an absent one does not),
+`CLAUSE_CITATIONS` (a cited clause), `OBSERVATION_ONLY_LANGUAGE` (site evidence observes, it
+does not prescribe), `LEGAL_DISCLAIMER` (a claims reading carries its disclaimer),
+`DETERMINISTIC_CALC_MATCH` (**the arithmetic the output states recomputes to the figure it
+reports** — a CVR whose numbers do not add up is refused, never shown), `TOOL_POSTCONDITION`
+(an agent action met the postconditions it asserts) and `SCHEMA`. The executor lifts the
+structured fields a well-formed provider reply carries (findings, calc, postconditions,
+disclaimer, evidence) into the validators' view and runs the required floors; a FAIL on any
+required floor makes `runGatewayTask` refuse with `AI_QUALITY_FLOOR_UNMET` and no result body.
+Covered by the Inc.4 unit tests (each floor) and end-to-end tests in `tests/aigateway.test.ts`
+(a CVR whose calc does not recompute, or carries no verifiable calc, fails closed; one that
+recomputes completes). **Input-ref clearance is not a parallel context builder** — the
+orchestrator's existing sensitivity resolution already classifies every input ref and refuses
+a provider not cleared for it (fail-closed, proven by the unknown-provenance test), and the
+gateway rides on that single source rather than duplicating it (rule 2). What a later pass
+adds here is redaction of the resolved refs into a provider-safe view.
+
+**Increment 5 — the persisted request + human approval gate (done).** `gateway/store.ts`
+turns a run's user-safe outcome into a durable Golden-Thread record and governs its release.
+`persistGatewayRequest` writes `AI_GATEWAY_REQUESTED` (a new `AIGatewayRequest` entity,
+classified `AI_EXECUTION` so it is operator-blind and tenant-read) carrying **only the
+user-safe half** — summary, confidence band, evidence, approval state, ACU figures — and the
+approval authority the task demands; the provider, model and raw cost on the admin record are
+never written to this customer-scoped entity (spec P03, proven by a leak-scan test).
+`readGatewayRequest` reads it back, scoped to the project it was raised in (a sibling project
+in the same tenant cannot see it). `approveGatewayRequest` / `rejectGatewayRequest` are the
+release gate: each authorises the stored `{area, code}` capability — so a user without the
+task's authority is refused (e.g. the QS cannot release a `CONTRACTS_CLAIMS:A` contract
+output) — and writes `AI_GATEWAY_APPROVED` / `AI_GATEWAY_REJECTED`, both `aiAllowed: false`
+in the catalogue, which is what structurally stops the gateway approving its own proposal. A
+rejection withholds the result and records the reason; a decision on a request not
+`AWAITING_APPROVAL` is refused. Four new routes: `POST /v1/ai/requests` now persists the
+outcome and is idempotent on a caller-supplied key (a replay returns the stored request,
+nothing re-runs), `GET /v1/projects/:projectId/ai/requests` lists a project's requests
+(held ones first for the reviewer, then the decided record), `GET
+/v1/projects/:projectId/ai/requests/:requestId` reads one back (user-safe only), and `POST
+/v1/projects/:projectId/ai/requests/:requestId/approvals` takes the approve/reject decision.
+The **console door** is a panel on the project **Autopilot** screen (`frontend/pages/autopilot.js`):
+it lists the held outputs, shows each one's summary/evidence/limitations on demand (re-reading
+the single request), and offers Release / Refuse — the decide buttons appearing only for the
+person who holds the task's own authority, read from the output's own `approval.roles`. Covered
+by the Inc.5 tests in `tests/aigateway.test.ts` (persist + read-back, provider-leak scan,
+idempotency, project scoping, authority-gated release, reject-withholds-result, not-awaiting
+refusal, empty-reason refusal, project list) and by `tests/doors.test.ts` (every read route has
+a console door).
+
+**Still to build (the spec's later increments, named not pretended):** the `construx.ai.*`
+event set written onto the Golden Thread + ACU/audit alignment so the user-safe ACU figures
+reflect settled actuals (Inc.6), resilience/circuit-breaker surfacing (Inc.7), and the
+migration that blocks direct provider egress (Inc.8). **Vertex AI** is named in policy but
+not wired — it awaits Google Cloud credentials; the router already skips it as `NOT_WIRED`.
+
+## 2026-11 the issued quotation reads as a quotation, not a data dump
+
+A real services quotation issued from the console came back unpresentable. Two faults,
+both in how the frozen key-value document renders:
+
+- **Seventeen identical exclusion rows.** A professional-services fee excludes every
+  construction head for the same reason, and `composeQuotation` (`backend/src/domain/quotation.ts`)
+  printed one `Not included N — HEAD: … does not apply` row per head — seventeen near-identical
+  lines over two pages. They now group by the reason they share: one row per distinct reason,
+  listing the heads it covers (`Subcontract costs, Materials, Plant, … — professional-services
+  fee priced by day-rate; this construction head does not apply`). Covered by `quotation.test.ts`
+  (four heads with one reason → one row).
+- **Long labels overran the value column.** The `KEY_VALUES` renderer
+  (`backend/src/export/pdf.ts`) drew the label at the left with no width bound, so a label longer
+  than the 170pt column printed on top of the value. Both columns now wrap within their own
+  width and the row is as tall as the taller column, so nothing collides.
+
+Also pluralised "1 week" (was "1 weeks"). The issued document is a frozen hashed manifest, so
+these apply to the next quotation generated; an already-issued one is superseded by a new
+revision, not edited.
+
+## 2026-11 client-facing PDFs no longer print "sub?criterion"
+
+A real tender-submission PDF going to a council rendered "sub-criterion" as "sub?criterion",
+"non-compliance" as "non?compliance" and so on. The cause: a language model routinely emits
+U+2011 (non-breaking hyphen) and friends, and the PDF renderer's `toWinAnsi`
+(`backend/src/export/pdf.ts`) has no WinAnsi code for them, so they fell through to the
+visible-substitute "?". That substitute is right for a character with no near equivalent
+(CJK stays "?") but wrong for punctuation the font can carry: U+2010/2011 hyphens → "-",
+U+2012 figure dash → en dash, U+2015 → em dash, U+2212 minus → "-", and the non-breaking /
+narrow / figure / thin spaces → a normal space. Rendering is at download time over the
+frozen content, so re-downloading an already-issued document picks up the fix without
+changing its hash. Covered by `pdf.test.ts`.
+
+## 2026-11 the return-register gate could not be cleared from the bulk door
+
+"I keep assigning returns and the gate never passes" was a real defect, not a
+misread. `assignDeliverablesBulk` (backend/src/domain/tenderintake.ts) fills the
+source (which defaults to the invitation) and the owner (which the modal
+defaults to the director), but filled the internal date only when one was
+supplied — and the bulk modal left that date optional. So "Assign every blocking
+return" with no date changed the source and owner, counted them as assigned,
+reported success, and left every mandatory return still blocking on the date it
+never got. The journey's RETURN_REGISTER step then stayed at the same "N still
+without an owner, a source or a date" with nothing explaining it.
+
+Fix: the bulk door now refuses to write a half-assignment. After the merge, if
+any mandatory return is still missing owner, date or source it throws
+`BULK_ASSIGN_INCOMPLETE` naming exactly what is absent, before writing anything,
+so one more run with the date set clears the lot. The `NOTHING_TO_ASSIGN` path
+now means only "already complete" (nothing still blocking). The modal's internal
+date is now required. Covered by tenderintake.test.ts. Single-return assignment
+is unchanged — it is the deliberate incremental door and the returnables table
+shows what each return is still missing honestly.
+
+## 2026-11 the guide read the wrong tender's returns when several were live
+
+Root cause of "the gate never passes, no matter how many returns I assign": the
+bid-flow guide (`backend/src/domain/bidflow.ts`) resolved which invitation a job
+is about by, as a last resort, a fuzzy match of the buyer's name against the
+project name, taking `.at(-1)` of whatever matched. A tenancy running several
+tenders for the same buyer (e.g. two "Telford and Wrekin Council" pursuits) had
+the guide count the LAST-recorded invitation's unassigned returns while the
+pipeline board showed the tender actually in focus with every return owned. The
+two disagreed, and assigning returns on the right screen never moved the gate,
+because the gate was reading a different tender.
+
+Fix: the guide now resolves the invitation through the same opportunity→project
+link the board uses — the opportunity whose `projectId` (pursuit linked at
+registration) or `convertedProjectId` (a won job) is the open project — and only
+falls back to the name match when no such link exists. Deterministic, and the
+guide and board now agree by construction. Covered by journey.test.ts
+("reads the invitation of the tender in focus, not the one recorded last").
+
+## 2026-11 a logo is uploaded, not pasted as a data URI
+
+The branding door let a one-director business set its documents' issuer name and
+colour and upload a cover image, but the **logo** was a "paste a data URI" text
+field — asking the user to base64-encode a PNG by hand. So documents went out
+with the right name and no mark. Added `POST /v1/branding/logo` and
+`POST /v1/projects/:projectId/branding/logo` (upload routes mirroring the cover
+ones, ENTERPRISE_STRUCTURE / PROJECT_SETUP update) and an "Upload a logo" button
+beside "Set the cover image" on the documents branding door. The logo is stored
+in the evidence store (its hash kept so the document's content hash still commits
+to the mark) and set as `logoRef`, a data URI the PDF renderer already reads. A
+logo must be PNG or JPEG — the two formats a PDF can embed on a page — and a WebP
+(valid as a cover, not as an embedded logo) is refused with `LOGO_FORMAT` before
+the store is touched, rather than rendering with the mark silently missing.
+Covered by branding-authority.test.ts. The data-URI field is kept for the rare
+caller who wants it; its hint now points at the button.
+
+## 2026-11 the document identity is set company-wide, in one place
+
+The only door to a tenancy's document identity was the per-project "client
+identity" on Site Documents, so a business that issues everything under one name
+re-entered it on every tender — and the account-wide default (set from the
+registered name at signup) carried through anywhere a project had not. Added a
+"Company brand" command and an "Upload a logo" control to Enterprise & Portfolio
+(the enterprise administrator's screen), backed by a new `GET /v1/branding` so
+the form shows what is set. It writes the tenancy identity through the existing
+`PUT /v1/branding` and `POST /v1/branding/logo`: the trading name as the issuer
+on every document, the registered company and insurance detail in the legal
+footer, the colour, the reference prefix and the logo — set once, inherited by
+every quotation, bid pack and schedule unless a project deliberately overrides
+it for a specific client. ENTERPRISE_STRUCTURE authority, the same the identity
+has always taken. Covered by branding-authority.test.ts.
+
+## 2026-11 quotation polish: a produced, clean, tabular offer
+
+Four changes to what an issued quotation says to the client, from a real one a
+user sent out:
+- The cover's "Generated" / "Generated by" now read "Produced" / "Produced by" —
+  "generated" read as machine output on a document a person stands behind
+  (backend/src/export/pdf.ts).
+- A superseding document no longer stamps "(revised)" onto the title the buyer
+  reads, and strips any already stacked, so a second revision does not read
+  "(revised) (revised)" (frontend/pages/documents.js). The supersession is still
+  recorded against the document.
+- The "Supersedes document <id>" line is gone from the issued copy — a buyer does
+  not need to be told their offer is a revised one, and the raw id told them
+  nothing (backend/src/group/issuance.ts).
+- The priced lines ("Item 1", "Item 2", …) render as a table (#, Description,
+  Quantity, Amount) instead of a cramped key/value list. Done as a render-time
+  transform over the frozen body, so the content hash the instrument verifies
+  against does not move and a re-download of an already-issued quotation picks up
+  the table. Covered by quotation.test.ts.
+
+## 2026-11 a quotation is addressed to the buyer, not the issuer
+
+"Prepared for" on an issued quotation read as the issuing business's own name
+(the branding default's clientName), so an offer to a council said "prepared for
+JNN Global Ltd". Two changes: the issued-document render now takes "Prepared
+for" from the document's own `Client` field where it has one (issuance.ts), so
+the cover names whoever the offer is addressed to; and `quoteFromEstimate`'s
+`clientName` is now optional — left blank it defaults to the tender's buyer, the
+client on the opportunity this project is pursuing (matched by projectId /
+convertedProjectId), and refuses with `QUOTATION_NO_CLIENT` only when there is no
+buyer on record to borrow. The draw-up and accept routes drop `clientName` from
+required; the "Quoted to" field is optional with a hint. Covered by
+quotation.test.ts.
+
+## 2026-11 "Prepared for" on a submission names the buyer, not the issuer
+
+The quotation fix (above) addressed the issued-instrument render; the tender
+submission and other reports go through a different path — `exports.document` —
+whose cover still printed the tenancy's own branding client as "Prepared for",
+so a submission to a council read "Prepared for JNN Global Ltd". `#finalise` and
+`document()` now take an optional `preparedFor`, which overrides only the cover's
+addressee (the issuer, logo, colour and legal footer are untouched); the bid
+submission route passes the pack's buyer. Covered by exports.test.ts. The
+pricing-schedule document does not yet carry a buyer to pass, so it still shows
+the tenancy default — noted for a follow-up.
+
+## 2026-11 "File the pack" no longer stalls a fee or services tender
+
+The bid-flow guide marked "File the pack" done only when a file read as a drawing
+(`drawings.length > 0`). A professional-services tender — a consultancy bid, a
+schedule of rates — files contracts and specs and never a drawing, so its guide
+sat on that step for ever, pointed at a "re-read the drawing, on the file's own
+row" door for a drawing that does not exist, with no way forward. The step is now
+done once the pack is filed and the invitation read (`files.length > 0 &&
+invitation`), whether or not there is a drawing: such a bid is priced as a fee,
+entered by hand at the next step (which already supports no-drawings pricing).
+The remaining READY state (files filed, invitation not yet read) points at
+reading the invitation rather than re-reading a drawing. Verified against the
+reported symptom and the flow suite's no-regression; a dedicated ingestion-level
+test is deferred — the test scanner quarantines a freshly ingested file, which
+bid-flow correctly excludes, so the fixture fights the assertion rather than the
+fix.
+
+## 2026-11 a submitted bid stops looping back to pre-submission steps
+
+Three tenders a user reported — each submitted, one lost, one awaiting the
+result — still headlined "Record what has to go back", sending the guide back to
+assign returns on a bid that had already gone out. The next-step picker treated
+RETURN_REGISTER (and the other pre-submission steps) as live even after the
+submission. Now, once a submission pack is on the record or an outcome is against
+it, the only next-step candidate is "Record how it ended": a submitted bid points
+at recording the outcome, and a settled one (won/lost/withdrawn) shows nothing
+outstanding. The steps still render with their real states; they are just no
+longer the headline a closed bid is told to do next. Covered by journey.test.ts.
+
+## 2026-11 a bid picker under focus defaults to the tender on screen
+
+Working one tender (South Holland) in focus, "Record how a bid ended" opened with
+a different council (Telford and Wrekin) pre-selected in its Opportunity picker:
+the board and the pipeline table already narrow to the tender in focus, but the
+command pickers did not, so a select with no default fell on whichever tenancy
+pursuit sat first. Against a write-once outcome that is how a loss lands on the
+wrong bid. Every opportunity picker on Pipeline & Bids now defaults to the tender
+in focus via `focusDefault(...)`: score, decide and convert pre-select it while
+still offering the whole tenancy, and "Record how a bid ended" both narrows its
+list to the focus and defaults to it (its empty hint gained a focus-aware line
+pointing at "Show all tenders" to record another pursuit). With nothing in focus
+every picker behaves exactly as before. Frontend-only (`frontend/pages/pipeline.js`),
+which the Node test harness does not load; verified by typecheck, a parse check
+and the full suite's no-regression (8442 green), and by the renderer contract in
+`frontend/lib/command.js` that pre-selects the option matching `field.value`.
+Note: an outcome already recorded against the wrong opportunity cannot be rewritten
+from the UI (outcomes are write-once) — if South Holland was mis-recorded as lost
+by the old default, that row needs a data correction, not a UI change.
+
+## 2026-11 uploading ten tender documents no longer stores only some
+
+Selecting ten files on "Upload a tender document" filed ten records but often
+stored only the first few bytes — "I uploaded ten and four appeared". The upload
+of the bytes runs in the background after the modal closes (deliberately: a file
+follows its record and never blocks the command), and the toast told the operator
+to refresh — but a refresh aborts the in-flight `api.upload`, which does not throw,
+so `storeEvidence`'s loop simply stopped and every file it had not yet reached was
+dropped: the ledger record stood, the bytes vanished, and nothing retried them,
+because the direct-upload path only fell back to the durable outbox on a thrown
+error. `storeEvidence` now writes each file to the outbox (IndexedDB) *first*, then
+sends it directly and clears it from the outbox on success; anything a refresh or a
+closed tab interrupts is already persisted and is stored by `drainOutbox()` on the
+next load (app.js already drains on load and on reconnect). Reuses the existing
+outbox primitives (`queueFile`/`discardFile`/`flushFiles`); no new mechanism. The
+upload toast no longer implies instant availability. Frontend-only
+(`frontend/lib/command.js`, `frontend/pages/pipeline.js`), which the Node test
+harness does not load; verified by typecheck, a parse check and the full suite's
+no-regression (8442 green). A browser-level test of the queue-first path is not
+possible in this harness (IndexedDB/fetch), so it is not claimed.
+
+## 2026-11 the returns gate now guides to the button that clears it
+
+The universal "the gate never passes" symptom had a specific cause in the guide
+itself: the RETURN_REGISTER step's door pointed at "Assign a return" (the single
+`assign-deliverable` command, whose owner/date/source fields are all optional, so
+a return submitted blank does not clear and still blocks). The button that
+actually clears the gate — "Clear all N blocking returns" (`assign-all-returns`),
+which defaults the owner to the director, takes one internal date and fills the
+source from the invitation, clearing every mandatory return in one act — was on
+the page but never the one the guide named. So the guide steered every tender to
+the control that did not work. The RETURN_REGISTER door is now "Clear all blocking
+returns" / command `assign-all-returns`, and the next-step text spells out the
+one-press bulk action (and notes "Assign a return" is for hand-assigning a single
+return to a different owner/date). The bulk clear was already correct and tested
+(`tenderintake.test.ts` proves it fills owner+date+source and empties the blocker
+list); this change makes the guide send the user to it. Covered by journey.test.ts
+(RETURN_REGISTER door/command on a tender with bare unassigned returns). No data
+change: a tender already recorded continues from where it is — press the button
+the guide now names and the gate clears.
+
+## 2026-11 an outcome recorded in error can be corrected — by a director, with a reason, keeping the original
+
+A bid outcome is write-once on purpose: a result the calibration reads cannot be
+one anybody can rewrite. But the wrong-tender picker (fixed separately) could file
+a loss against a live bid — South Holland showed LOST while open and awaiting the
+result — and write-once left no way back. There is now a correction path that does
+not weaken the rule for everyone else:
+
+- `learning.correctBidOutcome(ctx, opportunityId, { reason })` and
+  `POST /v1/pipeline/opportunities/:opportunityId/outcome/correction`.
+- Needs `BUSINESS_DEVELOPMENT` **'A'**, not the 'U' that records one: reversing a
+  result already on the calibration is a director's act, and the role that records
+  an outcome (QS) cannot reverse it.
+- Needs a reason, kept on the record. A blank reason is refused
+  (`CORRECTION_REASON_REQUIRED`).
+- Never deletes the reversed outcome. The original `BID_OUTCOME_RECORDED` event
+  stays on the append-only chain; a new `BID_OUTCOME_CORRECTED` event (added to the
+  catalogue, `aiAllowed: false`) appends the reversal, and the reversed outcome is
+  kept in the opportunity's `corrections` audit with who reversed it, when and why.
+- After it the pursuit is live again (a LOST returns the stage to BID), so the
+  *true* outcome records once more through the normal gate — write-once again from
+  there.
+
+Frontend: a "Correct an outcome" command on Pipeline & Bids, shown only to a holder
+of 'A' when an opportunity carries an outcome, defaulting to the tender in focus.
+Covered by learning.test.ts (reversal + re-record + re-lock, the 'A' gate, the
+reason requirement, the no-outcome refusal, and the catalogue entry). Scope: this
+corrects the **opportunity** outcome (the one the "Record how a bid ended" modal
+writes, and the one South Holland showed). A project-level `tenderOutcome`
+(recordTenderOutcome) has its own write-once path and is not corrected here — no
+case has needed it; it would follow the same pattern if one does.
+
+## 2026-11 "Build tender programme" dead-end now names the step that unblocks it
+
+Pressing "Build tender programme" on a tender whose bid decision had not been
+recorded showed "Nothing to act on yet … There is none here yet. The tender in
+focus has not been decided as a bid yet" — accurate (the backend gates a programme
+on a recorded decision to bid, AC-T-WF-01-03) but a dead-end: the reading and the
+matrix do not decide the bid, and nothing told the user that or what to press. The
+programme field now carries an `emptyHint` that names the actual prerequisite in
+order — "Score an opportunity", then "Decide bid or no bid" and record the decision
+to bid — so the refusal points at the next action instead of leaving the user
+stuck. Frontend-only (`frontend/pages/pipeline.js`); the backend gate is unchanged.
+
+## 2026-11 a bid submitted on the buyer's portal can be recorded as submitted
+
+The flow only ever counted a bid "submitted" if a BidSubmissionPack existed, and
+that pack is only created by compiling and issuing the submission inside the
+platform (BID_PACK_COMPILED → BID_PACK_LOCKED → TENDER_SUBMITTED with a receipt
+naming the pack hash). A one-person firm that writes its answers on the buyer's
+own portal (In-Tend, PSPS) has none of that, so every tender it submitted read as
+still in preparation for ever: the guide kept nagging "assign returns / write the
+submission" on bids that went in a week earlier, and no outcome could be recorded.
+
+`award.recordExternalSubmission(ctx, { submittedOn, portalReference, channel? })`
+and `POST /v1/projects/:projectId/bid/external-submission` bridge it: they record
+the date and the portal's reference as a BidSubmissionPack already in SUBMITTED,
+flagged `externallySubmitted`, with a content hash taken over the recorded facts
+(there is no document the platform held, and it claims none). The bid flow then
+reads the tender as submitted through the same `BidSubmissionPack` signal the
+in-house path feeds (bidflow.ts:556), so the guide points at recording the outcome
+and the award view shows it awaiting a result. New human-only PROCUREMENT-group
+`BID_SUBMITTED_EXTERNALLY` catalogue event (CREATE, no evidence required — date and
+reference only); PROCUREMENT_AWARD 'I', gated to the TENDER phase, as the in-house
+submission is; one external submission per tender (a resubmission is a new record).
+A "Record a portal submission" command on Pipeline & Bids, shown when a tender is
+in focus. Covered by award.test.ts; the submitted-detection path it feeds is the
+one journey.test.ts already proves advances the guide past pre-submission steps.
+
+## 2026-11 the AI reads a buyer's Bill of Quantities into the bill (quantities, never a rate)
+
+A civils tender (MMHW/CESMM) arrives with a priced schedule the buyer has already
+written — every item, unit and quantity, waiting for a rate. The platform could
+measure the drawings (and on a civils GA drawing produced dimensions, not
+quantities), but it could not read the schedule the buyer actually wants priced,
+so a one-person firm retyped sixty lines by hand. New perception task
+`PRICE_LIST_BOQ` (`backend/src/engines/perception.ts`) mirrors `ITT_REQUIREMENTS`:
+it reads the buyer's pricing schedule — Word, PDF or scan — into a confirmable
+draft of item · reference · unit · quantity · section · coverage, and on confirm
+writes the measured bill through the same `runTakeoff` the drawing take-off uses.
+
+The safety boundary is in the schema and the confirm, not just the prompt: the
+`responseSchema` carries **no rate, price or money field of any kind**, the prompt
+forbids returning one, and the confirm maps only description/unit/quantity — so a
+rate a model returns anyway (tested) never reaches the bill. This is deliberate:
+a generic rate against a civils item is exactly how a bid is won at a loss (a real
+case this session priced a soil-nail wall at £290k against the estimator's £515k).
+The AI structures the BoQ; the estimator and their subcontractors price it.
+
+Door on Pipeline & Bids: "Read as a pricing schedule" on any held tender document,
+the draft shown beside the drawing take-offs with the same confirm (which collects
+the work package and cost-code prefix). Route auto-generated at
+`/v1/projects/:projectId/perception/price-list-boq`; the doors invariant
+(`doors.test.ts`) enforces the button exists. Covered by perception.test.ts
+(reads two items, writes nothing until confirmed, confirming writes them
+reference-tagged and strips the rate the model returned, catalogue schema carries
+no money). The AI's extraction quality on a live document is validated by the
+confirming person, by design — there is no live provider in the test harness.
+
+### The method of measurement is read, not defaulted (civils bills)
+
+A take-off wrote every measured line with `measurementRule` `'NRM2'` when the
+field was left blank — the right default for building work, wrong on a civils
+bill drawn to the Method of Measurement for Highway Works (MMHW) or CESMM. The
+PRICE_LIST_BOQ reader now reports the method the document *names*
+(`methodOfMeasurement`, null if it does not — never inferred from item numbering
+like `601.2`), the person confirms or overrides it on the confirm dialog
+(select of the standard UK methods, pre-selecting what the reader quoted), and it
+tags every line. `normaliseMethodOfMeasurement` maps the stated wording onto a
+short tag (MMHW, CESMM3/4, NRM2, SMM7, POM(I)); a method it has no tag for is
+carried through trimmed rather than discarded or guessed; absent, `runTakeoff`
+keeps the NRM2 default. A per-item rule the reader put on a line still wins over
+the schedule's. Applies to both take-off paths (drawing and pricing schedule).
+Covered by perception.test.ts (the MMHW read reaches the line, a person's
+CESMM4 override wins, the normaliser recognises the standard methods and invents
+none). Confirm route accepts `measurementRule`.
+
+## 2026-11 a project's documents carry that project's reference, not the company prefix
+
+Every export took its cover/header/footer reference from one tenancy-wide value —
+the company reference prefix, which also seeds the company numbering rule. A
+project name once typed into it ("RFX1000209 - EPC Assessments") was then printed
+as the reference on every other project's documents, a Conwy retaining-wall
+tender submission included. `ExportService.#finalise` now builds a project
+document's reference from the project itself (`#projectReference`): a prefix set
+on that project's own client identity stands; otherwise the project's registered
+name, led by the buyer's tender reference where an invitation is recorded against
+the job (filed on the project, or on the opportunity linked to it by id — never a
+wording match). The company serial still numbers the document
+(`allocateReference` now returns `{ number, seq, authored }`), so references stay
+unique across the company. A numbering rule the company *chose* (one that differs
+from the default made from its branding prefix — `isAuthoredRule` in
+`group/profile.ts`, e.g. ETABLIX's `ETX-R-{seq:6}`) is its document control and
+stands unchanged; saving a profile carries the default forward, so the record
+existing is not the test, the rule differing is. Documents that belong to no project keep the company
+numbering. The company-prefix hints on the settings forms now say so. The
+filename fix (render.ts) was already in; this is the reference itself. Covered by
+exports.test.ts (each project names itself with the leaked prefix set, a recorded
+tender reference leads, a project's own prefix stands) and grouptenancy.test.ts
+(an authored rule still numbers the report). A document already
+downloaded keeps the reference it was printed with — regenerate it.
+
+## 2026-11 a bid submission is an answer, not a note to finish one
+
+A real Conwy submission (69 pages) went to export with ~60 notes such as "the bid
+team will insert the inspection frequency" and "(to be inserted)", headings cut to
+"… / Che…", and "our Bid Manager and Planning Lead have prepared and signed the
+programme" from a one-person firm. Three causes, three fixes, all in
+`domain/bidresponse.ts`:
+
+- **The drafter was told to write the notes.** Its constraint said "name what the
+  bid team must insert". It now says the text goes to the buyer as written: never a
+  gap, bracket or note to anyone; where a value depends on facts not yet known,
+  commit to how and when it will be fixed and by whom; where the buyer asks for an
+  operational commitment, commit to normal UK practice (the reviewing person can
+  change it). Still forbidden: any figure, customer or past project not given.
+- **The drafter invented staff.** It was handed the matrix's internal routing role
+  (`respondingRole`) and nothing about the firm. It now gets `firm` (`firmFacts`:
+  the company profile's name, `singleOwnerBids`, accreditations, self-delivered
+  trades, and the tenancy's people by name) and is told to name only those people
+  and claim no team or title the firm lacks; the routing role is no longer sent.
+- **Nothing caught it.** `bidCompleteness` has a new hard gate, `unfinished`:
+  every drafted section whose prose holds a note to a bid/tender team, a "to be
+  inserted/populated/filled", a placeholder, a bracketed blank or TBC/TBD/TBA
+  (`unfinishedPhrases`), with the phrases quoted. Deliberately narrow — the buyer's
+  own words quoted back ("signs and diversion to be provided", "all levels to be
+  agreed with the supervisor") are not flagged. The issue refusal names them.
+  Way forward: `redraftSection` / `POST …/sections/:key/redraft` (same task type
+  prompt as the first draft under its own task type `bid_response_redraft`; refuses
+  a section a person rewrote — they edit it)
+  and a "Redraft this section" button beside the warning on Pipeline & Bids.
+
+Headings: the export printed `section.title`, cut at 67 characters at plan time.
+`submissionBlocks` now prints the stored full requirement (`deliverable`): as the
+heading when ≤120 characters, otherwise the reference as the heading and the
+requirement in full beneath it. Existing packs print correctly without replanning.
+Literal "\n" escapes a document reading left in a requirement are printed as
+spaces (the Conwy pack printed `"Q7\n\n•\n\nThe Contractor's…` as a heading).
+
+Not done: answers already drafted keep their notes until redrafted or edited — the
+gate now names each one. Covered by bidresponse.test.ts (drafter payload, gate,
+refusal, redraft, human-written refusal, phrase detector against the real Conwy
+wording and the buyer quotes it must leave alone, full-text headings).
+
+### The submission review a person used to do by hand
+
+The 69-page Conwy review found three things beyond the notes above; the platform
+now raises all of them itself, on the bid pack, every time (`bidCompleteness`):
+
+- **Staff the firm does not have** (`unsupportedStaff`, hard gate). Only asked when
+  the company facts say the firm is one person (`singleOwnerBids`) — the one case
+  the platform knows the claim is false. Flags Bid Manager, Planning Lead, Quality
+  Manager, QS, Commercial Manager, technical reviewer, H&S manager and the like
+  (`unsupportedRoles`); leaves titles a sole director holds himself (project/site
+  manager, temporary works coordinator) and any sentence naming one of the firm's
+  own people. Way forward: the same Redraft button.
+- **Advisories** (`advisories`, never blocking): a section answering a drawing note
+  ("All dimensions are in metres…", "Note 4 — any anomalies on this drawing…",
+  `isDrawingNote`) — waive it on the compliance matrix; and "our Project Manager"
+  in an answer to an NEC contract (matches NEC4/NEC3), where the Project Manager
+  is the client's role.
+
+The review context (`reviewContextFor`: one-person flag, people, contract form) is
+read from the company profile and the stored analysis; `bidCompleteness` takes it
+as an optional fifth argument so existing callers and tests are unchanged.
+
+## 2026-11 the tender programme, drafted from the bill by the platform
+
+"Tenderers are to submit a programme with the tender return" meant typing every
+activity onto the Programme screen or drawing a bar chart elsewhere. Now
+(`domain/tenderprogramme.ts`, door on Pipeline & Bids → "Tender programme"):
+
+- **Draft** (`POST …/programme/tender-draft`, AI task `tender_programme_draft`):
+  the model gets the live measured bill, the start date, the period — or, better,
+  the completion date the buyer fixed (which then decides the period: "84 days"
+  from a Monday ends on a Sunday) — the invitation's time/access/sequence
+  requirements, the firm's people and self-delivered trades, and optional
+  estimator guidance (passed as guidance, never as a tender fact). It returns
+  activities, working-day durations, logic, resource, specialist subcontract trade
+  (by trade, never a company), bill references, a labelled risk allowance and the
+  productivity assumptions behind the durations. `normaliseDraft` (pure, tested)
+  drops and names links to non-activities, refuses a loop, and computes the finish
+  with the platform's own CPM engine (`schedule`) — `fits` is computed, never
+  claimed. A newer draft supersedes a waiting one. Nothing touches the programme.
+- **Calendar**: five-day week less the jurisdiction's bank holidays from
+  `constructionAct.bankHolidays` (England & Wales unless the location says
+  Scotland / Northern Ireland; none invented outside the UK). The standard
+  calendar has no holidays, which put work on Good Friday and Easter Monday.
+- **Milestones**: start/finish milestone types, and FS links out of a start
+  milestone become SS, into a finish milestone FF — the engine gives a milestone
+  its own day, so FS links added a day at each end. Same logic, honest dates.
+- **Confirm** (`POST …/tender-drafts/:draftId/confirm`, human only): checks both
+  WORKPACKAGES_TASKS C and PROGRAMME_BASELINES U *before* writing (a PM holds the
+  first, not the second — otherwise activities would be written and never
+  scheduled); refuses onto a project that already has activities; writes through
+  `createTasks` / `linkTasks` / `setActivityAttributes` / `defineCalendar` and
+  `runSchedule` — the project's one programme, editable on the Programme screen.
+- **Export** (`POST …/programme/tender.pdf`, PDF or DOCX): read from the live
+  programme. New export block `GANTT` — PDF draws bars on a week timeline
+  (labels wrap, never "…"; header repeats after a page break; critical path in the
+  accent, risk allowance in its own grey even though it sits on the critical path,
+  milestones with dates, a key); DOCX is an editable week-grid table with shaded
+  cells; HTML a proportional table. Then the activity table (logic incl. SS/lag,
+  resource/subcontract, bill items, critical), assumptions, "for tender purposes".
+- Events `TENDER_PROGRAMME_DRAFTED` / `_SUPERSEDED` (aiAllowed) and
+  `_CONFIRMED` (human); entity `TenderProgrammeDraft` (WORKPACKAGES_TASKS).
+- Also: the pack's read view and "Copy all answers" (pasted into portals) now use
+  the full requirement, not the 67-character title.
+
+Verified: tenderprogramme.test.ts (bill required, payload, dropped link, loop
+refused, overrun flagged, completion-date period, bank holidays over Easter 2027,
+supersede, confirm writes 10 tasks/10 links/1 run finishing 2027-04-05, both
+permissions checked before writing, refusal onto an existing programme, Gantt
+blocks, PDF and DOCX render); rendered PDF/DOCX inspected; panel, dialog and the
+refusal path driven in a real browser against the running server. Not verified
+here: draft quality from a live model (no provider in this environment) — the
+person confirms it, and every duration's assumption is printed for checking.
+
+Not built: editing a waiting draft in place (redraft with guidance, or confirm
+and edit on the Programme screen).
+
+Found and **not** changed (unrelated, recorded per rule 11):
+- `POST /programme/dependencies` accepts `lagDays`, but the engine reads `lag`, so
+  a lag entered through that route is scheduled as zero.
+- The CPM engine gives a zero-duration activity/milestone its own day, so an FS
+  successor starts the next working day (worked around above for tender drafts;
+  hand-built programmes are still affected).
+- `pipeline.js` uses a badge tone `good` that the design system does not define
+  ("issued · read-only" renders unstyled).
+
+## 2026-11 a bid pack answers the questions the buyer scores, not every line of the tender
+
+The Conwy pack (BID-0001, ERCF2509N 05) planned **96 sections / 69 pages** — scope
+clauses, PCI hazard lines, the marking scheme and eight drawing notes — while the
+Council scores seven questions (Volume 2 Appendix 1, Q1–Q7, ≤1,000 words each).
+The cause was the planning rule, "every requirement in a narrative category needs
+prose" (`needsProse`), applied whether or not the tender has a scored
+questionnaire. The reading was the second cause: it was told to list "every
+requirement", carried the quality/price split as a weighting, and captured only Q7
+of the seven questions. Every section was drafted, and charged, a pass at a time.
+
+Now (`domain/bidresponse.ts`):
+
+- **`planScope(matrix, waived)`** decides what a pack answers. Where any line is a
+  scored question (weighting > 0 and needing prose), the pack is those questions
+  plus any line the buyer gave a word or page limit — basis `SCORED_QUESTIONS`.
+  Only where nothing is scored does every prose requirement become a section —
+  `WRITTEN_REQUIREMENTS`, as before. Neither basis plans a drawing note
+  (`isDrawingNote`) or a statement of the marking scheme (`isEvaluationMethod`:
+  a quality % and a price % in one line, or "the lowest bid will score…").
+- **The rest of the tender is not lost.** On a scored pack, the unanswered
+  narrative lines (scope, hazards, constraints) are passed to the drafter as
+  `tenderContext` (first 60, 280 characters each) so each scored answer is
+  specific to the job rather than generic.
+- **Re-plan** (`replanBidResponse`, `POST …/bid-responses/:packId/replan`,
+  optional `analysisId`, no AI, no charge; event `BID_RESPONSE_REPLANNED`, human
+  only): plans a drafting pack's sections again under the same rule, against its
+  own matrix or the tender's newer one (after the questionnaire is read). A
+  section whose requirement is still planned word for word keeps its prose and
+  authorship; dropped sections stay on the ledger in the pack's earlier state.
+  Refused on an issued pack, and onto a matrix another pack already answers.
+- The pack records `basis`, `replannedAt`, `replannedBy`; the position reports
+  `basis` (absent on old packs reads `WRITTEN_REQUIREMENTS`).
+- **Reading** (`engines/perception.ts`, ITT prompt): each scored question is listed
+  as its own requirement — numbered reference, full text, its own weighting, its
+  word/page limit; the quality/price split and scoring rules carry no weighting;
+  notes printed on drawings are left out.
+- **Screen** (Pipeline & Bids): "Re-plan from the scored questions" command; an
+  info notice on any drafting pack planned from every written requirement.
+
+For BID-0001 the way through is: read Volume 2 (the questionnaire) onto the
+tender, confirm the reading, then re-plan BID-0001 onto the tender's current
+matrix.
+
+Verified: bidresponse.test.ts — scored tender plans Q1/Q3 only with the
+1,000-word limit carried, never the marking scheme or a drawing note; the drafter
+receives the tender context (scope lines in, drawing notes and marking scheme
+out); the unscored fallback; a re-plan from an old-basis pack onto a re-read
+matrix keeps a person's prose word for word, drops the rest, keeps both events on
+the ledger; re-plan refused onto a matrix another pack answers; the event is not
+agent-authorable; the route exists. Not verified here: a live model reading the
+Conwy questionnaire under the new prompt (no provider in this environment) — the
+reading is confirmed by a person, who sees each question listed.
+
+Not built: detecting that a reading **missed** questions of a questionnaire (e.g.
+Q1–Q6 absent while Q7 is present). The matrix shows what was read; a person
+confirms it.
+
+## 2026-11 acceptance test against two real tenders (Conwy, Telford) — first findings
+
+The unit suite proves the code does what its tests say on invented tenders. It had
+never been run against a real tender pack. This is the first such run, on the
+real documents of two tenders the owner bid: Conwy (ERCF2509N 05, works, NEC4
+ECSC) and Telford & Wrekin Minor Building Works DPS (Stage 1 application).
+Scripts and outputs live outside the repository (session scratchpad); this
+records what they found.
+
+**Run without a model (free, done):**
+- *Text extraction* (`evidence/ingest.ts extractText`): all four Conwy volumes and
+  all five Telford documents read natively. Conwy Vol 2 carries Q1–Q7 and "No more
+  than 1000 words are required per answer"; Vol 1 carries Table 1 with the
+  weightings (30/10/15/15/10/10/10). The text was never the problem.
+- *Conwy root cause, cross-document split — NOT FIXED*: the scored questions
+  (Vol 2) and their weightings (Vol 1) are in different documents. Each document
+  is read in its own model call and merged by reference (`mergeRequirements`),
+  which (a) cannot join a Table 1 row to its Q-number, so a question can appear
+  twice, once weighted and once word-limited — `planScope` would then plan both;
+  and (b) where references do match, replaces the earlier line wholesale, so a
+  weighting read from one volume is wiped by a later volume that omits it. This
+  is consistent with BID-0001 carrying "2.3 … (Table 1)" and "Appendix 1 … Q7" as
+  separate sections and no Q1–Q6. Proposed: read a tender's documents together
+  in one call, and merge field-wise (keep a weighting/limit/date a later reading
+  omits). Not started — needs a live model to verify the reading half.
+- *Submission gate on the Telford pack*: `unfinishedPhrases` caught 5 of the
+  pack's 15 square-bracketed blanks ("[ref, date]", "[fortnightly]", "[site]",
+  "[result]", "[confirm exact Companies House name…" went through). **Fixed**: any
+  square-bracketed span is now a blank unless it is a numeric citation or
+  "[sic]"; all 15 are caught (bidresponse.test.ts adds the Telford phrases and
+  the citation negatives).
+- *Telford pack against the Stage 1 guidance* (findings for the owner, not
+  platform defects): criteria 1 (Constructionline Gold) and 2 (CHAS/SSIP) are
+  pass/fail and recorded in the pack as NOT HELD; Answer 4 states employers'
+  liability of £5m on the policy and, in the same paragraph, that the firm is
+  exempt — while section 4 says the certificate shows none; the asbestos-awareness
+  claim conflicts with the pack's own note that the certificate is over 2 years
+  old; the modern-slavery answer commits to site managers and supervisors the
+  firm does not have.
+
+**Not run (needs a model, none in this environment):** the reading of the real
+Conwy text into a matrix, the planned pack, the drafted answers and their cost.
+That requires the owner's provider key in this environment.
+
+### Cross-document split — the part provable without a model, fixed
+
+- **`foldDuplicates`** (`domain/bidresponse.ts`, used by `planScope`): requirements
+  whose wording matches (`lexicalVector` cosine ≥ 0.85, the platform's own
+  near-duplicate measure) are one requirement. The first in matrix order keeps
+  its reference, takes the fuller wording, the highest weighting, the stated
+  limit, the earliest date and mandatory-if-any, and lists the others in the
+  section's `alsoAnswers`. The threshold is measured on the real Conwy text: the
+  same question across Volumes 1 and 2 scores 1.00, the same hazard read twice
+  0.85–1.00, the closest two *different* items 0.75, different scored questions
+  ≤ 0.64. An addendum changing any folded reference marks the section stale.
+- **`mergeRequirements`** (`domain/itt.ts`): a later reading wins on what it
+  states and no longer erases a weighting, response limit or date it is silent on.
+
+Verified: the real Conwy wording as two separate readings (Table 1 rows with
+weightings, Q1–Q7 with the 1,000-word limit — fourteen lines) plans **seven**
+sections carrying 30/10/15/15/10/10/10 and 1,000 words each; a hazard read twice
+folds while "all dimensions…" and "all chainages…" stay apart; a folded section
+goes stale on an addendum to its other reference; the merge keeps a weighting a
+later reading omits and takes one it restates. Replaying BID-0001's actual 96
+requirements through the planner now gives 70 sections (drawing notes and the
+11 duplicate pairs gone) — not 7, because that reading never captured Q1–Q6 or
+any weighting. Whether a model now captures them under the corrected reading
+prompt is still **not verified**: no provider key in this environment.
+
+## 2026-11 "Redraft this section" said "has no section" for a section that exists
+
+Reported from BID-0001 (screenshot): Redraft on "Amlinelliad o Ofynion y
+Cytundeb: Outline of Contract Requirements:" answered "BID-0001 has no section
+Amlinelliad o Ofynion y Cytundeb:Outline…". The key holds a line break, and the
+Redraft and "Cut it to length" buttons put the key into the URL path
+unencoded; a browser strips line breaks from a URL (and would split on "/" and
+turn "\" into "/"), so the server looked up a different key. "Edit" already
+encoded it. Both now use `encodeURIComponent`; the router already decodes.
+
+Verified: in a real browser, a section keyed "Amlinelliad o Ofynion y
+Cytundeb:⏎Outline / of Contract \ Requirements:" reaches the server intact
+(the refusal is now "no reasoning provider", this environment having none —
+not "no section"); bidresponse.test.ts scans every page for a `/sections/${…}`
+path that is not encoded, and fails on the old code.
+
+## 2026-11 Deep browser test, sign-up to issued quotation — what it found and fixed
+
+A real browser (Playwright, persistent profile) against a fresh server and an
+empty journal, driven click by click through the screens a new customer uses:
+sign up → confirm → sign in → company facts → brand → portfolio → project at
+Tender → opportunity → ITT → upload the five real Conwy ERCF2509N 05 files →
+compliance matrix typed in (no model) → returns cleared → pack planned from the
+scored questions (7 sections) → answers pasted → submission PDF (13 pages) →
+71 measured quantities by hand → bill priced by hand (£515,423.54, matched to
+the penny against the owner's own price list) → pricing schedule PDF → quotation
+drawn up, generated, approved, **issued as JNN-Q-2026-00001** and downloaded (5
+pages, total £515,423.54) → scored → decided to bid → bid programme → portal
+submission recorded → outcome recorded (£515,423.54 stored as 51,542,354p).
+The server ran with dummy provider keys so the AI controls render; every AI
+call fails before any cost. Nothing in this run used a model.
+
+**Fixed in this change** (each with a test that fails on the old code where
+the fault is server-side):
+
+- *Tender files sat unread on upload* (P1). With no perception provider the
+  "Look at the file first" button is not shown, so five uploaded files stayed
+  unread and the matrix/returns/plan said "read the invitation first".
+  `POST /v1/evidence/:hash` now runs the free, deterministic `ingestFile` on
+  arrival for a `TENDER_DOCUMENT` (whole and chunked uploads, chunked only once
+  complete); a refusal to read comes back as `readingRefused` beside a stored
+  upload, never in place of it (`tests/tenderupload.test.ts`).
+- *A typed compliance matrix was invisible to the bid flow* (P1). A matrix made
+  on Pipeline & Bids is written on the governance chain; `bidFlow` read only the
+  project's. The analysis named by this job's invitation now counts, same
+  tenant only (`tests/bidrun.test.ts`).
+- *Issue refused four times running on an approved quotation* (P1).
+  (1) company details incomplete — the form labelled the three fields it needs
+  "optional" and the refusal named them `registrationNo`,
+  `registeredAddress.line1`; (2) after entering them, `ISSUER_PROFILE_CHANGED`
+  (correct — the approved copy must carry the details); (3) no numbering rule;
+  (4) after setting the rule, `ISSUER_PROFILE_CHANGED` again, though nothing
+  printed on the approved revision had changed. Root cause of (4): issue
+  compared the *profile version*, which also moves for numbering rules,
+  signatories and policy. It now compares the frozen **issuer block** with the
+  current one (`canonicalize`) — what the document prints — and the AT-14
+  refusal on a real change of registered details still holds
+  (`tests/enterprisegroup.test.ts`). `legalReadiness` returns `missingLabels`
+  (the form's own names) used in every refusal and readiness line; the three
+  fields carry "Needed before a quotation, invoice or contract can be issued";
+  Site Documents shows a "Before a document here can be issued" list (details
+  missing, types with no numbering rule) above the table, and no longer says
+  "Legal documents can be issued under it" while a numbering rule is missing.
+- *Bid programme refusal offered a way out that does not exist* (P2).
+  `TENDER_WINDOW_TOO_SHORT` said "record the decision to bid on a compressed
+  programme knowingly"; there is no such decision anywhere. It now says ask for
+  an extension or work to the deadline without the programme, which holds
+  nothing else up (`tests/tenderintake.test.ts`).
+- *Insurance and reference lines in company facts dropped silently* (P2): the
+  form now refuses a line it cannot read and shows the format.
+- *No way to write a pack section yourself without a model* (P1): an unwritten
+  section offers "Write it yourself".
+- *Download refused for want of a brand the journey never asked for* (P2): the
+  guided journey has a BRANDING stage between company facts and first job
+  (`tests/journey.test.ts`).
+- *NRM2 forced on a hand-entered civils bill* (P2): "Enter measured quantities"
+  takes a method of measurement (NRM2, MMHW, CESMM4, CESMM3, SMM7, POM(I)) from
+  `shared/vocabulary.js`.
+- *Quotation defaulted to an incomplete estimate* (P2): estimates are listed
+  complete first, newest first, with "incomplete — cannot be quoted" on the label.
+- *The guide looped on "Record how it ended" after a loss was recorded* (P2).
+  The AWARD step read only an award on the submission pack; a loss recorded on
+  the opportunity ("Record how a bid ended", with marks and feedback) left it
+  asking for an award notice a lost bidder never gets. A recorded loss now ends
+  the road; a win still waits for the award notice, where the standstill is
+  counted (`tests/bidrun.test.ts`).
+
+**Found and recorded at the time** — every one since fixed or answered in the
+section that follows, *The eleven open findings, closed*:
+
+- Direct Debit is shown as "Recommended" at activation and is not connected.
+- Portfolio country defaults to the first in the list (Afghanistan).
+- Breadcrumb reads "no portfolio yet" after one exists; `/projects/null` 404s in
+  the console on first load.
+- AI buttons on a file row spend without first quoting a cost; the file table is
+  hidden entirely without a perception provider.
+- Tender AI on COMMERCIAL_L3 data needs `AI_PROVIDER_CLEARANCE` before it runs.
+- Issuing a response pack is hard-blocked until an AI assurance review exists —
+  there is no human-review path to issue.
+- Rules classification read the ITT as "correspondence" and drawings as "unknown".
+- Site Documents labels its first-revision button "Generate" where the toast and
+  docs say "Generate a revision".
+- A compressed bid programme (fewer than ten working days) is not built; the
+  platform refuses rather than compress.
+
+**Not tested (needs a model; none in this environment):** reading an
+invitation or pricing schedule into a matrix, writing/redrafting/shortening a
+section, the red-team attack, the assurance review, and drafting the
+construction programme from the bill.
+
+## The eleven open findings, closed
+
+The owner asked for every finding the deep test had left open to be fixed.
+Each was fixed at its root, tested, and checked again in a real browser against
+the same journal (screenshots `fix-f*.png` in the test run).
+
+- **Direct Debit "Recommended" while not connected.** `frontend/lib/activation.js`
+  reads `position.rails` (already published by `activationPosition`): only a
+  live rail is recommended or selected by default; one that is not connected
+  says "Not connected yet" and that the first month is by bank transfer.
+- **Country defaulted to Afghanistan.** `whoAmI` publishes the company's
+  `jurisdiction` and `region` on `activeCompany`; the portfolio, project and
+  convert-a-win forms default to them. The region table is now one
+  (`REGION_OF_JURISDICTION` in `domain/locale.ts`), replacing the two copies in
+  sign-up and collection (`tests/grouptenancy.test.ts`).
+- **Breadcrumb "no portfolio yet"; `/projects/null` on first load.** The crumb's
+  names are read from the record on every context load (the current project's
+  own portfolio), and while unknown on each redraw — not once at sign-in.
+  Enterprise & Portfolio no longer asks for a project's invitations and members
+  without a project; a sweep of 31 screens with a no-project account makes no
+  `null`/`undefined` request.
+- **"Generate" vs "Generate a revision".** The button now says what the guide,
+  the dialog and the toast say.
+- **The tender file table hidden without an AI provider.** Always shown; only
+  the buttons that send a file to a model depend on a provider. The notice says
+  the files are stored and read free and how to type the matrix in.
+- **File-row AI buttons ran without a price.** All four go through
+  `confirmCost`, quoted against the route they call; cancel spends nothing.
+- **The estimate read £0.00.** Two causes. On an exempt account the nil charge
+  is true — the quote now says so (`exempt`) and shows what the provider is paid
+  (`providerCostMinor`). And a first run was priced on an empty request — the
+  quote now prices a named file's extracted text with the adapter's own
+  estimator (`inputText`, `sizedFromTokens`; the quote route reads the file by
+  `ingestionId` in the path or `hash`) (`tests/quote.test.ts`).
+- **File classification.** A new kind, `INVITATION`, for the ITT and a scored
+  questionnaire (it was filed as CORRESPONDENCE for want of one); plurals in the
+  drawing rule; REPORT by name and by content (ground investigation,
+  pre-construction information); a word-limit signal; the scan widened from
+  32KB to 128KB. On the five real Conwy files: three were wrong, now all five
+  are right (`tests/ingestion.test.ts`). REPORT joins the kinds offered "Read
+  anyway" rather than "Read this invitation".
+- **A bid programme under ten working days.** Built when a person ticks "Build
+  it compressed" and gives a reason: days shared in proportion, each short stage
+  marked `belowMinimum`, the programme carrying `compression` (reason, who,
+  when). Refused without a reason, and refused outright with no working day
+  left. The tender position now carries its latest programme's stages and the
+  board shows them — a programme was previously built and shown nowhere
+  (`tests/tenderintake.test.ts`).
+- **"Issue the pack" needed an AI review.** Correction to the deep-test report:
+  "Attack the pack" already ran its deterministic lenses with no model and
+  recorded that the model did not run. What was missing was a way to *choose*
+  that half: every review went to a cleared provider and charged, and an empty
+  wallet blocked even the free checks. `POST …/bid-responses/:packId/checks`
+  (no `ai` descriptor) runs the same review without the model at no cost —
+  "Check the pack — free, no AI". Verified in the browser: checks, a named
+  decision on each high finding, BID-0001 issued (`tests/redteam.test.ts`).
+- **Tender AI needs `AI_PROVIDER_CLEARANCE`.** Not rebuilt as a console setting:
+  the section *The vendor clearance stays where it was* records that one was
+  built and removed at the owner's instruction, and it stays that way until he
+  confirms otherwise. Fixed within that decision: the refusal now names each
+  configured vendor and its clearance, gives the exact line to set, says a
+  restart reads it and that nothing was sent or charged, and names the free
+  routes; the cost box shows the vendor's clearance beside what the request
+  carries (`tests/sensitivityrouting.test.ts`). **Still open:** the quote cannot
+  predict a clearance refusal, because the sensitivity of a run comes from the
+  records the engine attaches at execution, which the quote route does not see.
+
+Found while verifying, and fixed: **"Show all tenders" did nothing.** It cleared
+the project and the redraw's context load picked the first project again, so a
+second tender on the board could never be acted on. A deliberate close is now
+remembered (`projectClosed`) and cleared when a project is chosen.
+
+## 2026-11 the tender pack read in one run, checked in code, confirmed in one step
+
+The owner compared three weeks on the platform with five bids in under two
+hours by giving a chat model every document and one prompt. The direction he
+set: keep every process, make each one work, accurately and fast. This is the
+first part — upload, one reading of the whole pack, its review and checks, and
+one confirmation that files the invitation, the matrix and the returns.
+
+**What changed, built on what was there** (same reader, prompt, draft, cost
+confirmation and confirm path as reading one file):
+
+- `POST /v1/projects/:projectId/tender/read-pack` (`domain/tenderreading.ts`,
+  `readTenderPack`). Every tender document whose text the platform has read is
+  sent in one request, each under a `=== Document: name (kind) ===` heading,
+  invitation documents first and then by name (`packText`, over
+  `evidence/pipeline.ts` `packDocuments`, which `tenderpackcheck.ts` now shares).
+  Its own task type (`itt_requirement_extraction_pack`) so its learned price is
+  not averaged with single files. Refused before any call with no readable
+  document (`NO_PACK`) or over the 400k-character reading limit
+  (`PACK_TOO_LARGE`, naming the three largest files). The real Conwy pack is
+  about 108k characters of document text, ~27k tokens: one request.
+- The quote is sized from the pack: `Route.ai.quoteInputText` hands the quote
+  route the text the run will send.
+- The ITT prompt and schema now ask for the deadline as printed
+  (`returnByLocal`), the zone only where stated, the questions and site-visit
+  dates, the issue date, the return channel, and a `sourceQuote` copied from the
+  documents for every requirement and return.
+- **Checks in code, filed with the draft** (`checkTenderReading`): deadline not
+  a date, deadline past, no zone stated (note), questions closing after the
+  return, scored weightings not adding to 100, a limited question with no
+  weighting (note), a limit that is not a count, a reference used twice, a
+  drawing note or the marking scheme read as a requirement, a requirement or a
+  return whose quote and words are nowhere in the pack, nothing to return.
+  None blocks the confirmation; each is shown first with its references.
+- **One review**: the draft card shows the documents read together, the
+  deadline with its zone, issue/questions/site visit/channel, the checks, a
+  Limit column and a "not found in the documents" badge on each untraced line.
+- **Confirm records the invitation where the project has none**
+  (`confirmReading`, `invitationForReading`): the form is prefilled from the
+  reading (a field it did not find is left empty, never guessed) and goes
+  through `registerOpportunity` (linked to the project) and `recordInvitation`
+  with every rule they apply. The draft and the user's authority are checked
+  before anything is written. Where the project already has an invitation it is
+  used, never recorded twice; a closed tender (no-bid, lost, converted) refuses
+  with `TENDER_CLOSED`. An invitation refused by its own rules leaves at most
+  the pursuit, which the next attempt reuses.
+
+**Two defects found by running it in a browser, fixed at the root:**
+
+- **The same pack on a second project was never read.** The upload finds its
+  record by hash across the tenancy, which is the *first* project's; the
+  on-arrival reading ran there, was refused as already read, and the project
+  being uploaded to kept five files "not yet looked at". Each project that filed
+  the bytes as a tender document is now read on its own project, under the
+  uploader's authority (`tests/tenderupload.test.ts`).
+- **Text reading was switched off whenever no vision provider was present.**
+  Every reading button was gated on the perception (seeing) provider, although
+  reading text needs only a reasoning one. `perceptionCapability` now also
+  publishes `textReading`; the text buttons and the pack button follow it.
+
+**Verified.** `tests/tenderreading.test.ts` (20) on the Conwy wording; the
+full suite and typecheck. In a real browser on a copy of the test journal with
+a **stand-in model** (a fixed answer shaped like a correct Conwy reading — no
+provider was called and nothing was spent): the five real Conwy files uploaded
+to a fresh project and were read on arrival; one press read all five; the cost
+box sized it at ~27k tokens; the correct reading traced every quote against the
+platform's own extraction of the real PDFs and DOCX (0 to look at, 1 note: no
+zone stated); a second reading with planted mistakes was flagged (weights adding
+to 30%, a Q8 not in the documents); the prefilled form recorded ERCF2509N, the
+8-line matrix and 8 returns in one confirmation. The same fixed answer against
+the five real Telford DPS documents was flagged on all 8 requirements and all 8
+returns as not in the documents.
+
+**Not verified, and cannot be here:** how well a real model reads a real pack.
+No provider can be called from this environment; everything above proves the
+platform around the model, not the model.
+
+**Recorded, not changed:** the Telford DPS guidance documents (Stage 1 and 2)
+are classified SPECIFICATION, not INVITATION. The pack reading sends every
+document whatever its kind, so it does not affect this path; the per-file
+"Read this invitation" offer is unchanged.
+
+**Next, in the order agreed:** the answers, pricing and programme filled from
+the confirmed reading in the same way, and a readiness check before a tender
+starts (company facts, brand, registered details, numbering, AI clearance).
+
+## 2026-11 every answer drafted in one press, with the tender documents in view
+
+The second part agreed with the owner: the answers, the pricing and the
+programme filled from the confirmed reading. This is the answers.
+
+- **Each answer is drafted with the tender's own documents.** `draftSection`
+  (`domain/bidresponse.ts`) now sends `tenderDocuments` — the pack as the reader
+  sees it (`packText`, moved to `evidence/pipeline.ts` as its one home,
+  re-exported by `tenderreading.ts`), capped at `DRAFTING_PACK_MAX` (160,000
+  characters, ~40k tokens) by whole documents in order, naming any left out.
+  An answer drafted from the matrix alone knew the question and nothing about
+  the job; an evaluator marks a generic answer down. The constraints are
+  unchanged: state nothing about the job the documents do not say, invent no
+  project, person or figure.
+- **"Draft all N remaining answers"** on each pack row. One price for the lot,
+  then the existing one-answer route called once per answer, with progress on
+  the button. Not one long request: seven answers take minutes, and the route
+  was built one answer per call so a dropped connection costs one answer. A
+  refusal stops the run there, keeps what was written, charges nothing more,
+  and says why. `bidResponsePosition` publishes `toWrite` per pack.
+- **The quote prices what is sent.** The section and redraft routes are sized
+  from the documents each call carries (`Route.ai.quoteInputText`), and the
+  quote takes `repeat` (1–200) so "all seven" is priced as seven runs.
+- **Cost, stated plainly:** every answer now carries the pack, so each call is
+  larger. On Conwy, the quote for all seven answers was about £1.75 paid to the
+  provider at the published rate before any measured history.
+
+Verified: `tests/tenderreading.test.ts` (each of the seven Conwy answers is
+sent the instructions and its 1,000-word limit; one call per answer; a press
+with nothing left spends nothing; the cap leaves whole documents out by name),
+`tests/quote.test.ts` (a repeat is priced as that many runs; zero is refused).
+In the browser on the stand-in server: "Draft all 7 remaining answers", one
+cost box, seven calls, each sent 108,776 characters of the real Conwy
+documents and its own limit, 7 of 7 written. As before, a stand-in model was
+used: nothing here measures how good a real model's answers are.
+
+## 2026-11 CI had produced no result since at least run 819 — fixed
+
+Every CI run on the working branch was **cancelled** at the job's 10-minute
+limit; none passed or failed. Three causes, each fixed at the root:
+
+- **The lockout suite never exited against an external Redis.** CI points the
+  suites at a service container (`TEST_REDIS_URL`); locally they start and kill
+  their own `redis-server`, which closed any socket left open, so it passed
+  here. Two product defects behind it, in the shared Redis client used by the
+  rate limiter and the identity lockouts (`api/sharedlimiter.ts`):
+  - two commands sent at once on a fresh client each opened a socket and the
+    first was never closed — the connection attempt is now shared, and a
+    connection that finishes opening after `close()` is discarded;
+  - a command sent while another was in flight was **refused**, and the client
+    then closed the connection under the first — so every overlapping rate-limit
+    or lockout check fell back to the per-process count. Commands now queue on
+    the one connection, as its own comment always said they were meant to.
+  - `lockout.attachShared` now closes the backend it replaces.
+  Regression tests in `tests/sharedlimiter.test.ts` (three concurrent commands,
+  one socket, replies in order; a socket opened after close is closed).
+- **The suite ran twice.** "Fail if the shared limiter was not exercised" ran
+  the whole of `npm test` again to look for one line. It now runs the two Redis
+  suites only.
+- **That check could never fire.** It searched for `SKIPPED: no Redis`; both
+  suites print `SKIPPED: no redis-server binary…`. It now matches what they print.
+
+The job limit is 20 minutes: the suite alone takes about four and a half on a
+runner, and the image build and boot follow it.

@@ -1,3 +1,6 @@
+import { expertBriefing } from '../ai/expertise.ts';
+import { HOLISTIC_CRITIQUE_SCHEMA, shapeHolisticCritique } from '../ai/refine.ts';
+import { config } from '../config.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
@@ -248,7 +251,11 @@ export async function extractContractIntelligence(
     capability: 'REASONING',
     inputRefs: [{ refType: 'Contract', refId: input.contractId }],
     request: {
-      task: 'Identify clauses in each obligation category and extract any time bar that applies',
+      task:
+        `${expertBriefing('COMMERCIAL_MANAGER')} ` +
+        'Identify clauses in each obligation category and extract any time bar that applies, from the contract text ' +
+        'supplied. Quote the clause number and wording for each; where a notice period or time bar runs from an event, ' +
+        'state the trigger and the period exactly as the contract sets them, and never infer a bar the text does not carry.',
       payload: { suite: contract.state.suite, form: contract.state.form, categories, contractText: input.contractText.slice(0, 40_000) },
     },
     toWrites: (output) => {
@@ -387,6 +394,114 @@ export async function assessImpact(
     linkedEntities: [{ refType: 'ChangeRequest', refId: input.changeRequestId }],
   });
 
+  // The one write this assessment makes, factored out so the local single-call
+  // path and the production independent-loop path below write the identical
+  // IMPACT_ASSESSED event — the ledger record does not depend on which path
+  // produced the validated answer.
+  const impactAssessedWrites = (output: Record<string, unknown>) => [
+    {
+      eventType: 'IMPACT_ASSESSED' as const,
+      entity: { refType: 'ImpactAssessment' as const, refId: assessmentId },
+      nextState: {
+        id: assessmentId,
+        changeRequestId: input.changeRequestId,
+        // The figures the assessor gave. These are the record; the AI
+        // assessment below sits beside them and does not overwrite them.
+        costImpactMinor: input.costImpactMinor,
+        timeImpactDays: input.timeImpactDays,
+        affectedTaskIds: input.affectedTaskIds,
+        qualityImpact: input.qualityImpact,
+        safetyImpact: input.safetyImpact,
+        entitlementNarrative: String(output.summary ?? ''),
+        // The whole validated answer, kept whole. Splitting it across
+        // columns would lose the thing that makes it usable: that these ten
+        // fields were established together, on one answer, and every source
+        // in it resolves to a record on this project.
+        aiAssessment: output,
+        assessedAt: new Date().toISOString(),
+        assessedBy: ctx.auth.actorId,
+      },
+      evidenceRefs: [evidence],
+    },
+  ];
+
+  // Verify-and-improve, the independent two-pass form — production only. An
+  // entitlement assessment is written to the ledger and priced off, so it cannot
+  // run the same independent loop the advisory deliverables do without risking
+  // that record. So the independent pass is kept OFF the write: a draft and an
+  // independent senior reviewer's critique are produced as advisory calls (they
+  // write nothing), and only their result is carried into the single writing
+  // call, which still validates to the AI Output Standard. On the local stand-in
+  // (AI_MODE=local, as the suite runs) the loop is skipped entirely and the
+  // writing call below is byte-for-byte the single-call self-critique assessment
+  // it has always been — this path runs, and is verifiable, only against a real
+  // provider.
+  let independentReview: { sound: boolean; faults: string[]; draft: Record<string, unknown> } | null = null;
+  let loopAcu = 0;
+  if (config.ai.mode !== 'local') {
+    try {
+      const draft = await runAI(ctx, {
+        engine: 'CONTRACTS_CLAIMS',
+        taskType: 'impact_assessment_draft',
+        capability: 'REASONING',
+        inputRefs: [{ refType: 'ChangeRequest', refId: input.changeRequestId }],
+        request: {
+          task:
+            `${expertBriefing('CHANGE_MANAGER', { stage: 5 })} ` +
+            'Assess the entitlement basis, the knock-on effects and the notice obligations this change triggers. Found the ' +
+            'entitlement on a named clause, separate time from money, flag the notice and any time bar that must be served ' +
+            'to preserve the entitlement, and do not assert an entitlement the contract does not support. This is a first ' +
+            'draft an independent senior reviewer will mark before it is finalised, so set out your full reasoning.',
+          payload: {
+            change: changeRequest.state,
+            costImpactMinor: input.costImpactMinor,
+            timeImpactDays: input.timeImpactDays,
+            affectedTaskIds: input.affectedTaskIds,
+          },
+        },
+        toWrites: () => [],
+      });
+      loopAcu += draft.acuConsumed;
+      // A synthetic draft reasons about nothing; fall through to the single
+      // writing call rather than critique an empty answer.
+      if (!draft.synthetic) {
+        const critique = await runAI(ctx, {
+          engine: 'CONTRACTS_CLAIMS',
+          taskType: 'impact_assessment_critique',
+          capability: 'REASONING',
+          inputRefs: [{ refType: 'ChangeRequest', refId: input.changeRequestId }],
+          request: {
+            task:
+              `${expertBriefing('CHANGE_MANAGER', { stage: 5 })} ` +
+              'A first pass has assessed the entitlement of the change below. You did not write it. Review it as the senior ' +
+              'commercial reviewer who must sign it would: is every entitlement founded on a clause that is actually cited; ' +
+              'is time kept strictly apart from money; is every notice and time bar that preserves the entitlement named ' +
+              'with its period and trigger; is any entitlement asserted that the contract does not support. Return `sound` ' +
+              'and `faults`: an array of the specific things to fix, each in one phrase. If it is sound on every count, ' +
+              'return no faults.',
+            payload: {
+              change: changeRequest.state,
+              costImpactMinor: input.costImpactMinor,
+              timeImpactDays: input.timeImpactDays,
+              affectedTaskIds: input.affectedTaskIds,
+              draft: draft.output,
+            },
+            responseSchema: HOLISTIC_CRITIQUE_SCHEMA,
+          },
+          toWrites: () => [],
+        });
+        loopAcu += critique.acuConsumed;
+        const { sound, faults } = shapeHolisticCritique(critique.output);
+        independentReview = { sound, faults, draft: draft.output };
+      }
+    } catch {
+      // A provider or wallet failure mid-loop: fall back to the single-call
+      // self-critique assessment below. The change must still get its
+      // assessment, and that call carries its own refusal handling.
+      independentReview = null;
+    }
+  }
+
   const result = await runAI(ctx, {
     engine: 'CONTRACTS_CLAIMS',
     taskType: 'impact_assessment',
@@ -398,41 +513,49 @@ export async function assessImpact(
     // way to tell a real assessment of the contractual position from a model
     // writing agreeably around one.
     outputStandard: true,
-    request: {
-      task: 'Assess entitlement basis, knock-on effects and the notice obligations this change triggers',
-      payload: {
-        change: changeRequest.state,
-        costImpactMinor: input.costImpactMinor,
-        timeImpactDays: input.timeImpactDays,
-        affectedTaskIds: input.affectedTaskIds,
-      },
-    },
-    toWrites: (output) => [
-      {
-        eventType: 'IMPACT_ASSESSED',
-        entity: { refType: 'ImpactAssessment', refId: assessmentId },
-        nextState: {
-          id: assessmentId,
-          changeRequestId: input.changeRequestId,
-          // The figures the assessor gave. These are the record; the AI
-          // assessment below sits beside them and does not overwrite them.
-          costImpactMinor: input.costImpactMinor,
-          timeImpactDays: input.timeImpactDays,
-          affectedTaskIds: input.affectedTaskIds,
-          qualityImpact: input.qualityImpact,
-          safetyImpact: input.safetyImpact,
-          entitlementNarrative: String(output.summary ?? ''),
-          // The whole validated answer, kept whole. Splitting it across
-          // columns would lose the thing that makes it usable: that these ten
-          // fields were established together, on one answer, and every source
-          // in it resolves to a record on this project.
-          aiAssessment: output,
-          assessedAt: new Date().toISOString(),
-          assessedBy: ctx.auth.actorId,
+    request: independentReview
+      ? {
+          // The independent pass ran: finalise from the draft and the reviewer's
+          // marks rather than self-reviewing, and validate to the Output Standard.
+          task:
+            `${expertBriefing('CHANGE_MANAGER', { stage: 5 })} ` +
+            'A first pass has assessed the entitlement of this change, and an independent senior commercial reviewer has ' +
+            'marked it — the draft and the review are both supplied. Produce the corrected final assessment that resolves ' +
+            'every fault the reviewer named: found each entitlement on a clause that is actually cited, keep time strictly ' +
+            'apart from money, name every notice and time bar with its period and trigger, and assert no entitlement the ' +
+            'contract does not support. Return only the corrected final assessment.',
+          payload: {
+            change: changeRequest.state,
+            costImpactMinor: input.costImpactMinor,
+            timeImpactDays: input.timeImpactDays,
+            affectedTaskIds: input.affectedTaskIds,
+            draft: independentReview.draft,
+            review: { sound: independentReview.sound, faults: independentReview.faults },
+          },
+        }
+      : {
+          task:
+            `${expertBriefing('CHANGE_MANAGER', { stage: 5 })} ` +
+            'Assess the entitlement basis, the knock-on effects and the notice obligations this change triggers. Found the ' +
+            'entitlement on a named clause, separate time from money, flag the notice and any time bar that must be served ' +
+            'to preserve the entitlement, and do not assert an entitlement the contract does not support. ' +
+            // Verify-and-improve, in one call: with no real provider the
+            // independent loop above is skipped, so the single call reviews its
+            // own draft before it answers rather than leaving the figures
+            // unchecked.
+            'Before you answer, draft the assessment, then review your own draft as the senior commercial reviewer who must ' +
+            'sign it would: is every entitlement founded on a clause that is actually cited; is time kept strictly apart ' +
+            'from money; is every notice and time bar that preserves the entitlement named with its period and trigger; is ' +
+            'any entitlement asserted that the contract does not support. Return only the corrected final assessment that ' +
+            'survives that review, not the first draft.',
+          payload: {
+            change: changeRequest.state,
+            costImpactMinor: input.costImpactMinor,
+            timeImpactDays: input.timeImpactDays,
+            affectedTaskIds: input.affectedTaskIds,
+          },
         },
-        evidenceRefs: [evidence],
-      },
-    ],
+    toWrites: impactAssessedWrites,
   });
 
   write(ctx, {
@@ -442,7 +565,7 @@ export async function assessImpact(
     evidenceRefs: [evidence],
   });
 
-  return { assessmentId, acuConsumed: result.acuConsumed };
+  return { assessmentId, acuConsumed: result.acuConsumed + loopAcu };
 }
 
 export function instructVariation(
@@ -1092,7 +1215,11 @@ export async function assessDelayClaim(
     capability: 'REASONING',
     inputRefs: delayEvents.map((e) => ({ refType: 'DelayEvent', refId: e.id })),
     request: {
-      task: 'Review the delay attribution and set out the contractual argument, including concurrency treatment',
+      task:
+        `${expertBriefing('COMMERCIAL_MANAGER', { stage: 5 })} ` +
+        'Review the delay attribution and set out the contractual argument, including concurrency treatment. Follow the ' +
+        'SCL Delay and Disruption Protocol: assess delay by its effect on the critical path, treat concurrency and float ' +
+        'ownership on the protocol’s terms, and state the method of analysis rather than asserting a figure of days.',
       payload: { attribution, assessment, claimType: input.claimType },
     },
     toWrites: (output) => [
@@ -1188,7 +1315,10 @@ export async function buildEvidencePack(
     capability: 'REASONING',
     inputRefs: [{ refType: 'Claim', refId: input.claimId }],
     request: {
-      task: 'Write the narrative chronology tying the evidence to the entitlement argument',
+      task:
+        `${expertBriefing('COMMERCIAL_MANAGER', { stage: 5 })} ` +
+        'Write the narrative chronology tying the evidence to the entitlement argument. Anchor each step to a dated ' +
+        'record in the evidence, keep the cause-and-effect chain unbroken, and make no claim the timeline does not carry.',
       payload: { eventCount: timeline.length, attribution, audience: input.audience },
     },
     toWrites: (output) => [

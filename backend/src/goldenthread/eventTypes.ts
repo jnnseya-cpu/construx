@@ -89,6 +89,34 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // score an opportunity; it may not decide to pursue one.
   def('BID_NO_BID_DECIDED', 'Opportunity', 'APPROVE', 'BUSINESS_DEVELOPMENT'),
   def('OPPORTUNITY_CONVERTED', 'Opportunity', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  // Autonomous Consultancy — the stateful engagement and its work-package tasks.
+  // A consultancy engagement is a business-development record: an opportunity or
+  // commission worked by the agents, with a workboard of required digital tasks.
+  def('CONSULTANCY_ENGAGEMENT_OPENED', 'ConsultancyEngagement', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  def('CONSULTANCY_ENGAGEMENT_UPDATED', 'ConsultancyEngagement', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  def('CONSULTANCY_TASK_REGISTERED', 'ConsultancyTask', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  def('CONSULTANCY_TASK_UPDATED', 'ConsultancyTask', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  // Evidence and lineage — a registered source with its locator and confidence,
+  // and a claim that traces to the evidence, assumptions and calculations behind it.
+  def('CONSULTANCY_EVIDENCE_REGISTERED', 'ConsultancyEvidence', 'CREATE', 'EVIDENCE', { creates: true }),
+  def('CONSULTANCY_EVIDENCE_UPDATED', 'ConsultancyEvidence', 'UPDATE', 'EVIDENCE'),
+  def('CONSULTANCY_CLAIM_RECORDED', 'ConsultancyClaim', 'CREATE', 'EVIDENCE', { creates: true }),
+  // A controlled release of a consultancy deliverable — idempotent, and rechecked
+  // against superseded evidence and current authority immediately before issue.
+  def('CONSULTANCY_RELEASE_ISSUED', 'ConsultancyRelease', 'ISSUE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  // A shared procurement and the bids received against it. The per-party view is
+  // filtered at read time so a bidder never sees buyer deliberations, the
+  // evaluations, or another bidder's submission or margin (C03).
+  def('CONSULTANCY_PROCUREMENT_OPENED', 'ConsultancyProcurement', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  def('CONSULTANCY_PROCUREMENT_UPDATED', 'ConsultancyProcurement', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  def('CONSULTANCY_SUBMISSION_RECEIVED', 'ConsultancySubmission', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  // Grid Connection AI — the HV grid-connection delivery engagement and its 42-step,
+  // eight-gate workboard. A delivery record: the engagement opens, its steps move
+  // through agent-run states, and a gate decision is an approval. An electrical gate
+  // (G4–G7) advances only on a verified authority record — never AI-approved.
+  def('GRID_ENGAGEMENT_OPENED', 'GridEngagement', 'CREATE', 'DELIVERY', { creates: true }),
+  def('GRID_ENGAGEMENT_UPDATED', 'GridEngagement', 'UPDATE', 'DELIVERY'),
+  def('GRID_GATE_DECIDED', 'GridEngagement', 'APPROVE', 'DELIVERY'),
   // Corporate memory. Captured on the project that produced it and read across
   // the business, because a lesson only pays for itself on a different job.
   def('LESSON_CAPTURED', 'LessonLearned', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),
@@ -97,6 +125,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // as a governed event with an author.
   def('COMPANY_PROFILE_SET', 'CompanyProfile', 'UPDATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
   def('RADAR_RUN_COMPLETED', 'RadarRun', 'CREATE', 'BUSINESS_DEVELOPMENT'),
+
+  // Trend Intelligence AI — the demand-reading control layer. An observation is a
+  // normalised signal with its provenance, ingested idempotently; an opportunity is the
+  // scored, vetoed assessment of whether the business can serve that demand, re-scored as
+  // the evidence moves. Both sit on the Golden Thread like every other record.
+  def('TREND_OBSERVATION_RECORDED', 'TrendObservation', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  def('TREND_OPPORTUNITY_SCORED', 'TrendOpportunity', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  def('TREND_OPPORTUNITY_RESCORED', 'TrendOpportunity', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
 
   // --- Governance & identity ------------------------------------------------
   def('TENANT_CREATED', 'Tenant', 'CREATE', 'GOVERNANCE'),
@@ -593,6 +629,18 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // turns on.
   def('RFI_CLOSED', 'RFI', 'APPROVE', 'DESIGN', { requiresEvidence: true }),
   def('CORRESPONDENCE_ISSUED', 'Correspondence', 'ISSUE', 'DESIGN', { aiAllowed: true, creates: true }),
+  // Dispatch reconciliation — the transmission lifecycle of an outbound intent (a notice,
+  // a bid, a purchase order), distinct from the thing's own contractual state. The state
+  // machine makes a blind retry structurally impossible: an UNKNOWN_OUTCOME has no edge
+  // back to SENT, only a human-authored reconciliation (DISPATCH_REDISPATCHED, aiAllowed
+  // off) that returns it to PENDING once non-delivery is confirmed (spec §5/§7, AT-17).
+  def('DISPATCH_OPENED', 'Dispatch', 'CREATE', 'DESIGN', { aiAllowed: true, creates: true }),
+  def('DISPATCH_SENT', 'Dispatch', 'UPDATE', 'DESIGN', { aiAllowed: true }),
+  def('DISPATCH_OUTCOME_UNKNOWN', 'Dispatch', 'UPDATE', 'DESIGN', { aiAllowed: true }),
+  def('DISPATCH_RECEIPT_VERIFIED', 'Dispatch', 'UPDATE', 'DESIGN', { aiAllowed: true }),
+  def('DISPATCH_REJECTED', 'Dispatch', 'UPDATE', 'DESIGN', { aiAllowed: true }),
+  def('DISPATCH_CANCELLED', 'Dispatch', 'UPDATE', 'DESIGN'),
+  def('DISPATCH_REDISPATCHED', 'Dispatch', 'UPDATE', 'DESIGN'),
   // A reply is a distinct fact with its own author and its own date, and on the
   // letters where silence is acceptance the date is the whole point. Recording
   // it as another ISSUE would lose who answered and when.
@@ -670,6 +718,23 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
    * on the other side of it, and no agent mandate reaches it.
    */
   def('BOQITEM_SUPERSEDED', 'BoQItem', 'UPDATE', 'PROCUREMENT'),
+  /*
+   * A measured item moved from one package to another.
+   *
+   * It exists because the package an item is filed under is a free-typed name,
+   * and two readings of the same job entered at different times — one off a
+   * drawing confirmed by a model, one keyed by hand — could be filed under names
+   * that read identically but differ by a dash, a stray space or a capital. The
+   * bill then held two packages for one job, and an estimate prices one package
+   * at a time, so a line measured into the second package was silently left out
+   * of the price. This re-files those lines under the package they belong to,
+   * keeping the same items, quantities and cost codes, with a reason and a name
+   * against the move. Nothing is created and nothing is destroyed.
+   *
+   * `aiAllowed: false`: deciding which package a priced line belongs to is a
+   * commercial judgement, and no agent mandate reaches it.
+   */
+  def('BOQITEM_REPACKAGED', 'BoQItem', 'UPDATE', 'PROCUREMENT'),
   // T-WF-03. The schedule opens and takes items under one event, because its
   // whole life is the audit trail of how it was measured.
   def('BOQ_IMPORTED', 'MeasurementSchedule', 'UPDATE', 'PROCUREMENT', { creates: true, aiAllowed: true }),
@@ -728,6 +793,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('TENDER_ADDENDUM_IMPACT_REVIEWED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
   def('REQUIREMENT_WAIVED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
   def('REQUIREMENT_WAIVER_REVOKED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
+  // A compliance undertaking confirmed: the agent drafts the statement, a person
+  // confirms it is true, so the confirmation is a human act, not aiAllowed.
+  def('REQUIREMENT_UNDERTAKEN', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
   // The bid response pack: the half of a tender the platform could read and not
   // write. Planned by a person from a stored analysis, written one section at a
   // time so no single call carries a whole submission, and issued by a person
@@ -739,6 +807,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // either.
   def('BID_RESPONSE_PLANNED', 'BidResponsePack', 'CREATE', 'PROCUREMENT'),
   def('BID_RESPONSE_SECTION_WRITTEN', 'BidResponsePack', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  // The sections planned again — from the scored questions, or a newer reading
+  // of the tender. Decides what the business answers, so a person's act only.
+  def('BID_RESPONSE_REPLANNED', 'BidResponsePack', 'UPDATE', 'PROCUREMENT'),
   // The quality floor a pack's issue is held to. A human setting on the pack,
   // never an agent's: lowering the bar the submission is judged against is a
   // commercial decision, so `aiAllowed` stays false by the catalogue's default.
@@ -810,6 +881,12 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('ACTIVITY_ATTRIBUTES_SET', 'Task', 'UPDATE', 'PROJECT_CONTROL'),
   def('ACTIVITY_STATUS_RECORDED', 'Task', 'UPDATE', 'PROJECT_CONTROL'),
   def('SCHEDULE_RUN', 'ScheduleRun', 'CREATE', 'PROJECT_CONTROL'),
+  // The tender programme drafted from the bill. Drafting and superseding an
+  // older waiting draft are the reading's own writes; confirming it into the
+  // project programme is a person's commitment, so no agent reaches it.
+  def('TENDER_PROGRAMME_DRAFTED', 'TenderProgrammeDraft', 'CREATE', 'PROJECT_CONTROL', { aiAllowed: true }),
+  def('TENDER_PROGRAMME_SUPERSEDED', 'TenderProgrammeDraft', 'UPDATE', 'PROJECT_CONTROL', { aiAllowed: true }),
+  def('TENDER_PROGRAMME_CONFIRMED', 'TenderProgrammeDraft', 'UPDATE', 'PROJECT_CONTROL'),
   // Resources: what the programme needs and how much of it there is. The
   // availability limit is a statement about the business, so it is recorded
   // rather than assumed, and levelling is computed from it rather than stored.
@@ -941,10 +1018,27 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // hash: a record saying "a bid went in at 11:52" proves you sent something,
   // and the argument after a disqualification is always about which bytes.
   def('TENDER_SUBMITTED', 'BidSubmissionPack', 'ISSUE', 'PROCUREMENT', { requiresEvidence: true }),
+  // A bid submitted on the buyer's own portal, not assembled and issued inside
+  // the platform. The in-house path compiles a pack, locks a content hash and
+  // records a receipt against it; a one-person firm that writes its answers on
+  // In-Tend has none of that, so without this its submitted tenders read as still
+  // being prepared for ever. This records the fact it went in — the date and the
+  // portal's reference — as a submitted pack flagged `externallySubmitted`, which
+  // is honest about what it is and is not: a note that the bid was submitted, with
+  // no claim the platform compiled or checked it. `aiAllowed: false` by default.
+  def('BID_SUBMITTED_EXTERNALLY', 'BidSubmissionPack', 'CREATE', 'PROCUREMENT'),
   def('AWARD_RECEIVED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
   // What the client awarded that is not what was bid. Computed rather than
   // typed: a departure somebody noticed is not the one that costs money.
   def('AWARD_DEPARTURE_IDENTIFIED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
+  // After the submission goes in, the buyer asks questions during evaluation and
+  // may challenge an abnormally low price. Both are logged against the pack: a
+  // query that was answered off the record, and a price nobody substantiated,
+  // are how a scored bid is disqualified after the hard work is already done.
+  def('POST_TENDER_QUERY_RAISED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
+  def('POST_TENDER_QUERY_ANSWERED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
+  def('PRICE_CHALLENGE_RAISED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
+  def('PRICE_CHALLENGE_SUBSTANTIATED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
   // The budget and the buyout targets, carried off the estimate rather than
   // re-keyed. Evidence required because it is the join the whole no-re-entry
   // rule stands on.
@@ -1312,12 +1406,26 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
    * decision a person takes.
    */
   def('AGENT_ACT_EXECUTED', 'AgentProposal', 'UPDATE', 'AI_BILLING', { aiAllowed: true }),
+  // The CONSTRUX AI Gateway's own request lifecycle (provider-neutral; §16). The
+  // requested event records the run and its user-safe result; it carries no
+  // provider, model or raw cost, which stay on the operator's route record and
+  // never on this customer-scoped entity (spec P03). A consequential output is
+  // held here and released only by a human — the approve/reject events are
+  // decisions, so no AI actor may author one, which is what stops the gateway
+  // approving its own proposal.
+  def('AI_GATEWAY_REQUESTED', 'AIGatewayRequest', 'AI_EXECUTE', 'AI_BILLING', { aiAllowed: true, creates: true }),
+  def('AI_GATEWAY_APPROVED', 'AIGatewayRequest', 'APPROVE', 'AI_BILLING'),
+  def('AI_GATEWAY_REJECTED', 'AIGatewayRequest', 'REJECT', 'AI_BILLING'),
   // Granting a machine the authority to act without asking is the single
   // highest-consequence decision anybody makes about this platform, so it is a
   // governed event and no AI actor may author one. That is what stops an agent
   // granting itself an envelope: the registry declares *eligibility*, this
   // records *authority*, and the commit refuses an AI author outright.
   def('AGENT_ENVELOPE_GRANTED', 'AgentEnvelope', 'APPROVE', 'GOVERNANCE', { creates: true }),
+  // The per-project cumulative cap on the aggregate value of unattended acts (spec §1 A2):
+  // the envelope caps a single act, this caps the running total across every agent.
+  def('AGENT_ACT_BUDGET_SET', 'AgentActBudget', 'APPROVE', 'GOVERNANCE', { creates: true }),
+  def('AGENT_ACT_BUDGET_CHANGED', 'AgentActBudget', 'APPROVE', 'GOVERNANCE'),
   // Withdrawal is equally governed, and equally human. An agent that could
   // revoke could also decline to.
   def('AGENT_ENVELOPE_REVOKED', 'AgentEnvelope', 'APPROVE', 'GOVERNANCE'),
@@ -1374,6 +1482,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SUPPORT_ACCESS_OPENED', 'SupportAccessGrant', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('SUPPORT_ACCESS_USED', 'SupportAccessGrant', 'UPDATE', 'GOVERNANCE'),
   def('SUPPORT_ACCESS_CLOSED', 'SupportAccessGrant', 'UPDATE', 'GOVERNANCE'),
+  // A person reports a problem — the copilot could not help, or a request
+  // errored — and it is put on the record rather than lost. Filed by a person,
+  // never an AI: a report is a human saying "this is wrong", which is exactly
+  // what an AI must not fabricate on their behalf.
+  def('SUPPORT_REPORT_FILED', 'SupportReport', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('RECORD_SHARE_ACCEPTED', 'RecordShare', 'UPDATE', 'GOVERNANCE'),
   // The enterprise / group specification: the agreement under a group,
   // versioned and effective-dated; the document lifecycle with an issuance
@@ -1755,6 +1868,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // the moment an unverified output would become institutional truth, and it
   // carries an approver for the same reason no mandate exceeds propose.
   def('BID_OUTCOME_RECORDED', 'Opportunity', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  // A recorded outcome is write-once, because the calibration cannot rely on a
+  // result that can be rewritten. But a result recorded in error — a loss filed
+  // against the wrong tender — has to have a way back, or the record is wrong for
+  // ever. This is that way: a privileged, reasoned reversal that leaves the
+  // original BID_OUTCOME_RECORDED event untouched on the chain and appends the
+  // correction beside it. `aiAllowed: false` by the catalogue's default — reversing
+  // institutional truth is a director's act, never an agent's.
+  def('BID_OUTCOME_CORRECTED', 'Opportunity', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
   def('CALIBRATION_LESSON_PROPOSED', 'CalibrationLesson', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true, aiAllowed: true }),
   def('CALIBRATION_LESSON_PROMOTED', 'CalibrationLesson', 'APPROVE', 'BUSINESS_DEVELOPMENT'),
   def('CALIBRATION_LESSON_REJECTED', 'CalibrationLesson', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
@@ -1768,7 +1889,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('ASSURANCE_FINDING_DISPOSED', 'AssuranceReview', 'APPROVE', 'PROCUREMENT'),
 
   def('EVIDENCE_CLAIM_ASSERTED', 'EvidenceClaim', 'CREATE', 'EVIDENCE', { creates: true, aiAllowed: true }),
+  // Linking a held claim to the requirements it answers on a tender. Clerical and
+  // reversible — the same act an agent may do when it files a certificate against
+  // the claim it evidently supports — so `aiAllowed`.
+  def('EVIDENCE_CLAIM_LINKED', 'EvidenceClaim', 'UPDATE', 'EVIDENCE', { aiAllowed: true }),
   def('EVIDENCE_CLAIM_VERIFIED', 'EvidenceClaim', 'APPROVE', 'EVIDENCE'),
+  // A one-director owner attesting their own claim: approved, but named as the
+  // self-check it is, never as an independent verification.
+  def('EVIDENCE_CLAIM_SELF_ATTESTED', 'EvidenceClaim', 'APPROVE', 'EVIDENCE'),
   def('EVIDENCE_CLAIM_REJECTED', 'EvidenceClaim', 'UPDATE', 'EVIDENCE'),
 
   // What a model read out of a held file, and what a person did about it. Three
@@ -2196,6 +2324,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // money the business is waiting for.
   def('TOPUP_CANCELLED', 'TopUpIntent', 'UPDATE', 'AI_BILLING'),
   def('PAYMENT_RECEIVED', 'PaymentReceipt', 'CREATE', 'AI_BILLING', { creates: true }),
+  // The Grid Connection AI (and future) commercial add-ons. The AddonGrant is the
+  // operator-side provision — the Platform-Admin grant, the verified provider status
+  // and the paid seat quantity — written on the platform tenancy. Each AddonSeat is a
+  // named seat a company assigns to its own user, on the customer's own ledger, so
+  // capacity is countable and every assignment is attributable on the thread.
+  def('ADDON_GRANT_SET', 'AddonGrant', 'CREATE', 'AI_BILLING', { creates: true }),
+  def('ADDON_GRANT_CHANGED', 'AddonGrant', 'UPDATE', 'AI_BILLING'),
+  def('ADDON_SEAT_ASSIGNED', 'AddonSeat', 'CREATE', 'AI_BILLING', { creates: true }),
+  def('ADDON_SEAT_REVOKED', 'AddonSeat', 'UPDATE', 'AI_BILLING'),
 
   // --- Concept, stage 6 -----------------------------------------------------
   //

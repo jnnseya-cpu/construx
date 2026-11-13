@@ -3223,7 +3223,7 @@ export async function bidon(root) {
       fields: [
         { name: 'clientName', label: 'Company name', type: 'text', hint: 'As it should appear on the document — e.g. JNseya Construction.' },
         { name: 'primaryColour', label: 'Brand colour', type: 'text', hint: 'A hex colour for headings, e.g. #1F4FD0.' },
-        { name: 'documentReferencePrefix', label: 'Document reference prefix', type: 'text', hint: 'A short code that numbers your documents, e.g. JNSEYA.' },
+        { name: 'documentReferencePrefix', label: 'Document reference prefix', type: 'text', hint: 'A short company code, e.g. JNSEYA, for documents that belong to no project. A tender’s documents carry that project’s own reference and name.' },
         { name: 'legalFooter', label: 'Legal footer', type: 'textarea', rows: 2,
           hint: 'The registered line at the foot of each page — company name, number and registered address.' },
       ],

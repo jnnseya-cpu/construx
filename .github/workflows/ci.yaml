@@ -17,7 +17,10 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The suite alone takes about four and a half minutes on a runner, and the
+    # image build and boot follow it. Ten minutes cancelled every run once the
+    # suite grew past half of it.
+    timeout-minutes: 20
 
     # The shared rate limiter runs its bucket arithmetic as a script inside
     # Redis, so it is tested against a real one. Without this the limiter suite
@@ -78,10 +81,15 @@ jobs:
       # The limiter suite skips rather than fails when no backend is reachable,
       # which is right for a laptop and wrong for CI. This turns a silent skip
       # into a red build.
+      # Only the two suites that use Redis, not the whole suite a second time:
+      # the question is whether they skipped, and running everything again
+      # doubled the job for the answer to it.
       - name: Fail if the shared limiter was not exercised
         run: |
-          if npm test 2>&1 | grep -q 'SKIPPED: no Redis'; then
-            echo "The shared rate limiter was not tested against Redis."
+          out=$(node --test backend/tests/sharedlimiter.test.ts backend/tests/sharedlockouts.test.ts 2>&1) || { echo "$out"; exit 1; }
+          if echo "$out" | grep -q 'SKIPPED'; then
+            echo "$out" | grep 'SKIPPED'
+            echo "The shared rate limiter or the shared lockouts were not tested against Redis."
             exit 1
           fi
         env:

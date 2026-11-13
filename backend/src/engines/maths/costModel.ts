@@ -318,6 +318,20 @@ export type CostModelInput = {
    * Absent, nothing changes. Every existing caller bands by the works.
    */
   scaleFloorMinor?: number;
+  /**
+   * Fixed and provisional sums the contractor does not mark up.
+   *
+   * Provisional sums (a soakaway, an asbestos allowance), nominated sums, and
+   * all-in lump sums that already carry their own overhead and profit. These are
+   * added to the tender total *after* margin rather than into the cost the margin
+   * is applied to — because marking up a sum that already includes a margin
+   * charges the client the margin twice, and because a contractor does not profit
+   * on a provisional allowance it will expend against actual cost. They do not
+   * move the weekly burn, the prelims percentage or the contingency, which are
+   * all about the works. Absent, nothing changes: the tender total is cost plus
+   * overhead plus profit exactly as before.
+   */
+  fixedSums?: Array<{ label: string; amountMinor: number; provisional?: boolean }>;
 };
 
 // --- Output ---------------------------------------------------------------------
@@ -350,7 +364,11 @@ export type PricedEstimate = {
     totalCostMinor: number;
     overheadMinor: number;
     profitMinor: number;
+    /** Fixed and provisional sums added after margin, not marked up. */
+    fixedSumsMinor: number;
   };
+  /** The fixed and provisional sums carried, each as given — for the schedule and the quotation. */
+  fixedSums: Array<{ label: string; amountMinor: number; provisional: boolean }>;
   tenderTotalMinor: number;
   /** Profit as a percentage of the tender total — what the margin actually is. */
   marginPercent: number;
@@ -632,7 +650,16 @@ export function priceEstimate(input: CostModelInput): PricedEstimate {
   derivations.set('OVERHEAD', `${input.margin.overheadPercent}% of total cost`);
   derivations.set('PROFIT', `${input.margin.profitPercent}% of cost plus overhead`);
 
-  const tenderTotal = totalCost + overhead + profit;
+  // Fixed and provisional sums are added after margin, not into the cost the
+  // margin is applied to: marking up a sum that already carries its own margin
+  // charges it twice, and a contractor does not profit on a provisional
+  // allowance. Absent, this is zero and the tender total is unchanged.
+  const fixedSums = (input.fixedSums ?? [])
+    .map((sum) => ({ label: String(sum.label ?? '').trim() || 'Fixed sum', amountMinor: Math.round(Number(sum.amountMinor) || 0), provisional: Boolean(sum.provisional) }))
+    .filter((sum) => sum.amountMinor > 0);
+  const fixedSumsMinor = fixedSums.reduce((total, sum) => total + sum.amountMinor, 0);
+
+  const tenderTotal = totalCost + overhead + profit + fixedSumsMinor;
 
   /*
    * Weeks on site that nobody is paying for.
@@ -755,7 +782,9 @@ export function priceEstimate(input: CostModelInput): PricedEstimate {
       totalCostMinor: totalCost,
       overheadMinor: overhead,
       profitMinor: profit,
+      fixedSumsMinor,
     },
+    fixedSums,
     tenderTotalMinor: tenderTotal,
     marginPercent: tenderTotal === 0 ? 0 : Number(((profit / tenderTotal) * 100).toFixed(2)),
     benchmarks: {

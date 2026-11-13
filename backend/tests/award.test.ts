@@ -431,6 +431,9 @@ describe('award · a lost bid is not a dead end', () => {
       receivedOn: '2027-04-02',
       winner: { name: 'Corbridge Construction', sumMinor: 17_900_000_00 },
       notes: 'Second on price, first on quality. Four bidders.',
+      // The notice opened a standstill. A challenge filed after it closes is out
+      // of time, so the window is counted down on the award position.
+      standstillEndsOn: '2099-04-12',
     });
 
     const error = throwsCode(
@@ -454,12 +457,73 @@ describe('award · a lost bid is not a dead end', () => {
 
     const position = award.awardPosition(qs());
     assert.match(position.summary, /0 won, 1 lost/);
+
+    // The standstill window is surfaced and counted down, so a challenge is not
+    // filed out of time.
+    const lostPack = position.packs.find((p) => p.packId === packId)!;
+    assert.equal(lostPack.standstill?.endsOn, '2099-04-12');
+    assert.ok((lostPack.standstill?.daysRemaining ?? 0) > 0, 'the standstill is not being counted down');
   });
 
   it('computes no departures for a loss, because there is nothing to compare', () => {
     const row = award.awardPosition(qs()).packs.find((p) => p.packId === packId)!;
     assert.deepEqual(row.departures, []);
     assert.equal(row.outcome, 'LOST');
+  });
+
+  it('logs a post-tender query, ties the answer and its impact to the bid', () => {
+    const logged = award.logPostTenderQuery(pm(), packId, {
+      question: 'Confirm the generator period priced in schedule item 4.12',
+      receivedOn: '2027-03-20',
+      replyDueBy: '2027-03-25',
+    });
+    assert.equal(logged.open, 1);
+
+    const openRow = award.awardPosition(qs()).packs.find((p) => p.packId === packId)!;
+    assert.equal(openRow.queriesOpen, 1);
+
+    const answered = award.answerPostTenderQuery(pm(), packId, logged.queryId, {
+      reply: 'Sixteen weeks from mobilisation, as priced.',
+      impact: 'NONE',
+    });
+    assert.equal(answered.open, 0);
+
+    throwsCode(
+      () => award.answerPostTenderQuery(pm(), packId, logged.queryId, { reply: 'again', impact: 'NONE' }),
+      'QUERY_ALREADY_ANSWERED',
+    );
+
+    const closedRow = award.awardPosition(qs()).packs.find((p) => p.packId === packId)!;
+    assert.equal(closedRow.queriesOpen, 0);
+    assert.equal(closedRow.postTenderQueries?.[0]?.impact, 'NONE');
+  });
+
+  it('records a price challenge and refuses an empty substantiation', () => {
+    award.recordPriceChallenge(pm(), packId, {
+      raisedOn: '2027-03-21',
+      responseDueBy: '2027-03-28',
+      concern: 'Bid 12% below the next tenderer',
+    });
+
+    throwsCode(
+      () => award.substantiatePriceChallenge(pm(), packId, { basis: ['   '] }),
+      'SUBSTANTIATION_REQUIRED',
+    );
+
+    const result = award.substantiatePriceChallenge(pm(), packId, {
+      basis: ['Measured quantities from the take-off', 'Three firm subcontract quotes on the deep drainage', 'Own plant, no hire markup'],
+      directCostMinor: 16_000_000_00,
+      netMarginPercent: 7.5,
+    });
+    assert.equal(result.lines, 3);
+
+    const row = award.awardPosition(qs()).packs.find((p) => p.packId === packId)!;
+    assert.equal(row.priceChallenge?.substantiated, true);
+
+    throwsCode(
+      () => award.substantiatePriceChallenge(pm(), packId, { basis: ['again'] }),
+      'ALREADY_SUBSTANTIATED',
+    );
   });
 });
 
@@ -483,5 +547,66 @@ describe('award · the event catalogue', () => {
     // the other is the join the whole no-re-entry rule stands on.
     assert.equal(lookupEventType('TENDER_SUBMITTED')!.requiresEvidence, true);
     assert.equal(lookupEventType('BID_CONVERTED_TO_CONTRACT')!.requiresEvidence, true);
+  });
+});
+
+// ── A bid submitted on the buyer's own portal ───────────────────────────────
+
+describe('award · recording a bid submitted on the portal', () => {
+  // Its own project at the tender phase, where PROCUREMENT_AWARD writes are gated.
+  let p: Platform;
+  let s: SeedResult;
+  const owner = () => p.context(s.users.owner!.auth, s.projectId, { source: 'WEB' });
+
+  before(async () => {
+    p = new Platform();
+    s = await seedDemoProject(p);
+    structure.transitionPhase(p.context(s.users.owner!.auth, s.projectId, { source: 'WEB' }), {
+      to: 'TENDER',
+      justification: 'Bidding this tender on the buyer portal',
+    });
+  });
+
+  it('records a portal submission as a submitted pack, flagged, with no built pack', () => {
+    const result = award.recordExternalSubmission(owner(), {
+      submittedOn: '2026-11-10',
+      portalReference: 'IN-TEND/TWC000012/SUB/55',
+    });
+    assert.equal(result.reference, 'IN-TEND/TWC000012/SUB/55');
+
+    const pack = p.ledger.get({ refType: 'BidSubmissionPack', refId: result.packId })!.state as Record<string, any>;
+    assert.equal(pack.status, 'SUBMITTED', 'an external submission must read as submitted so the flow stops preparing it');
+    assert.equal(pack.externallySubmitted, true, 'the pack is not flagged as externally submitted');
+    assert.equal(pack.submission.reference, 'IN-TEND/TWC000012/SUB/55');
+    assert.equal(pack.submission.receivedAt, '2026-11-10');
+    assert.equal(pack.submission.channel, 'PORTAL');
+    // The hash is over the recorded facts, not over content the platform never held.
+    assert.ok(String(pack.contentHash).length > 0, 'the external pack carries no content hash');
+    assert.equal(pack.submission.submittedPackHash, pack.contentHash);
+  });
+
+  it('needs the portal reference and a real date', () => {
+    throwsCode(
+      () => award.recordExternalSubmission(owner(), { submittedOn: '2026-11-10', portalReference: '  ' }),
+      'PORTAL_REFERENCE_REQUIRED',
+    );
+    throwsCode(
+      () => award.recordExternalSubmission(owner(), { submittedOn: 'soon', portalReference: 'REF-1' }),
+      'SUBMISSION_DATE_REQUIRED',
+    );
+  });
+
+  it('records one submission, not two — a resubmission is a new record', () => {
+    // One is already on the record from the first test; a second is refused.
+    throwsCode(
+      () => award.recordExternalSubmission(owner(), { submittedOn: '2026-11-11', portalReference: 'SECOND-ATTEMPT' }),
+      'ALREADY_SUBMITTED',
+    );
+  });
+
+  it('is a human-only create event in the catalogue', () => {
+    const def = lookupEventType('BID_SUBMITTED_EXTERNALLY');
+    assert.ok(def, 'BID_SUBMITTED_EXTERNALLY is not in the catalogue');
+    assert.equal(def!.aiAllowed, false, 'recording a submission must never be an agent action');
   });
 });

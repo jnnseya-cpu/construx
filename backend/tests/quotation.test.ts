@@ -5,7 +5,7 @@ import { quoteFromEstimate } from '../src/domain/quotation.ts';
 import { priceEstimate } from '../src/engines/maths/costModel.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tender from '../src/engines/tender.ts';
-import { approveDocument, documentOf, generateRevision, issueDocument, submitForApproval } from '../src/group/issuance.ts';
+import { approveDocument, bodyBlocks, documentOf, generateRevision, issueDocument, submitForApproval } from '../src/group/issuance.ts';
 import { setIssuerProfile } from '../src/group/profile.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -73,6 +73,19 @@ const QUOTE = {
 };
 
 describe('a priced estimate becomes a quotation', () => {
+  it('refuses when no addressee is given and the project has no buyer on record to default to', () => {
+    // "Quoted to" is optional so a tender quotation defaults to its buyer, but a
+    // project with no opportunity behind it has no buyer to borrow — so rather
+    // than address the offer to the issuing business by the branding default, it
+    // is refused and names what to supply. (A pursuit-linked project defaults
+    // silently; this demo project is a delivery job with no opportunity.)
+    const estimate = completeEstimate();
+    throwsCode(
+      () => quoteFromEstimate(platform, qsCtx(), seed.users.qs!.auth, { estimateId: estimate.estimateId, validUntil: QUOTE.validUntil }),
+      'QUOTATION_NO_CLIENT',
+    );
+  });
+
   it('composes the offer from the estimate rather than from anybody’s memory of it', () => {
     const estimate = completeEstimate();
     const quoted = quoteFromEstimate(platform, qsCtx(), seed.users.qs!.auth, { estimateId: estimate.estimateId, ...QUOTE });
@@ -99,6 +112,33 @@ describe('a priced estimate becomes a quotation', () => {
       String(Object.entries(body).find(([label]) => label.startsWith('Not included'))?.[1]),
       /tower scaffold/,
     );
+  });
+
+  it('groups excluded heads that share a reason into one qualification, not a row each', () => {
+    // A professional-services fee excludes a dozen construction heads for the
+    // same reason. Printing one near-identical "Not included N — HEAD" row per
+    // head read as a data dump on the issued quotation; they collapse to one row
+    // per distinct reason, listing the heads it covers.
+    const reason = 'By others under a separate contract';
+    const estimate = completeEstimate({
+      exclusions: [
+        { head: 'PLANT', reason },
+        { head: 'TEMPORARY_WORKS', reason },
+        { head: 'TESTING', reason },
+        { head: 'COMMISSIONING', reason },
+      ],
+    });
+    const quoted = quoteFromEstimate(platform, qsCtx(), seed.users.qs!.auth, { estimateId: estimate.estimateId, ...QUOTE });
+    const body = quoted.document.body;
+
+    const notIncluded = Object.keys(body).filter((key) => key.startsWith('Not included'));
+    assert.equal(notIncluded.length, 1, 'four heads sharing one reason should be one row, not four');
+    const value = String(body[notIncluded[0]!]);
+    assert.match(value, /By others under a separate contract/);
+    // The one row names every head it covers, comma-separated, before the reason.
+    assert.ok(value.split('—')[0]!.includes(','), 'the grouped row should list the heads it covers');
+    // The period reads as English, not "1 weeks".
+    assert.equal(body['Period on site'], '4 weeks');
   });
 
   it('shows the customer a price and never the margin under it', () => {
@@ -250,6 +290,16 @@ describe('a priced estimate becomes a quotation', () => {
     );
     // What was approved is what was issued.
     assert.equal(documentOf(platform, actor.tenantId, quoted.document.id).revisions.at(-1)!.approval?.hash, hash);
+
+    // And once it is issued, a second priced offer for the same job supersedes
+    // it rather than taking a second number — the mess the first real bidder
+    // hit, five numbered quotations for one job. A fresh estimate on the same
+    // project is refused with the reason, not silently given its own number.
+    const reprice = completeEstimate();
+    throwsCode(
+      () => quoteFromEstimate(platform, qsCtx(), actor, { estimateId: reprice.estimateId, ...QUOTE }),
+      'QUOTATION_ALREADY_ISSUED',
+    );
   });
 });
 
@@ -313,5 +363,44 @@ describe('a take-off a surveyor did by hand', () => {
     // did not happen, and the estimator reads this field to decide how far to
     // trust the quantity.
     assert.equal(item.state.confidenceScore, null);
+  });
+});
+
+// ── The issued quotation reads as a priced schedule, not a data dump ──────────
+describe('a quotation body renders its priced lines as a table', () => {
+  it('lifts the "Item N" rows into a table and keeps the rest as key/values, in order', () => {
+    const blocks = bodyBlocks({
+      Client: 'Telford and Wrekin Council',
+      'Period on site': '1 week',
+      'Item 1': 'Senior Project Manager — Review brief, confirm deliverables, lead mobilisation — 1.5 person-day — £1,087.50',
+      'Item 2': 'Project Director — Review final submission before issue — 0.5 person-day — £437.50',
+      'Item 3': 'Travel — £250.00',
+      'Total, excluding VAT': '£10,750.00',
+      'Payment terms': '28 days from the invoice',
+    });
+
+    // Header, then the item table, then the summary — three blocks, in order.
+    assert.equal(blocks.length, 3);
+    assert.equal(blocks[0]!.kind, 'KEY_VALUES');
+    assert.equal(blocks[1]!.kind, 'TABLE');
+    assert.equal(blocks[2]!.kind, 'KEY_VALUES');
+
+    const table = blocks[1] as { kind: 'TABLE'; headers: string[]; rows: string[][] };
+    assert.deepEqual(table.headers, ['#', 'Description', 'Quantity', 'Amount']);
+    // The description keeps its own em-dash; quantity and amount split off the end.
+    assert.deepEqual(table.rows[0], ['1', 'Senior Project Manager — Review brief, confirm deliverables, lead mobilisation', '1.5 person-day', '£1,087.50']);
+    assert.deepEqual(table.rows[1], ['2', 'Project Director — Review final submission before issue', '0.5 person-day', '£437.50']);
+    // A fixed sum with no quantity still lands in the table, quantity column empty.
+    assert.deepEqual(table.rows[2], ['3', 'Travel', '', '£250.00']);
+
+    // The summary rows the client reads below the table.
+    const summary = blocks[2] as { kind: 'KEY_VALUES'; rows: Array<{ label: string; value: string }> };
+    assert.ok(summary.rows.some((r) => r.label === 'Total, excluding VAT' && r.value === '£10,750.00'));
+  });
+
+  it('leaves a body with no priced lines exactly as it was — one key/value block', () => {
+    const blocks = bodyBlocks({ Client: 'Acme', Reference: 'INV-1', Amount: '£100.00' });
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0]!.kind, 'KEY_VALUES');
   });
 });
