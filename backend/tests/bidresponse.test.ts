@@ -7,6 +7,8 @@ import * as redteam from '../src/domain/redteam.ts';
 import { ROUTES } from '../src/api/routes.ts';
 import { EVENT_TYPES } from '../src/goldenthread/eventTypes.ts';
 import { Platform } from '../src/platform.ts';
+import { AIOrchestrator } from '../src/ai/orchestrator.ts';
+import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
 /**
@@ -457,5 +459,188 @@ describe('needsProse — only the written answers become sections', () => {
   it('never draws an essay where the platform already holds the document', () => {
     assert.equal(bidresponse.needsProse(line({ category: 'QUALITY', weightingPercent: 20, evidenceHeld: 'ISO 9001 certificate on file' })), false);
     assert.equal(bidresponse.needsProse(line({ category: 'TECHNICAL', evidenceHeld: 'Method statement attached' })), false);
+  });
+});
+
+/**
+ * What reaches the buyer is an answer, not a note to finish one.
+ *
+ * A real Conwy County Borough Council submission went out of this pack with
+ * sixty-odd "the bid team will insert…" notes, headings cut to "…/ Che…", and
+ * "our Bid Manager and Planning Lead have prepared and signed the programme"
+ * from a one-person firm. The drafter had been told to name what the bid team
+ * must insert, and was handed the matrix's internal routing role and nothing
+ * about who the firm is. These pin the fix: the drafter is given the firm and
+ * told never to leave a note; a section that still holds one blocks issue; a
+ * redraft is the way forward; and the document prints every question in full.
+ */
+describe('a submission with a note to the bid team in it does not issue', () => {
+  const PLACEHOLDER = [
+    'We will inspect the traffic management daily. The bid team will insert the inspection frequency and the ' +
+      'response time (to be inserted) before submission.',
+  ];
+  const ANSWER = [
+    'We will inspect the traffic management at the start of every shift and after any incident, and respond to a ' +
+      'defect within one hour; Justin Nseya MCIOB, our project manager, signs every inspection record.',
+  ];
+
+  let own: Platform;
+  let mine: SeedResult;
+  const seen: Array<Record<string, unknown>> = [];
+  let replies: string[][] = [];
+
+  const asOwnQS = () => own.context(mine.users.qs!.auth, `${mine.tenantId}-governance`, { source: 'WEB' });
+
+  before(async () => {
+    const adapter: AIProviderAdapter = {
+      name: 'OPENAI',
+      capability: 'REASONING',
+      multimodal: false,
+      transmits: false,
+      estimateCostMinor: () => 40,
+      healthy: () => true,
+      async execute(request: ProviderRequest): Promise<ProviderResponse> {
+        seen.push({ task: request.task, ...(request.payload as Record<string, unknown>) });
+        const body = replies.shift() ?? ANSWER;
+        return { provider: 'OPENAI', modelClass: 'test', output: { body }, rawCostMinor: 40, latencyMs: 5 };
+      },
+    };
+    own = new Platform(new AIOrchestrator({ reasoning: adapter, perception: adapter }));
+    mine = await seedDemoProject(own);
+    own.wallet(mine.tenantId).topUp(1_000_000, 'Drafting top-up');
+  });
+
+  it('tells the drafter who the firm is, and never to leave a note for anyone to insert', async () => {
+    const analysisId = itt.analyseITT(asOwnQS(), {
+      reference: 'ITT-NOTES-01',
+      clientName: 'Conwy County Borough Council',
+      returnBy: '2027-03-01',
+      estimatedValueMinor: 50_000_000,
+      durationWeeks: 12,
+      requirements: [REQUIREMENTS[0]!],
+      terms: { contractForm: 'NEC4 ECC Option A' },
+    }).analysisId;
+    const pack = bidresponse.planBidResponse(asOwnQS(), { analysisId }).pack;
+    replies = [PLACEHOLDER];
+    await bidresponse.writeNextSection(asOwnQS(), { packId: pack.id });
+
+    const asked = seen.at(-1)!;
+    const firm = asked.firm as { people: string[]; singleOwnerBids: boolean };
+    assert.ok(Array.isArray(firm.people) && firm.people.length > 0, 'the drafter is not told who is in the firm');
+    assert.equal(typeof firm.singleOwnerBids, 'boolean');
+    assert.equal(asked.respondingRole, undefined, 'the internal routing role is handed over as if it were staff');
+    const constraint = String(asked.constraint);
+    assert.doesNotMatch(constraint, /name what the bid team must insert/, 'the drafter is still told to leave notes');
+    assert.match(constraint, /never leave a gap/);
+    assert.match(constraint, /claim no team, department or job title the firm does not have/);
+  });
+
+  it('refuses to issue while a section holds a note, names it, and a redraft clears it', async () => {
+    const summary = bidresponse.bidResponsePosition(asOwnQS()).packs.find((p) => p.clientName === 'Conwy County Borough Council')!;
+    const pack = bidresponse.bidResponsePack(asOwnQS(), summary.id);
+    const key = pack.sections[0]!.key;
+
+    const held = bidresponse.bidResponsePack(asOwnQS(), pack.id).completeness;
+    assert.equal(held.ready, false);
+    assert.equal(held.unfinished.length, 1);
+    assert.equal(held.unfinished[0]!.key, key);
+    assert.ok(held.unfinished[0]!.phrases.some((p) => /bid team will insert/i.test(p)));
+    assert.ok(held.unfinished[0]!.phrases.some((p) => /to be inserted/i.test(p)));
+    assert.match(held.summary, /note to the bid team/);
+
+    let message = '';
+    try {
+      bidresponse.issueBidResponse(asOwnQS(), { packId: pack.id });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    assert.match(message, new RegExp(`note to the bid team instead of an answer: ${key}`));
+
+    replies = [ANSWER];
+    const redrafted = await bidresponse.redraftSection(asOwnQS(), { packId: pack.id, key });
+    assert.deepEqual(redrafted.written.body, ANSWER);
+    assert.equal(redrafted.written.authorship, 'AI_DRAFTED');
+    assert.equal(bidresponse.bidResponsePack(asOwnQS(), pack.id).completeness.unfinished.length, 0);
+  });
+
+  it('will not let the drafter overwrite a section a person rewrote', async () => {
+    const summary = bidresponse.bidResponsePosition(asOwnQS()).packs.find((p) => p.clientName === 'Conwy County Borough Council')!;
+    const pack = bidresponse.bidResponsePack(asOwnQS(), summary.id);
+    const key = pack.sections[0]!.key;
+    bidresponse.reviseSection(asOwnQS(), { packId: pack.id, key, body: ['Our own words.'] });
+    await assert.rejects(
+      () => bidresponse.redraftSection(asOwnQS(), { packId: pack.id, key }),
+      (error: Error & { code?: string }) => error.code === 'BID_SECTION_HUMAN_WRITTEN',
+    );
+    assert.ok(
+      ROUTES.some((r) => r.method === 'POST' && r.pattern === '/v1/projects/:projectId/bid-responses/:packId/sections/:key/redraft'),
+      'the redraft has no route, so the refusal has no way forward',
+    );
+  });
+});
+
+describe('unfinishedPhrases — a note to the team, never the buyer’s own words', () => {
+  it('catches every form the Conwy submission carried', () => {
+    for (const text of [
+      'a planned start event and planned finish event (to be populated in the programme by our Bid Team);',
+      'the quantum placeholder (to be filled by the bid team or the Contract sum reconciliation)',
+      'the bid team shall insert those values in the fields titled Risk Allowance',
+      'planned duration (bid team to insert duration values);',
+      'the tender team must insert the Contract Award Date',
+      'Procurement lead time (to be inserted); Risk Allowance activity linkage',
+      'The Bid Team will insert the planned TMP submission lead time',
+      '(Bid team to insert Security Lead name and contact at award.)',
+      'Response within [insert hours] of notification',
+      'Programme period TBC',
+    ]) {
+      assert.ok(bidresponse.unfinishedPhrases(text).length > 0, `not caught: ${text}`);
+    }
+  });
+
+  it('leaves the buyer’s requirements quoted back alone', () => {
+    for (const text of [
+      'Evidence: "Road traffic – road closure signs and diversion to be provided – road closure to vehicles arranged from 18/01/2027".',
+      'All levels shown on this drawing are nominal and must be checked/agreed prior to construction. All levels to be agreed with the supervisor.',
+      'We will issue programme updates at intervals to be agreed with the client.',
+      'Our bid team reviewed every drawing before pricing.',
+    ]) {
+      assert.deepEqual(bidresponse.unfinishedPhrases(text), [], `flagged a legitimate sentence: ${text}`);
+    }
+  });
+});
+
+describe('submissionBlocks — the question is printed in full', () => {
+  const section = (deliverable: string) => ({
+    key: '1.9 & Checklist (1.34)',
+    title: `${deliverable.slice(0, 67)}…`,
+    deliverable,
+    owner: 'OWNER',
+    mandatory: true,
+    status: 'DRAFTED' as const,
+    body: ['We confirm submission of the tender programme.'],
+  });
+
+  it('heads a short requirement with the requirement itself', () => {
+    const blocks = bidresponse.submissionBlocks({ sections: [section('Tenderers are to submit a programme with the tender return.')] });
+    assert.deepEqual(blocks[0], {
+      kind: 'HEADING',
+      level: 2,
+      text: '1.9 & Checklist (1.34) — Tenderers are to submit a programme with the tender return.',
+    });
+  });
+
+  it('heads a long one by its reference and states every word of it beneath — no ellipsis anywhere', () => {
+    const long =
+      '"Tenderers are to submit a programme with the tender return." / Checklist item 1.34: a programme showing the ' +
+      'order of stages, compliant with contract format (for Tender purposes only), with key dates and completion.';
+    const blocks = bidresponse.submissionBlocks({ sections: [section(long)] });
+    assert.deepEqual(blocks[0], { kind: 'HEADING', level: 2, text: '1.9 & Checklist (1.34)' });
+    assert.deepEqual(blocks[1], { kind: 'KEY_VALUES', rows: [{ label: 'Requirement', value: long }] });
+    assert.ok(!JSON.stringify(blocks).includes('…'), 'something in the document is still cut short');
+  });
+
+  it('prints a requirement’s line breaks as spaces, not as literal "\\n"', () => {
+    const blocks = bidresponse.submissionBlocks({ sections: [section('"Q7\\n\\n•\\n\\nThe Contractor’s method statement"')] });
+    assert.equal((blocks[0] as { text: string }).text, '1.9 & Checklist (1.34) — "Q7 • The Contractor’s method statement"');
   });
 });

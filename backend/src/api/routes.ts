@@ -5360,6 +5360,21 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/sections/:key/redraft',
+    description:
+      'Write one drafted section again from its requirement — the way forward from the issue check refusing a section that still holds a note to the bid team instead of an answer. Only a section the drafter wrote; one a person rewrote is edited, not replaced',
+    // The first draft's prompt, under its own task type: a quote identifies a
+    // route by the task it declares, so two routes cannot share one.
+    ai: { engine: 'TENDER', taskType: 'bid_response_redraft', capability: 'REASONING' },
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      bidresponse.redraftSection(projectContext(platform, ctx), {
+        packId: ctx.params.packId as string,
+        key: ctx.params.key as string,
+      }),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/bid-responses/:packId/sections/:key/revise',
     description:
       'Replace one section’s prose with what a person wrote or edited — to put real project names into an experience answer or a named site manager into a team answer, which the drafter leaves for a person. Marked human-authored; no model is called',
@@ -14021,13 +14036,7 @@ export const ROUTES: Route[] = [
       const actor = auth(ctx);
       const chosen: RenderableFormat = body<{ format?: RenderableFormat }>(ctx).format ?? 'PDF';
       const pack = bidresponse.bidResponsePack(projectContext(platform, ctx), ctx.params.packId as string);
-      const blocks: DocumentBlock[] = [];
-      for (const section of pack.sections) {
-        blocks.push({ kind: 'HEADING', level: 2, text: `${section.key} — ${section.title}` });
-        const paras = (section.body ?? []) as string[];
-        if (paras.length > 0) for (const paragraph of paras) blocks.push({ kind: 'PARAGRAPH', text: String(paragraph) });
-        else blocks.push({ kind: 'PARAGRAPH', text: '[Not written yet]' });
-      }
+      const blocks: DocumentBlock[] = bidresponse.submissionBlocks(pack);
       const document = platform.exports.document(actor, projectId, {
         title: `Tender Submission — ${pack.clientName}`,
         subtitle: pack.reference,

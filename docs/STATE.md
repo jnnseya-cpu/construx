@@ -33811,3 +33811,45 @@ exports.test.ts (each project names itself with the leaked prefix set, a recorde
 tender reference leads, a project's own prefix stands) and grouptenancy.test.ts
 (an authored rule still numbers the report). A document already
 downloaded keeps the reference it was printed with — regenerate it.
+
+## 2026-11 a bid submission is an answer, not a note to finish one
+
+A real Conwy submission (69 pages) went to export with ~60 notes such as "the bid
+team will insert the inspection frequency" and "(to be inserted)", headings cut to
+"… / Che…", and "our Bid Manager and Planning Lead have prepared and signed the
+programme" from a one-person firm. Three causes, three fixes, all in
+`domain/bidresponse.ts`:
+
+- **The drafter was told to write the notes.** Its constraint said "name what the
+  bid team must insert". It now says the text goes to the buyer as written: never a
+  gap, bracket or note to anyone; where a value depends on facts not yet known,
+  commit to how and when it will be fixed and by whom; where the buyer asks for an
+  operational commitment, commit to normal UK practice (the reviewing person can
+  change it). Still forbidden: any figure, customer or past project not given.
+- **The drafter invented staff.** It was handed the matrix's internal routing role
+  (`respondingRole`) and nothing about the firm. It now gets `firm` (`firmFacts`:
+  the company profile's name, `singleOwnerBids`, accreditations, self-delivered
+  trades, and the tenancy's people by name) and is told to name only those people
+  and claim no team or title the firm lacks; the routing role is no longer sent.
+- **Nothing caught it.** `bidCompleteness` has a new hard gate, `unfinished`:
+  every drafted section whose prose holds a note to a bid/tender team, a "to be
+  inserted/populated/filled", a placeholder, a bracketed blank or TBC/TBD/TBA
+  (`unfinishedPhrases`), with the phrases quoted. Deliberately narrow — the buyer's
+  own words quoted back ("signs and diversion to be provided", "all levels to be
+  agreed with the supervisor") are not flagged. The issue refusal names them.
+  Way forward: `redraftSection` / `POST …/sections/:key/redraft` (same task type
+  prompt as the first draft under its own task type `bid_response_redraft`; refuses
+  a section a person rewrote — they edit it)
+  and a "Redraft this section" button beside the warning on Pipeline & Bids.
+
+Headings: the export printed `section.title`, cut at 67 characters at plan time.
+`submissionBlocks` now prints the stored full requirement (`deliverable`): as the
+heading when ≤120 characters, otherwise the reference as the heading and the
+requirement in full beneath it. Existing packs print correctly without replanning.
+Literal "\n" escapes a document reading left in a requirement are printed as
+spaces (the Conwy pack printed `"Q7\n\n•\n\nThe Contractor's…` as a heading).
+
+Not done: answers already drafted keep their notes until redrafted or edited — the
+gate now names each one. Covered by bidresponse.test.ts (drafter payload, gate,
+refusal, redraft, human-written refusal, phrase detector against the real Conwy
+wording and the buyer quotes it must leave alone, full-text headings).

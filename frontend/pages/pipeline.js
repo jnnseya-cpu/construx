@@ -1892,8 +1892,31 @@ export async function pipeline(root) {
                     const paged = (bidPacks.packs ?? []).flatMap((pack) =>
                       (pack.completeness?.pageLimited ?? []).map((entry) => ({ pack, entry })),
                     );
-                    if (over.length === 0 && paged.length === 0) return '';
+                    // Answers still holding a note to the bid team. The buyer
+                    // reads the note as written, so the pack will not issue.
+                    const unfinished = (bidPacks.packs ?? []).flatMap((pack) =>
+                      (pack.completeness?.unfinished ?? []).map((entry) => ({ pack, entry })),
+                    );
+                    if (over.length === 0 && paged.length === 0 && unfinished.length === 0) return '';
                     return html`
+                      ${unfinished.length === 0
+                        ? ''
+                        : html`<div class="notice bad" style="margin-top:11px"><div>
+                            <b>${unfinished.length} section(s) still hold a note to the bid team instead of an answer.</b>
+                            Wording like “the bid team will insert…” or “(to be inserted)” goes to the buyer exactly as
+                            written, and an evaluator scores it as a gap. Redraft the section — the drafter now commits
+                            to a method, a timing and a named person instead — or edit it yourself. The pack will not
+                            issue until none are left.
+                            ${unfinished.map(
+                              ({ pack, entry }) => html`<div style="margin-top:6px">
+                                ${pack.reference} · ${entry.key}${entry.mandatory ? ' (mandatory)' : ''} —
+                                <i>${entry.phrases[0]}</i>${entry.phrases.length > 1 ? ` and ${entry.phrases.length - 1} more` : ''}.
+                                <button class="btn sm" data-redraft="${entry.key}" data-pack="${pack.id}">
+                                  Redraft this section
+                                </button>
+                              </div>`,
+                            )}
+                          </div></div>`}
                       ${over.length === 0
                         ? ''
                         : html`<div class="notice bad" style="margin-top:11px"><div>
@@ -4494,6 +4517,33 @@ export async function pipeline(root) {
    * the limit is the buyer's. It is an AI pass and it is charged, so the press
    * says what it is doing and the result says what came off.
    */
+  // Redraft one section that still holds a note to the bid team. An AI pass,
+  // charged like the first draft, so the press says what it is doing; a section a
+  // person rewrote is refused by the server and the refusal says to edit it.
+  root.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-redraft]');
+    if (!button || !projectId) return;
+
+    button.disabled = true;
+    button.textContent = 'Redrafting…';
+    try {
+      const result = await api.post(
+        `/v1/projects/${projectId}/bid-responses/${button.dataset.pack}/sections/${button.dataset.redraft}/redraft`,
+        {},
+      );
+      toast(
+        `${button.dataset.redraft} redrafted`,
+        `${result.written.words} words. Read it before issuing — it is a draft. ${result.acuConsumed} ACUs.`,
+        'ok',
+      );
+      await draw();
+    } catch (error) {
+      toast('Not redrafted', error.detail ?? error.message ?? 'The section is unchanged.', 'err');
+      button.disabled = false;
+      button.textContent = 'Redraft this section';
+    }
+  });
+
   root.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-shorten]');
     if (!button || !projectId) return;

@@ -2,6 +2,7 @@ import { expertBriefing } from '../ai/expertise.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, currentPhase, runAI, write, type EngineContext } from '../engines/context.ts';
+import type { DocumentBlock } from '../export/exporter.ts';
 import {
   complianceMatrix,
   liveWaivers,
@@ -198,6 +199,70 @@ function titleFor(line: MatrixLine): string {
 }
 
 /**
+ * Wording that is a note to whoever finishes the bid, not an answer to the buyer.
+ *
+ * "The bid team will insert the inspection frequency", "(to be inserted)", "the
+ * quantum placeholder". Each one is a gap an evaluator reads and scores as a
+ * gap — and the drafter used to be told to write them. Deliberately narrow: it
+ * catches a note addressed to a team or a blank waiting to be filled, and not
+ * the buyer's own words quoted back ("signs and diversion to be provided", "all
+ * levels to be agreed with the supervisor"), which an answer is right to quote.
+ */
+const UNFINISHED: readonly RegExp[] = [
+  /\b(?:bid|tender) team\s+(?:will|shall|must|should|can|to|is to|are to)\s+(?:insert|populate|complete|confirm|add|provide|fill|enter|state|supply|name|define)\b/gi,
+  /\bto be (?:inserted|populated|filled(?: in)?)\b/gi,
+  /\bplaceholders?\b/gi,
+  /\[(?:insert|tbc|tbd|tba|name|date|value|x{2,})[^\]]*\]/gi,
+  /\b(?:TBC|TBD|TBA)\b/g,
+];
+
+/** Each unfinished note in a piece of prose, quoted with enough around it to find it. */
+export function unfinishedPhrases(text: string): string[] {
+  const found = new Set<string>();
+  for (const pattern of UNFINISHED) {
+    for (const match of text.matchAll(pattern)) {
+      const start = Math.max(0, (match.index ?? 0) - 40);
+      const end = Math.min(text.length, (match.index ?? 0) + match[0].length + 40);
+      found.add(`${start > 0 ? '…' : ''}${text.slice(start, end).trim()}${end < text.length ? '…' : ''}`);
+    }
+  }
+  return [...found];
+}
+
+/**
+ * The pack as the document the buyer reads.
+ *
+ * Every heading carries the requirement in full. The stored `title` is cut at 67
+ * characters for screens, and printing it put "…/ Che…" in front of an evaluator
+ * as the question being answered. A requirement short enough to be a heading is
+ * one; a longer one is headed by its reference and stated in full beneath it, so
+ * nothing the buyer asked is shortened. Read from `deliverable`, which every pack
+ * already holds, so packs planned before this print correctly too.
+ */
+export function submissionBlocks(pack: Pick<BidResponsePack, 'sections'>): DocumentBlock[] {
+  const blocks: DocumentBlock[] = [];
+  for (const section of pack.sections) {
+    // A requirement read out of a document can carry its line breaks as literal
+    // "\n" text, which printed as `"Q7\n\n•\n\nThe Contractor's…` in front of an
+    // evaluator. They are line breaks, so they are spaced like line breaks.
+    const question = (section.deliverable || section.title)
+      .replace(/\\[nrt]/g, ' ')
+      .trim()
+      .replace(/\s+/g, ' ');
+    if (question.length <= 120) {
+      blocks.push({ kind: 'HEADING', level: 2, text: `${section.key} — ${question}` });
+    } else {
+      blocks.push({ kind: 'HEADING', level: 2, text: section.key });
+      blocks.push({ kind: 'KEY_VALUES', rows: [{ label: 'Requirement', value: question }] });
+    }
+    const paras = section.body ?? [];
+    if (paras.length > 0) for (const paragraph of paras) blocks.push({ kind: 'PARAGRAPH', text: String(paragraph) });
+    else blocks.push({ kind: 'PARAGRAPH', text: '[Not written yet]' });
+  }
+  return blocks;
+}
+
+/**
  * Plan the pack from a stored analysis.
  *
  * Derived, never typed twice. The checklist is the compliance matrix, the
@@ -337,12 +402,91 @@ export async function writeNextSection(
   const next = pack.sections.find((section) => section.status === 'PLANNED');
   if (!next) return { pack, written: null, remaining: 0, acuConsumed: 0 };
 
+  const drafted = await draftSection(ctx, pack, next);
+  return {
+    ...drafted,
+    remaining: drafted.pack.sections.filter((section) => section.status === 'PLANNED').length,
+  };
+}
+
+/**
+ * Write one section again, from the requirement, with the drafter as it now is.
+ *
+ * The way forward from the unfinished-text check. A section the drafter left
+ * holding a note to the bid team is answered again rather than edited around —
+ * the note is where the answer should have been, and a person filling sixty of
+ * them by hand on the last afternoon is how one is missed.
+ *
+ * Only a section the drafter wrote. One a person has rewritten is theirs, and a
+ * model overwriting it would take the words out of somebody's mouth; they edit
+ * it instead. Refused on an issued pack for the same reason every write is.
+ */
+export async function redraftSection(
+  ctx: EngineContext,
+  input: { packId: string; key: string },
+): Promise<{ pack: BidResponsePack; written: BidSection; acuConsumed: number }> {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const pack = requirePack(ctx, input.packId);
+  if (pack.status === 'ISSUED') {
+    throw new DomainError(
+      'BID_RESPONSE_ISSUED',
+      `${pack.reference} has been issued. Editing a submission after it has gone to the buyer is not a draft change, ` +
+        'and the record of what was sent must stay what was sent.',
+      409,
+    );
+  }
+  const section = pack.sections.find((entry) => entry.key === input.key);
+  if (!section) {
+    throw new DomainError('BID_SECTION_NOT_FOUND', `${pack.reference} has no section ${input.key}`, 404);
+  }
+  if (section.authorship === 'HUMAN') {
+    throw new DomainError(
+      'BID_SECTION_HUMAN_WRITTEN',
+      `${input.key} was rewritten by a person, so it is theirs to change — edit it rather than have the drafter ` +
+        'replace their words.',
+      409,
+    );
+  }
+  // Its own task type, as the shortener has: a quote identifies a route by the
+  // task it declares, and one task on two routes is one the quote cannot price.
+  const drafted = await draftSection(ctx, pack, section, 'bid_response_redraft');
+  return { pack: drafted.pack, written: drafted.written!, acuConsumed: drafted.acuConsumed };
+}
+
+/** The firm's own facts, so the drafter names its real people and claims no team it does not have. */
+function firmFacts(ctx: EngineContext): Record<string, unknown> {
+  const profile = ctx.ledger.get({ refType: 'CompanyProfile', refId: `${ctx.tenantId}-profile` })?.state;
+  const people = [
+    ...new Set(
+      ctx.ledger
+        .list(`${ctx.tenantId}-governance`, 'User')
+        .map((record) => String(record.state.name ?? '').trim())
+        .filter((name) => name.length > 0),
+    ),
+  ].slice(0, 12);
+  return {
+    ...(profile?.legalName ? { name: String(profile.legalName) } : {}),
+    people,
+    singleOwnerBids: profile?.singleOwnerBids === true,
+    accreditations: Array.isArray(profile?.accreditations) ? profile.accreditations : [],
+    selfDeliveredTrades: Array.isArray(profile?.selfDeliveredTrades) ? profile.selfDeliveredTrades : [],
+  };
+}
+
+/** Draft `next` into the pack and record it — shared by the first pass and a redraft. */
+async function draftSection(
+  ctx: EngineContext,
+  pack: BidResponsePack,
+  next: BidSection,
+  taskType: 'bid_response_section' | 'bid_response_redraft' = 'bid_response_section',
+): Promise<{ pack: BidResponsePack; written: BidSection | null; acuConsumed: number }> {
   const analysis = complianceMatrix(ctx, pack.analysisId);
   const line = analysis.matrix.find((entry) => entry.reference === next.key);
 
   const result = await runAI(ctx, {
     engine: 'TENDER',
-    taskType: 'bid_response_section',
+    taskType,
     capability: 'REASONING',
     inputRefs: [{ refType: 'ITTAnalysis', refId: pack.analysisId }],
     request: {
@@ -358,7 +502,11 @@ export async function writeNextSection(
         evidenceRequired: line?.evidenceRequired ?? '',
         category: line?.category ?? '',
         mandatory: next.mandatory,
-        respondingRole: next.owner,
+        // Who the firm is and who is in it. Without this the drafter wrote "our
+        // Bid Manager and Planning Lead have prepared and signed the programme"
+        // for a one-person firm — a claim about staff an evaluator can test at
+        // interview, made from nothing but the routing label below.
+        firm: firmFacts(ctx),
         // Given to the writer rather than only checked afterwards. A pass that
         // produces 1,400 words against a 1,000-word limit is a pass somebody
         // pays for and then has to cut by hand, and the cut is where the
@@ -376,9 +524,18 @@ export async function writeNextSection(
         constraint:
           'Answer the requirement and nothing else. State no figure, no completion percentage, no customer name and no ' +
           'past project you have not been given — an invented reference in a submission is a false statement to a buyer ' +
-          'and grounds for disqualification. Where a number would help, describe the method instead and name what the ' +
-          'bid team must insert. Write in the first person plural, in British English, as a contractor answering a ' +
-          'client. Do not restate the question.' +
+          'and grounds for disqualification. Name only the people in `firm.people`, and claim no team, department or ' +
+          'job title the firm does not have; where `firm.singleOwnerBids` is true the firm is one person, so every ' +
+          'responsibility rests with that named person, with specialist subcontractors (by trade, not by name) for ' +
+          'work the firm buys in. This text goes to the buyer exactly as written: never leave a gap, a bracket, or a ' +
+          'note to a bid team, tender team or anyone else to insert, populate, confirm or complete something later — ' +
+          'an evaluator reads that as an unfinished answer and scores it so. Where a value depends on facts not yet ' +
+          'known (a start date, a design output, an award date), commit to how and when it will be fixed and who ' +
+          'fixes it — for example "confirmed in the construction phase plan before start on site" — rather than ' +
+          'leaving a blank. Where the buyer asks for an operational commitment (an inspection frequency, a response ' +
+          'time), commit to one that is normal UK practice for the work; the person reviewing this draft can change ' +
+          'it. Write in the first person plural, in British English, as a contractor answering a client. Do not ' +
+          'restate the question.' +
           (next.limit?.words
             ? ` The buyer states a limit of ${next.limit.words} words (${next.limit.statedAs}); anything past it is ` +
               'not read, so answer within it rather than writing long and leaving somebody to cut it.'
@@ -437,12 +594,7 @@ export async function writeNextSection(
     nextState: next_ as unknown as Record<string, unknown>,
   });
 
-  return {
-    pack: next_,
-    written,
-    remaining: next_.sections.filter((section) => section.status === 'PLANNED').length,
-    acuConsumed: result.acuConsumed,
-  };
+  return { pack: next_, written, acuConsumed: result.acuConsumed };
 }
 
 /**
@@ -686,6 +838,14 @@ export type BidCompleteness = {
    */
   staleSections: Array<{ key: string; deliverable: string; addendum: string; detail: string }>;
   /**
+   * Written sections still carrying a note to the bid team instead of an answer.
+   *
+   * A hard gate. "The bid team will insert the response time" is read by the
+   * evaluator as exactly what it is, and on a scored question it is the mark.
+   * Each comes with the phrases found, so the person can see where they are.
+   */
+  unfinished: Array<{ key: string; deliverable: string; mandatory: boolean; phrases: string[] }>;
+  /**
    * Sections longer than the buyer said they may be.
    *
    * A hard gate, for the same reason a missing mandatory response is one. The
@@ -818,6 +978,17 @@ export function bidCompleteness(
       statedAs: section.limit!.statedAs,
     }));
 
+  // Every drafted section, waived or not, for the reason `overLimit` gives: the
+  // prose is still in the pack and still read.
+  const unfinished = drafted
+    .map((section) => ({
+      key: section.key,
+      deliverable: section.deliverable,
+      mandatory: section.mandatory,
+      phrases: unfinishedPhrases((section.body ?? []).join('\n')),
+    }))
+    .filter((entry) => entry.phrases.length > 0);
+
   const pageLimited = drafted
     .filter((section) => section.limit?.pages !== undefined)
     .map((section) => ({
@@ -833,7 +1004,8 @@ export function bidCompleteness(
     undated.length === 0 &&
     lapsedEvidence.length === 0 &&
     staleSections.length === 0 &&
-    overLimit.length === 0;
+    overLimit.length === 0 &&
+    unfinished.length === 0;
 
   return {
     ready,
@@ -842,6 +1014,7 @@ export function bidCompleteness(
     waived,
     lapsedEvidence,
     staleSections,
+    unfinished,
     overLimit,
     pageLimited,
     written,
@@ -862,6 +1035,7 @@ export function bidCompleteness(
           (lapsedEvidence.length > 0 ? `, ${lapsedEvidence.length} claim(s) evidenced by something that lapses first` : '') +
           (staleSections.length > 0 ? `, ${staleSections.length} answering a requirement an addendum has changed` : '') +
           (overLimit.length > 0 ? `, ${overLimit.length} longer than the buyer allows` : '') +
+          (unfinished.length > 0 ? `, ${unfinished.length} still carrying a note to the bid team instead of an answer` : '') +
           '.',
   };
 }
@@ -919,6 +1093,11 @@ export function issueBidResponse(
               .join('; ')}. ` +
             'An evaluator does not mark the extra words down — the instruction is that anything past the limit is ' +
             'not read, so the answer is scored on where it happens to stop. Cut it to length. '
+          : '') +
+        (completeness.unfinished.length > 0
+          ? `${completeness.unfinished.length} section(s) still hold a note to the bid team instead of an answer: ` +
+            `${completeness.unfinished.map((entry) => entry.key).join(', ')}. The buyer reads that note as written ` +
+            'and scores the gap. Redraft the section, or edit it, so it commits to what the note left blank. '
           : '') +
         (completeness.lapsedEvidence.length > 0
           ? `${completeness.lapsedEvidence.length} claim(s) rest on evidence that expires before ${pack.returnBy.slice(0, 10)}, ` +
