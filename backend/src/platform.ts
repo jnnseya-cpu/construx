@@ -1,4 +1,5 @@
 import { AIOrchestrator } from './ai/orchestrator.ts';
+import { grantedClearance } from './domain/aiclearance.ts';
 import { EvidenceStore } from './evidence/store.ts';
 import { SigningAuthority } from './signing/signature.ts';
 import { ExportService } from './export/exporter.ts';
@@ -397,6 +398,9 @@ export class Platform {
     signing = new SigningAuthority(),
   ) {
     this.orchestrator = orchestrator;
+    // A company owner's own clearance grants, read from this platform's ledger
+    // on every routed AI call. They only ever raise what the server allows.
+    this.orchestrator.useClearanceGrants((tenantId, provider) => grantedClearance(this.ledger, tenantId, provider));
     this.evidence = evidence;
     this.signing = signing;
     this.sync = new SyncEngine(this.ledger);

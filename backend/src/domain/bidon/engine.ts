@@ -511,7 +511,7 @@ export async function parseQuestionnaire(
   // A questionnaire past the window is read in parts and the question lists are
   // joined in order, rather than the whole thing being sent and refused by the
   // vendor. Each part is its own execution and its own charge.
-  const parts = partsFor(source, ctx.orchestrator.textBudgetChars({ capability, inputRefs }));
+  const parts = partsFor(source, ctx.orchestrator.textBudgetChars({ capability, inputRefs, tenantId: ctx.tenantId }));
 
   /** What it read, in the words a person would use for it. */
   const documentLabel = ((): string => {
@@ -1282,7 +1282,7 @@ export async function readEvidence(
    * ceiling: a plausible partial reading, which is worse than no reading and
    * is refused only after the vendor has billed for all of it.
    */
-  const parts = partsFor(document, ctx.orchestrator.textBudgetChars({ capability, inputRefs, echoesInput: true }));
+  const parts = partsFor(document, ctx.orchestrator.textBudgetChars({ capability, inputRefs, echoesInput: true, tenantId: ctx.tenantId }));
 
   const passages: Array<{ text: string; pageRef?: string }> = [];
   const lines: string[] = [];
@@ -3120,7 +3120,7 @@ export async function reviewAmendments(
   // past the window is an ordinary case, not an edge one.
   const source: DocumentForReading | undefined =
     document ?? (input.text?.trim() ? { kind: 'TEXT', text: input.text } : undefined);
-  const parts = partsFor(source, ctx.orchestrator.textBudgetChars({ capability, inputRefs }));
+  const parts = partsFor(source, ctx.orchestrator.textBudgetChars({ capability, inputRefs, tenantId: ctx.tenantId }));
 
   const severities = new Set(['CRITICAL', 'MAJOR', 'MINOR']);
   const clarifications: Clarification[] = [];

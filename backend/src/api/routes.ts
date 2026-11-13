@@ -176,6 +176,8 @@ import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
 import * as tenderpackcheck from '../domain/tenderpackcheck.ts';
 import * as tenderreading from '../domain/tenderreading.ts';
+import * as aiclearance from '../domain/aiclearance.ts';
+import * as tenderreadiness from '../domain/tenderreadiness.ts';
 import * as clarificationreview from '../domain/clarificationreview.ts';
 import * as riskreview from '../domain/riskreview.ts';
 import { DURATION_COMPLEXITY } from '../engines/maths/programmeDuration.ts';
@@ -27745,6 +27747,56 @@ export const ROUTES: Route[] = [
     guest: 'REFERENCE',
     description: 'AI routing matrix and provider health',
     handler: (platform) => platform.orchestrator.controlPlaneStatus(),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/tender/readiness',
+    readOnly: true,
+    description:
+      'What has to be in place before a tender starts — company facts, brand, registered details, a quotation numbering rule, an AI provider cleared for commercial material — each with where it is fixed',
+    handler: (platform, ctx) => tenderreadiness.tenderReadiness(platform, tenantContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/ai/clearance',
+    readOnly: true,
+    description:
+      "What each configured AI provider may receive for this company: the server's setting, the owner's own grant, and the higher of the two that applies",
+    handler: (platform, ctx) => aiclearance.clearancePosition(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ai/clearance',
+    description:
+      "The company owner clears an AI provider to receive the company's material up to a level, with the reason that permits it. It only ever raises what the server allows",
+    schema: {
+      type: 'object',
+      required: ['provider', 'level', 'reason'],
+      properties: {
+        provider: stringField,
+        level: { type: 'string', enum: [...aiclearance.GRANTABLE_LEVELS] },
+        reason: { type: 'string', minLength: 10, maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      aiclearance.grantClearance(
+        tenantContext(platform, ctx),
+        body<{ provider: string; level: (typeof aiclearance.GRANTABLE_LEVELS)[number]; reason: string }>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ai/clearance/withdraw',
+    description: "The company owner withdraws the company's own clearance of an AI provider; the server setting is untouched",
+    schema: {
+      type: 'object',
+      required: ['provider', 'reason'],
+      properties: { provider: stringField, reason: { type: 'string', minLength: 10, maxLength: 500 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      aiclearance.withdrawClearance(tenantContext(platform, ctx), body<{ provider: string; reason: string }>(ctx)),
   },
   {
     method: 'POST',

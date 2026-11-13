@@ -855,6 +855,24 @@ async function draftSection(
     capability: 'REASONING',
     inputRefs: [{ refType: 'ITTAnalysis', refId: pack.analysisId }],
     request: {
+      /*
+       * The tender's own documents, sent ahead of the task as material shared
+       * by every answer in the pack — so the provider's prompt cache holds them
+       * after the first answer and the rest read them at its cached rate. The
+       * same words reach the model either way.
+       */
+      ...(documents.text
+        ? {
+            shared: {
+              tenderDocuments: documents.text,
+              tenderDocumentsUse:
+                'The documents the buyer issued for this tender, each under a "=== Document:" heading. Use what ' +
+                'they say about this site, these works, this programme and this buyer, in their own terms, so the ' +
+                'answer is about this job. State nothing as fact about the job that they do not say.',
+              ...(documents.omitted.length > 0 ? { tenderDocumentsOmitted: documents.omitted } : {}),
+            },
+          }
+        : {}),
       task:
         `${expertBriefing('BID_MANAGER')} ` +
         'Now write one section of a construction tender submission, answering one stated requirement — in the voice of ' +
@@ -878,16 +896,6 @@ async function draftSection(
               tenderContextUse:
                 'The buyer’s other requirements for these works. They are not questions to answer one by one; use ' +
                 'the ones this question touches so the answer is specific to this site and job.',
-            }
-          : {}),
-        ...(documents.text
-          ? {
-              tenderDocuments: documents.text,
-              tenderDocumentsUse:
-                'The documents the buyer issued for this tender, each under a "=== Document:" heading. Use what ' +
-                'they say about this site, these works, this programme and this buyer, in their own terms, so the ' +
-                'answer is about this job. State nothing as fact about the job that they do not say.',
-              ...(documents.omitted.length > 0 ? { tenderDocumentsOmitted: documents.omitted } : {}),
             }
           : {}),
         // Given to the writer rather than only checked afterwards. A pass that

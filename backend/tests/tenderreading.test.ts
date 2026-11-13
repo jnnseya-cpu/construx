@@ -515,11 +515,16 @@ describe('confirming the reading records the invitation, the matrix and the retu
     const drafting = requests.slice(before);
     assert.equal(drafting.length, 7, 'one call per answer');
     for (const request of drafting) {
+      // The documents travel as the shared part, ahead of the task, so a
+      // provider's prompt cache can reuse them from the second answer on.
+      const shared = request.shared as { tenderDocuments?: string } | undefined;
       const payload = request.payload as { tenderDocuments?: string; limit?: { words?: number } };
-      assert.match(String(payload.tenderDocuments), /=== Document: ERCF2509N 05 Volume 1 - ITT\.docx/);
-      assert.match(String(payload.tenderDocuments), /19\/11\/2026 16:00HRS/, 'each answer sees the instructions');
+      assert.match(String(shared?.tenderDocuments), /=== Document: ERCF2509N 05 Volume 1 - ITT\.docx/);
+      assert.match(String(shared?.tenderDocuments), /19\/11\/2026 16:00HRS/, 'each answer sees the instructions');
+      assert.equal(payload.tenderDocuments, undefined, 'and not a second time in the payload');
       assert.equal(payload.limit?.words, 1000, 'and its own word limit');
     }
+    assert.deepEqual(drafting[0]!.shared, drafting[6]!.shared, 'the shared part is the same for every answer, so it can be cached');
     assert.equal(bidresponse.plannedSections(ctx('qs'), pack.id), 0);
     // A press with nothing left spends nothing.
     const extra = await bidresponse.writeNextSection(ctx('qs'), { packId: pack.id });

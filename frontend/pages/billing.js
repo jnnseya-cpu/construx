@@ -14,8 +14,18 @@ import { can, refreshContext, state } from '../app.js';
  * usage log that could disagree with it.
  */
 
+/** What a clearance level means, in words rather than its code. */
+const LEVEL_NAMES = {
+  PUBLIC: 'Public',
+  INTERNAL: 'Ordinary project information',
+  SAFETY_L2: 'Safety records',
+  COMMERCIAL_L3: 'Commercial — tenders, pricing, the bill',
+  LEGAL_L4: 'Legal — contracts and claims',
+};
+const levelName = (level) => LEVEL_NAMES[level] ?? humanise(String(level ?? ''));
+
 export async function billing(root) {
-  const [wallet, attribution, plane, seats, catalogue, storage, items] = await Promise.all([
+  const [wallet, attribution, plane, seats, catalogue, storage, items, clearance] = await Promise.all([
     api.get('/v1/billing/wallet'),
     api.get('/v1/billing/attribution'),
     api.get('/v1/ai/control-plane').catch(() => null),
@@ -33,6 +43,9 @@ export async function billing(root) {
     // The subscription as line items: the product with its seats and every
     // restricted module the company holds (enterprise specification §9).
     api.read('/v1/company/subscription/items', 'ENTERPRISE_STRUCTURE').catch(() => null),
+    // What each AI provider may receive for this company, and the owner's own
+    // grants. Refused to an operator account, which has no company to decide for.
+    api.get('/v1/ai/clearance').catch(() => null),
   ]);
   // The subscription itself: what the platform costs, whether it is paid, and
   // how an unpaid period can be paid. Read after the rest so a refusal here —
@@ -93,6 +106,47 @@ export async function billing(root) {
           ${can('BILLING_ACU', 'U') ? html`<button class="btn quiet" id="caps">Set spend caps</button>` : ''}
         </div>
       </div>
+
+      ${
+        /*
+         * What each AI provider may receive for this company.
+         *
+         * Tender answers carry the company's commercial position, and nothing
+         * goes to a provider above its clearance. The owner clears a provider
+         * here, with the terms that permit it; the server setting still counts,
+         * and the higher of the two applies — nothing here lowers it.
+         */
+        clearance && (clearance.providers ?? []).length > 0
+          ? html`<div class="card" style="margin-bottom:14px" data-clearance>
+              <h2>What each AI provider may receive</h2>
+              <p class="metric-sub" style="margin-bottom:10px">
+                A provider is sent nothing above what it is cleared for. Tender answers, pricing and the bill are
+                commercial material; contracts and claims are legal material. Clear a provider only once your terms with
+                it permit it. The server's own setting still applies, and the higher of the two is used.
+              </p>
+              ${table({
+                headers: ['Provider', 'Server setting', 'Cleared by your company', 'May receive', ''],
+                rows: clearance.providers.map((entry) => [
+                  entry.provider,
+                  levelName(entry.server),
+                  entry.granted
+                    ? html`${levelName(entry.granted.level)}<div style="font-size:11.5px;color:var(--text-3)">${entry.granted.reason} · ${String(entry.granted.grantedAt).slice(0, 10)}</div>`
+                    : '—',
+                  badge(levelName(entry.effective), ['COMMERCIAL_L3', 'LEGAL_L4'].includes(entry.effective) ? 'good' : ''),
+                  clearance.canChange
+                    ? html`<button class="btn quiet sm" data-clear-provider="${entry.provider}">Clear it</button>
+                        ${entry.granted ? html`<button class="btn quiet sm" data-withdraw-provider="${entry.provider}">Withdraw</button>` : ''}`
+                    : '',
+                ]),
+              })}
+              ${
+                clearance.canChange
+                  ? ''
+                  : html`<p class="metric-sub" style="margin-top:8px">Only the company owner can change this.</p>`
+              }
+            </div>`
+          : ''
+      }
 
       ${
         activation && activation.required
@@ -621,6 +675,50 @@ export async function billing(root) {
   // Stripe's page takes the money, and the webhook settles the charge — the
   // balance and the tenancy's standing move when Stripe says the money arrived,
   // not when this button is pressed.
+  for (const button of root.querySelectorAll('[data-clear-provider]')) {
+    button.addEventListener('click', async () => {
+      const provider = button.getAttribute('data-clear-provider');
+      const done = await command({
+        title: `Clear ${provider} to receive your company's material`,
+        intent:
+          'Only once your contract or data-processing terms with this provider permit it. It applies to this company ' +
+          'alone, at once, and is recorded with your reason. It can only raise what the server allows, never lower it.',
+        path: '/v1/ai/clearance',
+        submitLabel: 'Clear it',
+        fields: [
+          { name: 'level', label: 'Up to', type: 'select', value: 'COMMERCIAL_L3',
+            options: (clearance?.levels ?? []).map((level) => ({ value: level, label: levelName(level) })),
+            hint: 'Commercial covers tender answers, pricing and the bill. Legal covers contracts and claims.' },
+          { name: 'reason', label: 'What permits it', type: 'text',
+            hint: 'For example "Data processing addendum signed 12/11/2026, zero retention".' },
+        ],
+        transform: (values) => ({ provider, level: values.level, reason: values.reason }),
+      });
+      if (done) {
+        toast('Cleared', `${provider} may now receive up to: ${levelName(done.effective)}, for your company.`, 'ok');
+        await billing(root);
+      }
+    });
+  }
+
+  for (const button of root.querySelectorAll('[data-withdraw-provider]')) {
+    button.addEventListener('click', async () => {
+      const provider = button.getAttribute('data-withdraw-provider');
+      const done = await command({
+        title: `Withdraw your company's clearance of ${provider}`,
+        intent: 'From the next request on. The server setting is untouched.',
+        path: '/v1/ai/clearance/withdraw',
+        submitLabel: 'Withdraw it',
+        fields: [{ name: 'reason', label: 'Why', type: 'text' }],
+        transform: (values) => ({ provider, reason: values.reason }),
+      });
+      if (done) {
+        toast('Withdrawn', `${provider} may now receive up to: ${levelName(done.effective)}, for your company.`, 'ok');
+        await billing(root);
+      }
+    });
+  }
+
   for (const button of root.querySelectorAll('[data-pay-charge]')) {
     button.addEventListener('click', async () => {
       const chargeId = button.getAttribute('data-pay-charge');

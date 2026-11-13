@@ -592,10 +592,51 @@ export class AIOrchestrator {
   #uncleared(
     capability: ProviderCapability,
     sensitivity: DataSensitivity,
+    tenantId?: string,
   ): Array<{ provider: AIProvider; clearance: DataSensitivity }> {
     return this.#chainFor(capability)
-      .filter((adapter) => !mayReceive(adapter, sensitivity))
-      .map((adapter) => ({ provider: adapter.name, clearance: clearanceFor(adapter.name) }));
+      .filter((adapter) => !this.#receives(adapter, sensitivity, tenantId))
+      .map((adapter) => ({ provider: adapter.name, clearance: this.clearanceOf(adapter.name, tenantId) }));
+  }
+
+  /**
+   * What a company has itself cleared a vendor to receive, read from its own
+   * record. Set by the platform that owns the ledger; absent, only the server
+   * setting counts.
+   */
+  #grants: ((tenantId: string, provider: string) => DataSensitivity | undefined) | undefined;
+
+  useClearanceGrants(resolver: ((tenantId: string, provider: string) => DataSensitivity | undefined) | undefined): void {
+    this.#grants = resolver;
+  }
+
+  /**
+   * What this vendor may receive for this company: the higher of the server's
+   * setting and the company owner's own grant.
+   *
+   * Higher, never lower. The grant only ever adds: a clearance the server
+   * setting gives is never refused because of anything recorded here — the
+   * earlier console declaration did exactly that and was taken out for it.
+   * Without a company (a status page, a probe) it is the server setting alone,
+   * which is the cautious answer.
+   */
+  clearanceOf(provider: AIProvider | string, tenantId?: string): DataSensitivity {
+    const server = clearanceFor(provider);
+    const granted = tenantId && this.#grants ? this.#grants(tenantId, provider) : undefined;
+    if (!granted) return server;
+    return SENSITIVITY_ORDER.indexOf(granted) > SENSITIVITY_ORDER.indexOf(server) ? granted : server;
+  }
+
+  #receives(adapter: AIProviderAdapter, level: DataSensitivity, tenantId?: string): boolean {
+    if (!tenantId) return mayReceive(adapter, level);
+    if (!adapter.transmits) return true;
+    return within(level, this.clearanceOf(adapter.name, tenantId));
+  }
+
+  /** The vendors this deployment would send something to, by name — what a company may clear. */
+  transmittingProviders(): AIProvider[] {
+    const all = [...this.#chainFor('REASONING'), ...this.#chainFor('PERCEPTION'), ...this.#chainFor('EMBEDDING')];
+    return [...new Set(all.filter((adapter) => adapter.transmits).map((adapter) => adapter.name))];
   }
 
   /**
@@ -669,6 +710,8 @@ export class AIOrchestrator {
      * turn.
      */
     avoid: readonly string[] = [],
+    /** The company the work is for, so its own clearance grants count. */
+    tenantId?: string,
   ): AIProviderAdapter {
     // The order the chain is tried in, unchanged. What changes is that an
     // uncleared vendor is not in it at all.
@@ -690,15 +733,16 @@ export class AIOrchestrator {
       );
     }
 
-    const cleared = chain.filter((adapter) => mayReceive(adapter, sensitivity));
+    const cleared = chain.filter((adapter) => this.#receives(adapter, sensitivity, tenantId));
 
     if (cleared.length === 0) {
       throw new DomainError(
         'AI_CLEARANCE_REQUIRED',
         `This request carries ${sensitivity} material and no configured AI provider is cleared to receive it ` +
-          `(configured here: ${chain.map((adapter) => `${adapter.name} cleared to ${clearanceFor(adapter.name)}`).join(', ')}). ` +
-          `Once the contract with a vendor permits it, set it in the server's environment — for example ` +
-          `AI_PROVIDER_CLEARANCE=${chain[0]?.name ?? 'OPENAI'}:${sensitivity} — and restart the server; the setting is read when it starts. ` +
+          `(configured here: ${chain.map((adapter) => `${adapter.name} cleared to ${this.clearanceOf(adapter.name, tenantId)}`).join(', ')}). ` +
+          `Once the contract with a vendor permits it, the company owner can clear it on ACU & Billing, under "What each ` +
+          `AI provider may receive", with no restart; or it can be set in the server's environment — for example ` +
+          `AI_PROVIDER_CLEARANCE=${chain[0]?.name ?? 'OPENAI'}:${sensitivity} — and the server restarted. ` +
           'Nothing was sent and nothing was charged. Without AI: type the compliance matrix in, write the answers ' +
           'yourself, and use "Check the pack — free, no AI" before issuing.',
         // 403, not 503. Nothing is broken and retrying will not help: the
@@ -792,6 +836,8 @@ export class AIOrchestrator {
   textBudgetChars(input: {
     capability: ProviderCapability;
     inputRefs?: readonly EntityRef[];
+    /** The company the reading is for, so its own clearance grants count. */
+    tenantId?: string;
     /**
      * True where the answer restates the material — reading a document into
      * the passages somebody will cite out of it.
@@ -806,7 +852,7 @@ export class AIOrchestrator {
   }): number {
     const FIXED_COST_TOKENS = 4_000;
     const sensitivity = sensitivityOf(input.inputRefs ?? []);
-    const cleared = this.#chainFor(input.capability).filter((adapter) => mayReceive(adapter, sensitivity));
+    const cleared = this.#chainFor(input.capability).filter((adapter) => this.#receives(adapter, sensitivity, input.tenantId));
     const windows = cleared
       .map((adapter) =>
         adapter.inputBudgetTokens === undefined
@@ -890,7 +936,7 @@ export class AIOrchestrator {
     // this material, and the disclosure below has to name the same level the
     // choice was made against.
     const sensitivity = sensitivityOf(input.inputRefs ?? []);
-    const adapter = this.adapterFor(input.capability, sensitivity);
+    const adapter = this.adapterFor(input.capability, sensitivity, 0, [], input.wallet.tenantId);
     const observed = input.wallet.observedRawCosts(input.engine, input.taskType);
 
     // The floor: what the adapter charges for this capability with nothing to
@@ -934,7 +980,7 @@ export class AIOrchestrator {
         capability: input.capability,
         leavesPlatform: adapter.transmits,
         sensitivity,
-        clearance: clearanceFor(adapter.name),
+        clearance: this.clearanceOf(adapter.name, input.wallet.tenantId),
         retention: adapter.transmits ? retentionFor(adapter.name) : { route: 'ZERO' },
         statement: retentionStatement(adapter.name, adapter.transmits),
       },
@@ -979,12 +1025,13 @@ export class AIOrchestrator {
       sensitivity,
       requestInputTokens(input.request),
       input.avoidProviders ?? [],
+      input.tenantId,
     );
     aiRequest.routing = {
       sensitivity,
       provider: adapter.name,
-      clearance: clearanceFor(adapter.name),
-      excluded: this.#uncleared(input.capability, sensitivity),
+      clearance: this.clearanceOf(adapter.name, input.tenantId),
+      excluded: this.#uncleared(input.capability, sensitivity, input.tenantId),
     };
     this.#requests.set(aiRequest.id, aiRequest);
     const estimate = adapter.estimateCostMinor(input.request);

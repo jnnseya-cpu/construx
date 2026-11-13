@@ -31319,6 +31319,15 @@ question, and it cost the customer two days. It is gone: `clearanceFor` and
 The friction it was meant to remove is real and is unaddressed. It stays
 unaddressed until somebody asks for it.
 
+**2026-11 — asked for, and rebuilt in the one shape that cannot refuse.** The
+owner has now asked for it, as an owner-only screen. What came back is the
+inverse of what was taken out: the effective clearance is the **higher** of the
+server setting and the company's grant, so nothing recorded on the screen can
+ever lower what `AI_PROVIDER_CLEARANCE` allows. `clearanceFor` and
+`retentionFor` still read `config` and nothing else; the grant is an overlay in
+the orchestrator (`clearanceOf`). See *2026-11 ready to tender, the owner's
+clearance, and the pack read once* at the end of this file.
+
 ## The context window: measured, routed around, and read in parts
 
 Reported from a live run against a real tender:
@@ -34491,3 +34500,106 @@ documents in view; the buyer's price list read from text and checked; the rate
 picker matching units and ties correctly; the programme dated from the
 invitation. Still not built: the readiness check before a tender starts
 (company facts, brand, registered details, numbering, AI clearance).
+
+## 2026-11 ready to tender, the owner's clearance, and the pack read once
+
+Three things left open at the end of the second part, built at the owner's
+request.
+
+### Ready to tender — five refusals read before the work starts
+
+On Conwy each of these was met as a refusal in the middle of a tender, one after
+another: no company facts, so no compliance matrix; no brand, so no download;
+missing registered details, then no numbering rule, so the quotation would not
+issue; no provider cleared for commercial material, so no answer drafted.
+
+`domain/tenderreadiness.ts` (`GET /v1/tender/readiness`, ESTIMATE_TENDER read)
+checks all five at once, **each by the same test the refusing command
+applies**: the `CompanyProfile` record, `exports.brandingIfConfigured`,
+`legalReadiness(issuerProfile(…))`, the issuer's `quotation` numbering rule, and
+whether any configured provider's clearance for this company reaches
+COMMERCIAL_L3. Each item says what is in place, or exactly what is missing and
+what it will stop, and names the screen and button that fix it. It blocks
+nothing: it reports. The Bid pipeline shows it as a card above the tender
+reading, each item with a button that opens the screen that fixes it.
+
+### What each AI provider may receive — the owner's screen
+
+`domain/aiclearance.ts`, on ACU & Billing (the AI Engine screen is
+platform-administration only; ACU & Billing is the company's own).
+
+- **The higher of the two applies.** `AIOrchestrator.clearanceOf(provider,
+  tenantId)` is the higher of `clearanceFor` (the server setting, unchanged) and
+  the company's grant. A grant only ever raises; a grant below the server
+  setting leaves the server setting in force (tested). Every routing decision,
+  the quote's disclosure, the uncleared refusal and the text budget for a
+  tenant's call now go through it. Calls with no tenant, the health probe and
+  the AI status read stay on the server setting alone.
+- **One company's decision.** The grant is one `ProviderClearance` record per
+  tenant (`AI_PROVIDER_CLEARANCE_GRANTED` / `_WITHDRAWN`, GOVERNANCE, area
+  AI_EXECUTION). Another company on the same platform is still refused (tested).
+- **The owner's alone, with a reason.** Only a user with the OWNER role grants or
+  withdraws (`OWNER_ONLY` otherwise, before anything is recorded); a reason of at
+  least ten characters naming the terms that permit it is required and kept on
+  the record with who and when. Only configured, transmitting providers can be
+  cleared; levels are SAFETY_L2 and above.
+- **Takes effect at once, no restart.** A commercial run refused with
+  `AI_CLEARANCE_REQUIRED` goes through once the grant is made, and is refused
+  again once it is withdrawn (tested). The refusal now names the screen as well
+  as the server setting.
+- The screen shows each provider's server setting, the company's grant with its
+  reason and date, and what it may receive, in words ("Commercial — tenders,
+  pricing, the bill"), not codes. Anyone else sees the position, without the
+  buttons.
+
+**Deviation from what was offered, stated:** the option put to the owner said
+"the stricter of the two wins". Built instead: the higher applies, a grant only
+raises. Stricter-wins could never clear anything the server had not already
+cleared, which is the friction the screen exists to remove, and refusing what
+the server granted is why the earlier version was taken out.
+
+### The pack read once across the answers
+
+Drafting all seven Conwy answers sent the whole tender pack seven times, about
+£1.75 at full price. Each answer now carries the documents as
+`ProviderRequest.shared`, sent **first and identically** in every request, so
+the vendor's own prompt cache can serve them from the second answer on:
+
+- OpenAI: the first input part, with a `prompt_cache_key` derived from the
+  shared text, so all answers of one pack land on the same cache.
+- Anthropic: the first text block, marked `cache_control: ephemeral`.
+- Gemini: the first part (Gemini's implicit cache).
+
+The answers are drafted one after another (the draft-all loop is sequential), so
+the cache is filled by the first and read by the rest. **The charge follows
+what the vendor reports**: cached tokens are read from each vendor's usage
+(OpenAI `input_tokens_details.cached_tokens`, Anthropic
+`cache_read_input_tokens` / `cache_creation_input_tokens`, Gemini
+`cachedContentTokenCount`) and priced at the cache rates in `CACHE_RATES`
+(`providers/remote.ts`, configuration on the same terms as `PRICING`): OpenAI
+read 0.1×; Anthropic read 0.1×, write 1.25×; Gemini read 0.25×. On the Conwy
+figures (≈27,000 tokens of pack per answer) seven answers come to about a third
+of the uncached cost on OpenAI (`tests/promptcache.test.ts`).
+
+**The hold and the estimate stay uncached**, deliberately: the platform cannot
+know in advance whether the vendor will serve the cache, so the figure shown
+before the press is the most it can cost, and the cost box says so. The charge
+is what the vendor bills.
+
+### Verified
+
+- `tests/tenderreadiness.test.ts` (5), `tests/aiclearance.test.ts` (8),
+  `tests/promptcache.test.ts` (9); `tests/tenderreading.test.ts` asserts the
+  documents travel as the shared part and are identical across the seven
+  answers. Full suite 8,566 pass, typecheck clean.
+- In the browser on the stand-in server (production mode, no
+  `AI_PROVIDER_CLEARANCE`): the readiness card showed four in place and the AI
+  item to do; its button opened ACU & Billing; the owner cleared OPENAI with a
+  reason; the card showed the grant; readiness turned to in place; withdrawing
+  it turned readiness back to to-do. No page errors.
+
+**Not verified, and cannot be here:** that a real vendor serves the cache and
+bills the lower rate. No provider can be called from this environment. The
+request shape follows each vendor's published caching contract, and the
+charge is computed from whatever the vendor reports, so if a vendor does not
+serve the cache the charge is simply the full price, never less than billed.
