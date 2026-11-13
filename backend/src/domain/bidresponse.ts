@@ -230,6 +230,61 @@ export function unfinishedPhrases(text: string): string[] {
 }
 
 /**
+ * Job titles that say the firm has staff it does not.
+ *
+ * Only asked of a firm that has said it is one person (`singleOwnerBids`), because
+ * only then does the platform know the claim is false: "our Bid Manager and
+ * Planning Lead have prepared and signed the programme", from a sole director,
+ * is a statement an evaluator can test at interview. Roles the owner can hold
+ * himself — project manager, site manager, temporary works coordinator — are not
+ * listed. A sentence that names one of the firm's own people is the owner being
+ * given the title, and is left alone.
+ */
+const SEPARATE_STAFF =
+  /\b(bid (?:manager|director|team)|tender team|planning (?:lead|manager|team)|planner|quality manager|commercial manager|quantity surveyor|estimator|(?:senior )?technical reviewer|design manager|contracts manager|health (?:and|&) safety (?:manager|advis[eo]r|lead)|h&s (?:manager|advis[eo]r|lead)|environmental (?:manager|advis[eo]r))\b/gi;
+
+/** The separate-staff titles a sentence claims without naming one of the firm's own people. */
+export function unsupportedRoles(text: string, people: readonly string[]): string[] {
+  const names = people.map((person) => person.trim().toLowerCase()).filter((person) => person.length > 2);
+  const found = new Set<string>();
+  for (const sentence of text.split(/(?<=[.;!?])\s+|\n+/)) {
+    const lower = sentence.toLowerCase();
+    if (names.some((name) => lower.includes(name) || lower.includes(name.split(/\s+/).at(-1)!))) continue;
+    for (const match of sentence.matchAll(SEPARATE_STAFF)) found.add(match[1]!.toLowerCase());
+  }
+  return [...found];
+}
+
+/**
+ * A note printed on a drawing, read in as if it were a question.
+ *
+ * "All dimensions are in metres unless otherwise stated", "Note 4 — any
+ * anomalies on this drawing…". A section answering one is an essay on a
+ * drawing convention, and an evaluator reads a run of them as padding.
+ */
+const DRAWING_NOTE =
+  /^\W*(?:note\s*\d+\b|\d+\.\s*all (?:dimensions|chainages|levels)|all (?:dimensions|chainages|levels) (?:are|shown|shall)|this drawing is to be read|any anomalies on this drawing|all dimensions shall be confirmed)/i;
+
+export function isDrawingNote(requirement: string): boolean {
+  return DRAWING_NOTE.test(requirement.replace(/\\[nrt]/g, ' ').trim());
+}
+
+/** What the review needs to know beyond the pack: who the firm is, and the contract. */
+export type SubmissionReviewContext = { singleOwner?: boolean; people?: string[]; contractForm?: string };
+
+function reviewContextFor(ctx: EngineContext, pack: BidResponsePack): SubmissionReviewContext {
+  const firm = firmFacts(ctx);
+  const terms = ctx.ledger.get({ refType: 'ITTAnalysis', refId: pack.analysisId })?.state.commercialTerms as
+    | { contractForm?: string }
+    | undefined;
+  return {
+    singleOwner: firm.singleOwnerBids === true,
+    people: firm.people as string[],
+    ...(terms?.contractForm ? { contractForm: terms.contractForm } : {}),
+  };
+}
+
+/**
  * The pack as the document the buyer reads.
  *
  * Every heading carries the requirement in full. The stored `title` is cut at 67
@@ -846,6 +901,19 @@ export type BidCompleteness = {
    */
   unfinished: Array<{ key: string; deliverable: string; mandatory: boolean; phrases: string[] }>;
   /**
+   * Sections claiming staff a one-person firm does not have.
+   *
+   * A hard gate, and only asked when the firm has said it is one person — the
+   * one case where the platform knows the claim is false. Empty otherwise.
+   */
+  unsupportedStaff: Array<{ key: string; deliverable: string; roles: string[] }>;
+  /**
+   * What a reviewer would raise and the pack can still go out with: a section
+   * answering a drawing note rather than a question, or "our Project Manager"
+   * on an NEC contract where the Project Manager is the client's.
+   */
+  advisories: Array<{ key: string; kind: 'DRAWING_NOTE' | 'NEC_PROJECT_MANAGER'; detail: string }>;
+  /**
    * Sections longer than the buyer said they may be.
    *
    * A hard gate, for the same reason a missing mandatory response is one. The
@@ -892,6 +960,7 @@ export function bidCompleteness(
   waivers: RequirementWaiver[] = [],
   claims: EvidenceClaim[] = [],
   impacts: AddendumImpact[] = [],
+  review: SubmissionReviewContext = {},
 ): BidCompleteness {
   // Waivers are read live rather than baked into the pack at plan time, so a
   // waiver granted halfway through drafting takes a deliverable out of the
@@ -989,6 +1058,40 @@ export function bidCompleteness(
     }))
     .filter((entry) => entry.phrases.length > 0);
 
+  const unsupportedStaff = review.singleOwner
+    ? drafted
+        .map((section) => ({
+          key: section.key,
+          deliverable: section.deliverable,
+          roles: unsupportedRoles((section.body ?? []).join('\n'), review.people ?? []),
+        }))
+        .filter((entry) => entry.roles.length > 0)
+    : [];
+
+  const nec = /\bNEC(?:\d|\b)/i.test(review.contractForm ?? '');
+  const advisories: BidCompleteness['advisories'] = [
+    ...pack.sections
+      .filter((section) => !waivedBy.has(section.key) && isDrawingNote(section.deliverable))
+      .map((section) => ({
+        key: section.key,
+        kind: 'DRAWING_NOTE' as const,
+        detail:
+          'This is a note on a drawing, not a question. Waive it on the compliance matrix so it leaves the pack — an ' +
+          'essay answering a drawing convention reads as padding.',
+      })),
+    ...(nec
+      ? drafted
+          .filter((section) => /\bour project manager\b/i.test((section.body ?? []).join(' ')))
+          .map((section) => ({
+            key: section.key,
+            kind: 'NEC_PROJECT_MANAGER' as const,
+            detail:
+              'Under an NEC contract the Project Manager is the client’s role. Calling our own person that confuses ' +
+              'the evaluator — call them our contract manager, by name.',
+          }))
+      : []),
+  ];
+
   const pageLimited = drafted
     .filter((section) => section.limit?.pages !== undefined)
     .map((section) => ({
@@ -1005,7 +1108,8 @@ export function bidCompleteness(
     lapsedEvidence.length === 0 &&
     staleSections.length === 0 &&
     overLimit.length === 0 &&
-    unfinished.length === 0;
+    unfinished.length === 0 &&
+    unsupportedStaff.length === 0;
 
   return {
     ready,
@@ -1015,6 +1119,8 @@ export function bidCompleteness(
     lapsedEvidence,
     staleSections,
     unfinished,
+    unsupportedStaff,
+    advisories,
     overLimit,
     pageLimited,
     written,
@@ -1036,6 +1142,7 @@ export function bidCompleteness(
           (staleSections.length > 0 ? `, ${staleSections.length} answering a requirement an addendum has changed` : '') +
           (overLimit.length > 0 ? `, ${overLimit.length} longer than the buyer allows` : '') +
           (unfinished.length > 0 ? `, ${unfinished.length} still carrying a note to the bid team instead of an answer` : '') +
+          (unsupportedStaff.length > 0 ? `, ${unsupportedStaff.length} claiming staff the firm does not have` : '') +
           '.',
   };
 }
@@ -1067,6 +1174,7 @@ export function issueBidResponse(
       liveWaivers(ctx, pack.analysisId),
       approvedOn(ctx, new Date().toISOString().slice(0, 10)),
       openImpacts(ctx, pack.analysisId),
+      reviewContextFor(ctx, pack),
     );
   if (!completeness.ready) {
     throw new DomainError(
@@ -1098,6 +1206,11 @@ export function issueBidResponse(
           ? `${completeness.unfinished.length} section(s) still hold a note to the bid team instead of an answer: ` +
             `${completeness.unfinished.map((entry) => entry.key).join(', ')}. The buyer reads that note as written ` +
             'and scores the gap. Redraft the section, or edit it, so it commits to what the note left blank. '
+          : '') +
+        (completeness.unsupportedStaff.length > 0
+          ? `${completeness.unsupportedStaff.length} section(s) claim staff a one-person firm does not have: ` +
+            `${completeness.unsupportedStaff.map((entry) => `${entry.key} (${entry.roles.join(', ')})`).join('; ')}. ` +
+            'An evaluator can test that at interview. Redraft the section so it names who actually does the work. '
           : '') +
         (completeness.lapsedEvidence.length > 0
           ? `${completeness.lapsedEvidence.length} claim(s) rest on evidence that expires before ${pack.returnBy.slice(0, 10)}, ` +
@@ -1226,6 +1339,7 @@ export function bidResponsePosition(ctx: EngineContext): BidResponsePosition {
       liveWaivers(ctx, pack.analysisId),
       approvedOn(ctx, new Date().toISOString().slice(0, 10)),
       openImpacts(ctx, pack.analysisId),
+      reviewContextFor(ctx, pack),
     ),
     }));
 
@@ -1258,6 +1372,7 @@ export function bidResponsePack(
       liveWaivers(ctx, pack.analysisId),
       approvedOn(ctx, new Date().toISOString().slice(0, 10)),
       openImpacts(ctx, pack.analysisId),
+      reviewContextFor(ctx, pack),
     ),
   };
 }

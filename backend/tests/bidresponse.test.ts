@@ -644,3 +644,87 @@ describe('submissionBlocks — the question is printed in full', () => {
     assert.equal((blocks[0] as { text: string }).text, '1.9 & Checklist (1.34) — "Q7 • The Contractor’s method statement"');
   });
 });
+
+describe('the review a one-person firm needs before a bid goes out', () => {
+  const PEOPLE = ['Justin Nseya'];
+  const pack = (sections: Array<{ key: string; deliverable: string; body: string[] }>) =>
+    ({
+      id: 'p',
+      reference: 'BID-0001',
+      analysisId: 'a',
+      clientName: 'Conwy County Borough Council',
+      returnBy: '2027-03-01',
+      status: 'DRAFTING',
+      passes: 1,
+      deadlines: [],
+      sections: sections.map((section) => ({
+        ...section,
+        title: section.deliverable,
+        owner: 'OWNER',
+        mandatory: true,
+        status: 'DRAFTED' as const,
+      })),
+    }) as unknown as Parameters<typeof bidresponse.bidCompleteness>[0];
+
+  it('names the staff a sole director’s answer claims, and leaves the owner’s own titles alone', () => {
+    assert.deepEqual(
+      bidresponse
+        .unsupportedRoles('Our Bid Manager and Planning Lead have prepared and signed the programme.', PEOPLE)
+        .sort(),
+      ['bid manager', 'planning lead'],
+    );
+    assert.deepEqual(bidresponse.unsupportedRoles('Our Quality Manager will operate a pre-issue checklist.', PEOPLE), [
+      'quality manager',
+    ]);
+    // The owner given a title is the owner, not a claimed employee.
+    assert.deepEqual(
+      bidresponse.unsupportedRoles('Justin Nseya MCIOB, our quality manager, signs every record.', PEOPLE),
+      [],
+    );
+    // Roles a sole director holds himself are not flagged.
+    assert.deepEqual(
+      bidresponse.unsupportedRoles('Our Site Manager and Temporary Works Coordinator will inspect daily.', PEOPLE),
+      [],
+    );
+  });
+
+  it('blocks issue on a claimed team only when the firm has said it is one person', () => {
+    const claimed = pack([
+      { key: '1.9', deliverable: 'Submit a programme', body: ['Our Bid Manager and Planning Lead have signed it.'] },
+    ]);
+    const sole = bidresponse.bidCompleteness(claimed, [], [], [], { singleOwner: true, people: PEOPLE });
+    assert.equal(sole.ready, false);
+    assert.deepEqual(sole.unsupportedStaff[0]!.roles.sort(), ['bid manager', 'planning lead']);
+    assert.match(sole.summary, /claiming staff the firm does not have/);
+
+    // A firm that has not said so may well have a bid manager; nothing is known to be false.
+    const firm = bidresponse.bidCompleteness(claimed, [], [], [], { singleOwner: false, people: PEOPLE });
+    assert.equal(firm.unsupportedStaff.length, 0);
+    assert.equal(firm.ready, true);
+  });
+
+  it('raises drawing notes answered as questions, and "our Project Manager" under NEC, without blocking', () => {
+    const review = bidresponse.bidCompleteness(
+      pack([
+        { key: 'Note 1', deliverable: '1. All dimensions are in metres unless otherwise stated.', body: ['We will…'] },
+        {
+          key: 'Drawing',
+          deliverable: 'All levels shown on this drawing are nominal and must be checked prior to construction.',
+          body: ['We will check.'],
+        },
+        { key: '2.3', deliverable: 'Outline programme', body: ['Our Project Manager will issue the programme.'] },
+      ]),
+      [],
+      [],
+      [],
+      { singleOwner: true, people: PEOPLE, contractForm: 'NEC4 ECC Option A' },
+    );
+    assert.equal(review.ready, true, 'an advisory must not block issue');
+    assert.deepEqual(
+      review.advisories.map((entry) => `${entry.key}:${entry.kind}`).sort(),
+      ['2.3:NEC_PROJECT_MANAGER', 'Drawing:DRAWING_NOTE', 'Note 1:DRAWING_NOTE'],
+    );
+    assert.equal(bidresponse.isDrawingNote('Describe your methodology for the soil nails'), false);
+    assert.equal(bidresponse.isDrawingNote('Note 4 — Any anomalies on this drawing should be brought to the attention'), true);
+  });
+});

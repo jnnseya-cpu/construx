@@ -1897,8 +1897,47 @@ export async function pipeline(root) {
                     const unfinished = (bidPacks.packs ?? []).flatMap((pack) =>
                       (pack.completeness?.unfinished ?? []).map((entry) => ({ pack, entry })),
                     );
-                    if (over.length === 0 && paged.length === 0 && unfinished.length === 0) return '';
+                    // Staff a one-person firm does not have, and what a reviewer
+                    // would raise but the pack can still go out with.
+                    const staff = (bidPacks.packs ?? []).flatMap((pack) =>
+                      (pack.completeness?.unsupportedStaff ?? []).map((entry) => ({ pack, entry })),
+                    );
+                    const advised = (bidPacks.packs ?? []).flatMap((pack) =>
+                      (pack.completeness?.advisories ?? []).map((entry) => ({ pack, entry })),
+                    );
+                    if (
+                      over.length === 0 && paged.length === 0 && unfinished.length === 0 &&
+                      staff.length === 0 && advised.length === 0
+                    ) return '';
                     return html`
+                      ${staff.length === 0
+                        ? ''
+                        : html`<div class="notice bad" style="margin-top:11px"><div>
+                            <b>${staff.length} section(s) claim staff your firm does not have.</b>
+                            Your company facts say every bid is yours alone, so a “Bid Manager”, “Quality Manager” or
+                            “Planning Lead” in an answer is a claim an evaluator can test at interview. Redraft the
+                            section — the drafter now names who actually does the work. The pack will not issue until
+                            none are left.
+                            ${staff.map(
+                              ({ pack, entry }) => html`<div style="margin-top:6px">
+                                ${pack.reference} · ${entry.key} — ${entry.roles.join(', ')}.
+                                <button class="btn sm" data-redraft="${entry.key}" data-pack="${pack.id}">
+                                  Redraft this section
+                                </button>
+                              </div>`,
+                            )}
+                          </div></div>`}
+                      ${advised.length === 0
+                        ? ''
+                        : html`<div class="notice warn" style="margin-top:11px"><div>
+                            <b>${advised.length} thing(s) a reviewer would raise.</b>
+                            None of these stops the pack issuing; each is worth a minute before it goes.
+                            ${advised.map(
+                              ({ pack, entry }) => html`<div style="margin-top:6px">
+                                ${pack.reference} · ${entry.key} — ${entry.detail}
+                              </div>`,
+                            )}
+                          </div></div>`}
                       ${unfinished.length === 0
                         ? ''
                         : html`<div class="notice bad" style="margin-top:11px"><div>

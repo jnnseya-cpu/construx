@@ -33853,3 +33853,25 @@ Not done: answers already drafted keep their notes until redrafted or edited —
 gate now names each one. Covered by bidresponse.test.ts (drafter payload, gate,
 refusal, redraft, human-written refusal, phrase detector against the real Conwy
 wording and the buyer quotes it must leave alone, full-text headings).
+
+### The submission review a person used to do by hand
+
+The 69-page Conwy review found three things beyond the notes above; the platform
+now raises all of them itself, on the bid pack, every time (`bidCompleteness`):
+
+- **Staff the firm does not have** (`unsupportedStaff`, hard gate). Only asked when
+  the company facts say the firm is one person (`singleOwnerBids`) — the one case
+  the platform knows the claim is false. Flags Bid Manager, Planning Lead, Quality
+  Manager, QS, Commercial Manager, technical reviewer, H&S manager and the like
+  (`unsupportedRoles`); leaves titles a sole director holds himself (project/site
+  manager, temporary works coordinator) and any sentence naming one of the firm's
+  own people. Way forward: the same Redraft button.
+- **Advisories** (`advisories`, never blocking): a section answering a drawing note
+  ("All dimensions are in metres…", "Note 4 — any anomalies on this drawing…",
+  `isDrawingNote`) — waive it on the compliance matrix; and "our Project Manager"
+  in an answer to an NEC contract (matches NEC4/NEC3), where the Project Manager
+  is the client's role.
+
+The review context (`reviewContextFor`: one-person flag, people, contract form) is
+read from the company profile and the stored analysis; `bidCompleteness` takes it
+as an optional fifth argument so existing callers and tests are unchanged.
