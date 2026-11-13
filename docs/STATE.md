@@ -34334,3 +34334,68 @@ document whatever its kind, so it does not affect this path; the per-file
 **Next, in the order agreed:** the answers, pricing and programme filled from
 the confirmed reading in the same way, and a readiness check before a tender
 starts (company facts, brand, registered details, numbering, AI clearance).
+
+## 2026-11 every answer drafted in one press, with the tender documents in view
+
+The second part agreed with the owner: the answers, the pricing and the
+programme filled from the confirmed reading. This is the answers.
+
+- **Each answer is drafted with the tender's own documents.** `draftSection`
+  (`domain/bidresponse.ts`) now sends `tenderDocuments` — the pack as the reader
+  sees it (`packText`, moved to `evidence/pipeline.ts` as its one home,
+  re-exported by `tenderreading.ts`), capped at `DRAFTING_PACK_MAX` (160,000
+  characters, ~40k tokens) by whole documents in order, naming any left out.
+  An answer drafted from the matrix alone knew the question and nothing about
+  the job; an evaluator marks a generic answer down. The constraints are
+  unchanged: state nothing about the job the documents do not say, invent no
+  project, person or figure.
+- **"Draft all N remaining answers"** on each pack row. One price for the lot,
+  then the existing one-answer route called once per answer, with progress on
+  the button. Not one long request: seven answers take minutes, and the route
+  was built one answer per call so a dropped connection costs one answer. A
+  refusal stops the run there, keeps what was written, charges nothing more,
+  and says why. `bidResponsePosition` publishes `toWrite` per pack.
+- **The quote prices what is sent.** The section and redraft routes are sized
+  from the documents each call carries (`Route.ai.quoteInputText`), and the
+  quote takes `repeat` (1–200) so "all seven" is priced as seven runs.
+- **Cost, stated plainly:** every answer now carries the pack, so each call is
+  larger. On Conwy, the quote for all seven answers was about £1.75 paid to the
+  provider at the published rate before any measured history.
+
+Verified: `tests/tenderreading.test.ts` (each of the seven Conwy answers is
+sent the instructions and its 1,000-word limit; one call per answer; a press
+with nothing left spends nothing; the cap leaves whole documents out by name),
+`tests/quote.test.ts` (a repeat is priced as that many runs; zero is refused).
+In the browser on the stand-in server: "Draft all 7 remaining answers", one
+cost box, seven calls, each sent 108,776 characters of the real Conwy
+documents and its own limit, 7 of 7 written. As before, a stand-in model was
+used: nothing here measures how good a real model's answers are.
+
+## 2026-11 CI had produced no result since at least run 819 — fixed
+
+Every CI run on the working branch was **cancelled** at the job's 10-minute
+limit; none passed or failed. Three causes, each fixed at the root:
+
+- **The lockout suite never exited against an external Redis.** CI points the
+  suites at a service container (`TEST_REDIS_URL`); locally they start and kill
+  their own `redis-server`, which closed any socket left open, so it passed
+  here. Two product defects behind it, in the shared Redis client used by the
+  rate limiter and the identity lockouts (`api/sharedlimiter.ts`):
+  - two commands sent at once on a fresh client each opened a socket and the
+    first was never closed — the connection attempt is now shared, and a
+    connection that finishes opening after `close()` is discarded;
+  - a command sent while another was in flight was **refused**, and the client
+    then closed the connection under the first — so every overlapping rate-limit
+    or lockout check fell back to the per-process count. Commands now queue on
+    the one connection, as its own comment always said they were meant to.
+  - `lockout.attachShared` now closes the backend it replaces.
+  Regression tests in `tests/sharedlimiter.test.ts` (three concurrent commands,
+  one socket, replies in order; a socket opened after close is closed).
+- **The suite ran twice.** "Fail if the shared limiter was not exercised" ran
+  the whole of `npm test` again to look for one line. It now runs the two Redis
+  suites only.
+- **That check could never fire.** It searched for `SKIPPED: no Redis`; both
+  suites print `SKIPPED: no redis-server binary…`. It now matches what they print.
+
+The job limit is 20 minutes: the suite alone takes about four and a half on a
+runner, and the image build and boot follow it.

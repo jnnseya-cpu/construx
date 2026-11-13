@@ -92,6 +92,12 @@ class RespConnection {
   #buffer = Buffer.alloc(0);
   #pending: { resolve: (value: unknown) => void; reject: (error: Error) => void } | undefined;
   #failure: Error | undefined;
+  /**
+   * The last command queued. Serialised means queued: a second command used to
+   * be refused while one was in flight, the client then closed the connection
+   * under the first, and every overlapping check fell back to the process.
+   */
+  #tail: Promise<unknown> = Promise.resolve();
 
   constructor(socket: Socket) {
     this.#socket = socket;
@@ -122,8 +128,14 @@ class RespConnection {
   }
 
   send(parts: readonly string[]): Promise<unknown> {
+    const run = () => this.#sendOne(parts);
+    const result = this.#tail.then(run, run);
+    this.#tail = result.catch(() => undefined);
+    return result;
+  }
+
+  #sendOne(parts: readonly string[]): Promise<unknown> {
     if (this.#failure) return Promise.reject(this.#failure);
-    if (this.#pending) return Promise.reject(new RespError('A command is already in flight'));
 
     return new Promise<unknown>((resolve, reject) => {
       this.#pending = { resolve, reject };
@@ -202,6 +214,15 @@ export class RespClient {
   readonly #password: string | undefined;
   readonly #connectTimeoutMs: number;
   #connection: RespConnection | undefined;
+  /**
+   * The connection being opened, shared by every command that arrives while it
+   * is. Two commands sent at once on a fresh client each opened a socket, the
+   * second overwrote the first, and the first was never closed — a socket per
+   * burst, and a process that could not exit while one was open.
+   */
+  #connecting: Promise<RespConnection> | undefined;
+  /** Bumped by `close()`, so a connection that finishes opening after it is discarded. */
+  #generation = 0;
 
   constructor(options: SharedLimiterOptions) {
     const url = new URL(options.url);
@@ -216,9 +237,20 @@ export class RespClient {
     return `${this.#host}:${this.#port}`;
   }
 
-  async #connected(): Promise<RespConnection> {
-    if (this.#connection) return this.#connection;
+  #connected(): Promise<RespConnection> {
+    if (this.#connection) return Promise.resolve(this.#connection);
+    if (!this.#connecting) {
+      const opening = this.#open(this.#generation);
+      this.#connecting = opening;
+      const settle = () => {
+        if (this.#connecting === opening) this.#connecting = undefined;
+      };
+      opening.then(settle, settle);
+    }
+    return this.#connecting;
+  }
 
+  async #open(generation: number): Promise<RespConnection> {
     const socket = await new Promise<Socket>((resolve, reject) => {
       const s = connect({ host: this.#host, port: this.#port });
       const timer = setTimeout(() => {
@@ -237,7 +269,17 @@ export class RespClient {
     });
 
     const connection = new RespConnection(socket);
-    if (this.#password !== undefined) await connection.send(['AUTH', this.#password]);
+    try {
+      if (this.#password !== undefined) await connection.send(['AUTH', this.#password]);
+    } catch (error) {
+      connection.close();
+      throw error;
+    }
+    if (generation !== this.#generation) {
+      // Closed while it was opening: nobody holds this socket, so it goes now.
+      connection.close();
+      throw new RespError('The connection was closed while it was opening');
+    }
     this.#connection = connection;
     return connection;
   }
@@ -265,6 +307,8 @@ export class RespClient {
   }
 
   close(): void {
+    this.#generation += 1;
+    this.#connecting = undefined;
     this.#connection?.close();
     this.#connection = undefined;
   }

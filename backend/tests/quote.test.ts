@@ -519,6 +519,19 @@ describe('every AI route can be quoted, and only those', () => {
     assert.ok(reply.body.lowChargeMinor <= reply.body.estimatedChargeMinor);
   });
 
+  it('prices an action run several times in a row as that many runs', async () => {
+    // "Draft every remaining answer" is the one-answer route run once per
+    // answer. The price shown before it starts is for all of them.
+    const path = `/v1/projects/${seed.projectId}/programme/delay-forecast`;
+    const once = await call('/v1/ai/quote', { token: tokenFor('pm'), body: { method: 'POST', path } });
+    const thrice = await call('/v1/ai/quote', { token: tokenFor('pm'), body: { method: 'POST', path, repeat: 3 } });
+    assert.equal(thrice.status, 200, JSON.stringify(thrice.body));
+    assert.equal(thrice.body.estimatedRawCostMinor, once.body.estimatedRawCostMinor * 3);
+
+    const silly = await call('/v1/ai/quote', { token: tokenFor('pm'), body: { method: 'POST', path, repeat: 0 } });
+    assert.equal(silly.status, 400, 'a run repeated no times is not a quote');
+  });
+
   it('says plainly that a non-AI action has no AI cost, rather than quoting zero', async () => {
     const reply = await call('/v1/ai/quote', {
       token: tokenFor('pm'),

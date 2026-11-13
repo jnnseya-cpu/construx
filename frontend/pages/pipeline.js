@@ -2131,7 +2131,7 @@ export async function pipeline(root) {
                   </div></div>`;
                 })()}
                 ${table({
-                  headers: ['Pack', 'Client', 'Return by', 'Written', 'Outstanding', 'Passes', 'State'],
+                  headers: ['Pack', 'Client', 'Return by', 'Written', 'Outstanding', 'Passes', 'State', ''],
                   rows: (bidPacks.packs ?? []).map((pack) => [
                     pack.reference,
                     pack.clientName,
@@ -2146,6 +2146,17 @@ export async function pipeline(root) {
                       : pack.completeness?.ready
                         ? badge('ready to issue', 'good')
                         : badge('drafting', 'neutral'),
+                    /*
+                     * Every answer still unwritten, in one press: one price for
+                     * all of them, then the one-answer route once per answer, so
+                     * a dropped connection costs one answer, not the set.
+                     */
+                    pack.status !== 'ISSUED' && (pack.toWrite ?? 0) > 0 && can('ESTIMATE_TENDER', 'U')
+                      ? html`<button class="btn sm" data-draft-all="${pack.id}" data-remaining="${pack.toWrite}"
+                          data-reference="${pack.reference}">
+                          Draft ${pack.toWrite === 1 ? 'the remaining answer' : `all ${pack.toWrite} remaining answers`}
+                        </button>`
+                      : '',
                   ]),
                   empty: 'No response pack yet. Plan one from a compliance matrix below.',
                 })}
@@ -4488,6 +4499,58 @@ export async function pipeline(root) {
      * weightings and the instructions' deadline land in one reading rather than
      * five, and the checks below run across all of it.
      */
+    /*
+     * Every remaining answer, drafted in one press.
+     *
+     * One price for the lot, quoted as the one-answer route run that many
+     * times, then that route called once per answer — each with the tender
+     * documents in view, each charged and recorded as it is written. A refusal
+     * stops the run there: what was written stays, nothing more is charged,
+     * and the reason is shown.
+     */
+    const draftAll = event.target.closest('[data-draft-all]');
+    if (draftAll) {
+      const remaining = Number(draftAll.dataset.remaining);
+      const path = `/v1/projects/${projectId}/bid-responses/${draftAll.dataset.draftAll}/sections`;
+      const proceed = await confirmCost({
+        title: `Draft ${remaining === 1 ? 'the remaining answer' : `all ${remaining} remaining answers`} — ${draftAll.dataset.reference}`,
+        path,
+        runLabel: remaining === 1 ? 'Draft it' : `Draft all ${remaining}`,
+        quoteWith: { repeat: remaining },
+        intent:
+          'Each answer is drafted on its own, against its question, its word limit and the tender documents, then ' +
+          'checked like any other draft. The estimate covers all of them. Each is charged as it is written; if one ' +
+          'is refused the run stops there, keeps what was written, and charges nothing more.',
+      });
+      if (!proceed) return;
+      draftAll.disabled = true;
+      let written = 0;
+      let failure;
+      for (let pass = 1; pass <= remaining; pass += 1) {
+        draftAll.textContent = `Drafting ${pass} of ${remaining}…`;
+        try {
+          const result = await api.post(path, {});
+          if (!result.written) break;
+          written += 1;
+          if (result.remaining === 0) break;
+        } catch (error) {
+          failure = error;
+          break;
+        }
+      }
+      if (failure) {
+        toast(
+          written > 0 ? `${written} of ${remaining} drafted, then stopped` : 'Not drafted',
+          failure.message,
+          failure.code === 'NO_REASONING_PROVIDER' || failure.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err',
+        );
+      } else {
+        toast('Drafted', `${written} answer${written === 1 ? '' : 's'} drafted. Read each below before anything is issued.`, 'ok');
+      }
+      await draw();
+      return;
+    }
+
     const readPack = event.target.closest('[data-read-pack]');
     if (readPack) {
       const proceed = await confirmCost({

@@ -6,6 +6,8 @@ import { after, before, describe, it } from 'node:test';
 import { AIOrchestrator } from '../src/ai/orchestrator.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
 import { ROUTES } from '../src/api/routes.ts';
+import { config } from '../src/config.ts';
+import * as bidresponse from '../src/domain/bidresponse.ts';
 import * as business from '../src/domain/business.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tenderintake from '../src/domain/tenderintake.ts';
@@ -13,7 +15,7 @@ import { checkTenderReading, confirmReading, packText, readTenderPack, type Invi
 import type { EngineContext } from '../src/engines/context.ts';
 import * as perception from '../src/engines/perception.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
-import { ingestFile } from '../src/evidence/pipeline.ts';
+import { ingestFile, packText as packTextOf } from '../src/evidence/pipeline.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 import { docxOf, paragraph } from './fixtures/zip.ts';
@@ -49,7 +51,12 @@ function reasoningStub(): AIProviderAdapter {
     healthy: () => true,
     async execute(request: ProviderRequest): Promise<ProviderResponse> {
       requests.push(request);
-      return { provider: 'OPENAI', modelClass: 'reasoning-standard', output: reading, rawCostMinor: 25, latencyMs: 6, confidence: 0.88 };
+      // A drafting request is answered with prose; anything else is the reading.
+      const drafting = typeof request.task === 'string' && request.task.includes('one section of a construction tender submission');
+      const output = drafting
+        ? { body: ['We will replace the retaining wall at Waterloo Cottage with soil nails and a masonry facing.'] }
+        : reading;
+      return { provider: 'OPENAI', modelClass: 'reasoning-standard', output, rawCostMinor: 25, latencyMs: 6, confidence: 0.88 };
     },
   };
 }
@@ -429,6 +436,60 @@ describe('confirming the reading records the invitation, the matrix and the retu
       .listByTenant(seed.tenantId, 'TenderInvitation')
       .filter((record) => record.state.reference === 'ERCF2509N');
     assert.equal(invitations.length, 1);
+  });
+
+  it('drafts every scored answer with the tender documents in view, one answer per call', async () => {
+    const analysisId = String(
+      platform.ledger.listByTenant(seed.tenantId, 'TenderInvitation').find((r) => r.state.reference === 'ERCF2509N')!.state.analysisId,
+    );
+    const { pack } = bidresponse.planBidResponse(ctx('qs'), { analysisId });
+    const listed = bidresponse.bidResponsePosition(ctx('qs')).packs.find((entry) => entry.id === pack.id)!;
+    assert.equal(listed.basis, 'SCORED_QUESTIONS');
+    assert.equal(listed.toWrite, 7, 'the seven scored questions, published for "draft every remaining answer"');
+    assert.equal(bidresponse.plannedSections(ctx('qs'), pack.id), 7);
+
+    // What the console does: the one-answer route, called until none remain.
+    // An answer carries the firm's commercial position, so the vendor has to be
+    // cleared for it, as a deployment does with AI_PROVIDER_CLEARANCE.
+    const before = requests.length;
+    const previous = config.ai.providerClearance.OPENAI;
+    config.ai.providerClearance.OPENAI = 'COMMERCIAL_L3';
+    try {
+      let remaining = 7;
+      while (remaining > 0) remaining = (await bidresponse.writeNextSection(ctx('qs'), { packId: pack.id })).remaining;
+    } finally {
+      if (previous === undefined) delete config.ai.providerClearance.OPENAI;
+      else config.ai.providerClearance.OPENAI = previous;
+    }
+    const drafting = requests.slice(before);
+    assert.equal(drafting.length, 7, 'one call per answer');
+    for (const request of drafting) {
+      const payload = request.payload as { tenderDocuments?: string; limit?: { words?: number } };
+      assert.match(String(payload.tenderDocuments), /=== Document: ERCF2509N 05 Volume 1 - ITT\.docx/);
+      assert.match(String(payload.tenderDocuments), /19\/11\/2026 16:00HRS/, 'each answer sees the instructions');
+      assert.equal(payload.limit?.words, 1000, 'and its own word limit');
+    }
+    assert.equal(bidresponse.plannedSections(ctx('qs'), pack.id), 0);
+    // A press with nothing left spends nothing.
+    const extra = await bidresponse.writeNextSection(ctx('qs'), { packId: pack.id });
+    assert.equal(extra.written, null);
+    assert.equal(requests.length, before + 7);
+  });
+
+  it('quotes each answer from the documents it sends', () => {
+    const route = ROUTES.find((entry) => entry.pattern === '/v1/projects/:projectId/bid-responses/:packId/sections')!;
+    assert.equal(route.ai!.quoteInputText!(ctx('qs')), bidresponse.draftingDocuments(ctx('qs')).text);
+    const redraft = ROUTES.find((entry) => entry.pattern === '/v1/projects/:projectId/bid-responses/:packId/sections/:key/redraft')!;
+    assert.equal(redraft.ai!.quoteInputText!(ctx('qs')), bidresponse.draftingDocuments(ctx('qs')).text);
+  });
+
+  it('leaves whole documents out by name when a pack is larger than an answer is drafted with', () => {
+    const whole = packTextOf(ctx('qs'));
+    const capped = packTextOf(ctx('qs'), { maxCharacters: whole.files[0]!.characters + 200 });
+    assert.equal(capped.files.length, 1, 'the first document fits, whole');
+    assert.deepEqual(capped.omitted, [whole.files[1]!.filename], 'the second is named, not cut');
+    assert.ok(!capped.text.includes('=== Document: ' + whole.files[1]!.filename));
+    assert.ok(bidresponse.DRAFTING_PACK_MAX >= 160_000);
   });
 
   it('refuses to file a reading onto a tender the business has walked away from', async () => {

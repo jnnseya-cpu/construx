@@ -1,5 +1,6 @@
 import { expertBriefing } from '../ai/expertise.ts';
 import { lexicalVector, similarity } from '../evidence/ingest.ts';
+import { packText } from '../evidence/pipeline.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, currentPhase, runAI, write, type EngineContext } from '../engines/context.ts';
@@ -780,6 +781,33 @@ export async function redraftSection(
   return { pack: drafted.pack, written: drafted.written!, acuConsumed: drafted.acuConsumed };
 }
 
+/**
+ * How much of the tender pack an answer is drafted with: about 40,000 tokens.
+ * Whole documents are kept in order while they fit, and the ones left out are
+ * named to the drafter rather than cut mid-sentence. The Conwy pack, five
+ * documents, is about 108,000 characters and fits whole.
+ */
+export const DRAFTING_PACK_MAX = 160_000;
+
+/**
+ * The tender's own documents, as each answer is drafted with them.
+ *
+ * An answer drafted from the matrix alone knew the question and nothing about
+ * the job behind it — the retaining wall, the soil nails, the access off
+ * Tan-Y-Fron, the ground report — and an evaluator marks a generic answer down.
+ * Every answer now sees the documents the buyer issued, and the quote is sized
+ * from them, because that is what each call sends.
+ */
+export function draftingDocuments(ctx: EngineContext): { text: string; omitted: string[] } {
+  const pack = packText(ctx, { maxCharacters: DRAFTING_PACK_MAX });
+  return { text: pack.text, omitted: pack.omitted };
+}
+
+/** The sections of a pack still to be written — what drafting every answer would run. */
+export function plannedSections(ctx: EngineContext, packId: string): number {
+  return requirePack(ctx, packId).sections.filter((section) => section.status === 'PLANNED').length;
+}
+
 /** The firm's own facts, so the drafter names its real people and claims no team it does not have. */
 function firmFacts(ctx: EngineContext): Record<string, unknown> {
   const profile = ctx.ledger.get({ refType: 'CompanyProfile', refId: `${ctx.tenantId}-profile` })?.state;
@@ -819,6 +847,8 @@ async function draftSection(
         )
       : [];
 
+  const documents = draftingDocuments(ctx);
+
   const result = await runAI(ctx, {
     engine: 'TENDER',
     taskType,
@@ -848,6 +878,16 @@ async function draftSection(
               tenderContextUse:
                 'The buyer’s other requirements for these works. They are not questions to answer one by one; use ' +
                 'the ones this question touches so the answer is specific to this site and job.',
+            }
+          : {}),
+        ...(documents.text
+          ? {
+              tenderDocuments: documents.text,
+              tenderDocumentsUse:
+                'The documents the buyer issued for this tender, each under a "=== Document:" heading. Use what ' +
+                'they say about this site, these works, this programme and this buyer, in their own terms, so the ' +
+                'answer is about this job. State nothing as fact about the job that they do not say.',
+              ...(documents.omitted.length > 0 ? { tenderDocumentsOmitted: documents.omitted } : {}),
             }
           : {}),
         // Given to the writer rather than only checked afterwards. A pass that
@@ -1604,6 +1644,8 @@ export type BidResponsePosition = {
     > & {
       basis: PlanBasis;
       completeness: BidCompleteness;
+      /** Sections not yet written at all — what "draft every remaining answer" would run. */
+      toWrite: number;
     }
   >;
   summary: string;
@@ -1627,6 +1669,7 @@ export function bidResponsePosition(ctx: EngineContext): BidResponsePosition {
       passes: pack.passes,
       qualityFloorPercent: pack.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR_PERCENT,
       basis: pack.basis ?? 'WRITTEN_REQUIREMENTS',
+      toWrite: pack.sections.filter((section) => section.status === 'PLANNED').length,
       completeness: bidCompleteness(
       pack,
       liveWaivers(ctx, pack.analysisId),

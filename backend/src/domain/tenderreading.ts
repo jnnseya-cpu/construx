@@ -1,7 +1,7 @@
 import { DomainError } from '../core/errors.ts';
 import { authorise, currentPhase, type EngineContext } from '../engines/context.ts';
 import { confirm, extractFromText, PASTED_TEXT_MAX, PERCEPTION_TASKS, requireDraft, type ConfirmInput } from '../engines/perception.ts';
-import { packDocuments } from '../evidence/pipeline.ts';
+import { packText } from '../evidence/pipeline.ts';
 import { isDrawingNote, isEvaluationMethod } from './bidresponse.ts';
 import { registerOpportunity, type OpportunityStage } from './business.ts';
 import { recordInvitation, type SubmissionChannel } from './tenderintake.ts';
@@ -22,21 +22,8 @@ import { recordInvitation, type SubmissionChannel } from './tenderintake.ts';
  * checks below, which run in code on the reading before anybody is shown it.
  */
 
-/** The text the reader is given: each document under a heading naming it. */
-export function packText(ctx: EngineContext): { text: string; files: Array<{ ingestionId: string; filename: string; kind: string; characters: number }> } {
-  // The invitation documents first, then the rest, each group in the order its
-  // names give (Volume 1 before Volume 2): the instructions frame everything
-  // read after them, and the same pack is always sent in the same order.
-  const docs = packDocuments(ctx).sort(
-    (a, b) =>
-      Number(b.kind === 'INVITATION') - Number(a.kind === 'INVITATION') ||
-      a.label.localeCompare(b.label, 'en', { numeric: true }),
-  );
-  return {
-    text: docs.map((doc) => `=== Document: ${doc.label} (${doc.kind.toLowerCase()}) ===\n${doc.text}`).join('\n\n'),
-    files: docs.map((doc) => ({ ingestionId: doc.ingestionId, filename: doc.label, kind: doc.kind, characters: doc.text.length })),
-  };
-}
+/** The text the reader is given: see `packText` in the evidence pipeline, its one home. */
+export { packText };
 
 export async function readTenderPack(ctx: EngineContext, options: { today?: string } = {}) {
   const { text, files } = packText(ctx);

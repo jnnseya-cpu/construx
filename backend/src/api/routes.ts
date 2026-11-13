@@ -5429,7 +5429,13 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/bid-responses/:packId/sections',
     description:
       'Write the next section that has none. Called until nothing remains, so no single call carries a whole submission; a pass that dies leaves its section unwritten and the next call writes exactly that one',
-    ai: { engine: 'TENDER', taskType: 'bid_response_section', capability: 'REASONING' },
+    // Sized from the tender documents, which each answer is drafted with.
+    ai: {
+      engine: 'TENDER',
+      taskType: 'bid_response_section',
+      capability: 'REASONING',
+      quoteInputText: (engineCtx) => bidresponse.draftingDocuments(engineCtx).text || undefined,
+    },
     // Takes no body: which section is next is the pack's own answer, not the
     // caller's. Declared all the same, because a write route with no declared
     // shape is a write route accepting whatever arrives.
@@ -5460,7 +5466,12 @@ export const ROUTES: Route[] = [
       'Write one drafted section again from its requirement — the way forward from the issue check refusing a section that still holds a note to the bid team instead of an answer. Only a section the drafter wrote; one a person rewrote is edited, not replaced',
     // The first draft's prompt, under its own task type: a quote identifies a
     // route by the task it declares, so two routes cannot share one.
-    ai: { engine: 'TENDER', taskType: 'bid_response_redraft', capability: 'REASONING' },
+    ai: {
+      engine: 'TENDER',
+      taskType: 'bid_response_redraft',
+      capability: 'REASONING',
+      quoteInputText: (engineCtx) => bidresponse.draftingDocuments(engineCtx).text || undefined,
+    },
     schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (platform, ctx) =>
       bidresponse.redraftSection(projectContext(platform, ctx), {
@@ -27747,11 +27758,16 @@ export const ROUTES: Route[] = [
         // The held file the action will send, where it is named by hash in
         // the action's body rather than in its path.
         hash: stringField,
+        // How many times the caller will run the action in a row — "draft
+        // every remaining answer" is the one-answer route run once per answer,
+        // so a connection that drops loses one answer rather than all of them.
+        // The price shown is for all of them.
+        repeat: { type: 'integer', minimum: 1, maximum: 200 },
       },
       additionalProperties: false,
     },
     handler: (platform, ctx) => {
-      const input = body<{ method: string; path: string; hash?: string }>(ctx);
+      const input = body<{ method: string; path: string; hash?: string; repeat?: number }>(ctx);
       const [pathname] = input.path.split('?');
       const matched = matchRoute(input.method, pathname ?? '');
 
@@ -27824,13 +27840,14 @@ export const ROUTES: Route[] = [
         ? ingestion.ingestedFiles(engineCtx).find((file) => (ingestionId ? file.ingestionId === ingestionId : file.hash === input.hash))
         : undefined;
       const inputText = heldFile?.extraction.text || matched.route.ai.quoteInputText?.(engineCtx);
+      const passes = (matched.route.ai.passes ?? 1) * (input.repeat ?? 1);
 
       return platform.orchestrator.quote({
         ...(inputText ? { inputText } : {}),
         capability: matched.route.ai.capability,
         engine: matched.route.ai.engine,
         taskType: matched.route.ai.taskType,
-        ...(matched.route.ai.passes ? { passes: matched.route.ai.passes } : {}),
+        ...(passes > 1 ? { passes } : {}),
         wallet: engineCtx.wallet,
         projectId,
       });

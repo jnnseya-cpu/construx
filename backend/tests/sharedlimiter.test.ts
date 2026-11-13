@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:net';
 import { after, describe, it } from 'node:test';
-import { SharedLimiter } from '../src/api/sharedlimiter.ts';
+import { RespClient, SharedLimiter } from '../src/api/sharedlimiter.ts';
 
 /**
  * Rate-limit state shared across replicas.
@@ -279,6 +279,54 @@ describe('when the backend misbehaves', () => {
       limiter.close();
       server.close();
     }
+  });
+});
+
+describe('one connection, commands queued', () => {
+  /** A server that answers every command with its own position, and counts sockets. */
+  async function counting() {
+    const sockets: import('node:net').Socket[] = [];
+    let answered = 0;
+    const server = await listening((socket) => {
+      sockets.push(socket);
+      socket.on('data', (chunk) => {
+        for (const _ of chunk.toString().matchAll(/\*1\r\n/g)) socket.write(`:${(answered += 1)}\r\n`);
+      });
+    });
+    return { server, sockets };
+  }
+
+  it('answers commands sent at the same moment, in order, over one socket', async () => {
+    // Two checks at once on a fresh client each opened a socket and the first
+    // was never closed; on an open one the second was refused as "already in
+    // flight" and the connection was closed under the first.
+    const { server, sockets } = await counting();
+    const client = new RespClient({ url: urlFor(server) });
+    try {
+      const replies = await Promise.all([client.call(['PING']), client.call(['PING']), client.call(['PING'])]);
+      assert.deepEqual(replies, [1, 2, 3], 'each command its own reply, in the order sent');
+      assert.equal(sockets.length, 1, 'one socket for the burst');
+      const more = await Promise.all([client.call(['PING']), client.call(['PING'])]);
+      assert.deepEqual(more, [4, 5]);
+      assert.equal(sockets.length, 1, 'and the open one reused');
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  it('discards a connection that finishes opening after the client was closed', async () => {
+    const { server, sockets } = await counting();
+    const client = new RespClient({ url: urlFor(server) });
+    const call = client.call(['PING']);
+    client.close();
+    await assert.rejects(call);
+    // The socket that was opening is closed by the client, not left to the server.
+    for (let attempt = 0; attempt < 50 && sockets.some((socket) => !socket.destroyed && !socket.readableEnded); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(sockets.every((socket) => socket.destroyed || socket.readableEnded), 'no socket left open');
+    server.close();
   });
 });
 
