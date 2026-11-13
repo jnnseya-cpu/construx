@@ -1029,6 +1029,33 @@ export function packText(
   return { text: parts.join('\n\n'), files, omitted };
 }
 
+/**
+ * Read an ingested file as the buyer's pricing schedule, from its text.
+ *
+ * The same task as reading a scanned schedule, from the words the platform has
+ * already read out of a Word file, a spreadsheet or a PDF with a text layer.
+ * A price list that arrived inside the contract-data document — Conwy's sits
+ * in Volume 2 — could only be read by a model that sees pages, and a
+ * deployment without one could not read it at all.
+ */
+export async function priceListFromFile(
+  ctx: EngineContext,
+  input: { ingestionId: string; check?: (extraction: Record<string, unknown>, text: string) => unknown },
+): Promise<Awaited<ReturnType<typeof extractFromText>> & { ingestionId: string; documentHash: string; filename: string | null }> {
+  const file = readFile(ctx, input.ingestionId);
+  const check = input.check;
+  const draft = await extractFromText(ctx, {
+    task: 'PRICE_LIST_BOQ',
+    text: file.extraction.text,
+    source: 'INGESTED_FILE',
+    documentHash: file.hash,
+    evidenceId: file.evidenceId,
+    label: file.filename ?? file.hash,
+    ...(check ? { check: (extraction: Record<string, unknown>) => check(extraction, file.extraction.text) } : {}),
+  });
+  return { ...draft, ingestionId: file.ingestionId, documentHash: file.hash, filename: file.filename ?? null };
+}
+
 export async function ittFromFile(
   ctx: EngineContext,
   input: { ingestionId: string },

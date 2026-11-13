@@ -405,9 +405,14 @@ export async function procurement(root) {
   // exactly the lines it is meant to help with. So the picker offers every
   // library rate in the item's unit and pre-selects the closest by shared words.
   const libraryRates = (costIntel?.rates ?? []).filter((rate) => Number(rate?.medianMinor) > 0);
+  // Keyed on the unit as the platform writes it — "m2" for both "m²" and "m2",
+  // "nr" for "No" and "no" — which the API publishes beside the text. A rate
+  // card typed in m2 was never offered to a buyer's line in m²; the platform's
+  // one unit table decides they are the same, not a second one kept here.
+  const unitKey = (symbol, unit) => symbol ?? String(unit ?? '').toLowerCase().trim();
   const libraryByUnit = new Map();
   for (const rate of libraryRates) {
-    const unit = String(rate.unit ?? '').toLowerCase().trim();
+    const unit = unitKey(rate.unitSymbol, rate.unit);
     if (!libraryByUnit.has(unit)) libraryByUnit.set(unit, []);
     libraryByUnit.get(unit).push(rate);
   }
@@ -426,19 +431,38 @@ export async function procurement(root) {
         .split(/\s+/)
         .filter((w) => w.length > 1 && !STOP.has(w)),
     );
-  const bestLibraryRate = (description, unit) => {
-    const candidates = libraryByUnit.get(String(unit ?? '').toLowerCase().trim()) ?? [];
+  const bestLibraryRate = (description, key) => {
+    const candidates = libraryByUnit.get(key) ?? [];
     if (candidates.length === 0) return null;
     const want = wordsOf(description);
+    // The item reference a line opens with ("601.6"), used only to break a tie:
+    // another buyer's 601.6 may be different work, so it never picks a rate on
+    // its own.
+    const referenceOf = (text) => String(text ?? '').trim().match(/^([A-Za-z]{0,3}\d+(?:\.\d+)*)\b/)?.[1] ?? '';
+    const wantReference = referenceOf(description);
     let best = null;
     let bestScore = 0;
+    let bestSameReference = false;
+    let bestExtra = Infinity;
     for (const rate of candidates) {
       const have = wordsOf(rate.description);
       let shared = 0;
       for (const w of want) if (have.has(w)) shared += 1;
-      if (shared > bestScore) {
+      const sameReference = wantReference !== '' && referenceOf(rate.description) === wantReference;
+      // Words the rate has that the line does not. Two rates can share every
+      // word of a line — "Disposal of unacceptable earthworks material Class
+      // U1A" and the same "(compound area)" — and the first one met used to
+      // win the tie, putting the compound-area rate on the open-site line.
+      const extra = have.size - shared;
+      const better =
+        shared > bestScore ||
+        (shared === bestScore && shared > 0 &&
+          ((sameReference && !bestSameReference) || (sameReference === bestSameReference && extra < bestExtra)));
+      if (better) {
         bestScore = shared;
         best = rate;
+        bestSameReference = sameReference;
+        bestExtra = extra;
       }
     }
     // Two shared meaningful words is enough to pre-select; below that, leave it
@@ -3240,8 +3264,8 @@ export async function procurement(root) {
           // it — and it works whatever the line is called, because the match is
           // by unit and word overlap, not an exact description. Typing a rate in
           // the box above always overrides the pick.
-          const candidates = libraryByUnit.get(String(item.unit ?? '').toLowerCase().trim()) ?? [];
-          const suggested = bestLibraryRate(item.description, item.unit);
+          const candidates = libraryByUnit.get(unitKey(item.unitSymbol, item.unit)) ?? [];
+          const suggested = bestLibraryRate(item.description, unitKey(item.unitSymbol, item.unit));
           const fields = [
             {
               name: `rate:${item.boqItemId}`,

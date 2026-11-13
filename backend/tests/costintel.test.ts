@@ -124,6 +124,21 @@ describe('an imported rate card seeds the library', () => {
   });
 });
 
+describe('a library rate carries its unit as the platform writes it', () => {
+  it('publishes "m2" for a rate card typed in m², and "nr" for one typed in No, so a picker can match them', () => {
+    costintel.importRateCard(asQS(), {
+      entries: [
+        { line: 1, description: 'Vegetation clearance (unit test)', unit: 'm²', rateMinor: 1_344, raw: 'Vegetation clearance (unit test), m², 13.44' },
+        { line: 2, description: 'Stainless wall ties (unit test)', unit: 'No', rateMinor: 1_680, raw: 'Stainless wall ties (unit test), No, 16.80' },
+        { line: 3, description: 'Something in a made-up unit (unit test)', unit: 'zorbs', rateMinor: 100, raw: 'Something, zorbs, 1' },
+      ],
+    });
+    assert.equal(rateFor('Vegetation clearance (unit test)', 'm²')?.unitSymbol, 'm2');
+    assert.equal(rateFor('Stainless wall ties (unit test)', 'No')?.unitSymbol, 'nr');
+    assert.equal(rateFor('Something in a made-up unit (unit test)', 'zorbs')?.unitSymbol, null, 'an unreadable unit is said to be one');
+  });
+});
+
 // --- (b) a malformed line is reported, not silently dropped ------------------
 
 describe('a malformed line is reported rather than dropped', () => {

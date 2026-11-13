@@ -507,7 +507,11 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       'them: the return deadline as `returnByLocal` (YYYY-MM-DDTHH:MM, the wall-clock time printed), the time zone ' +
       'as `returnTimeZone` (an IANA name such as Europe/London, and only where the document names a zone or a ' +
       'country\'s time — otherwise null), the last date for questions as `clarificationLocal`, a site visit as ' +
-      '`siteVisitLocal`, the issue date as `issuedOn`, and how the return is made as `returnChannel`. For every ' +
+      '`siteVisitLocal`, the issue date as `issuedOn`, and how the return is made as `returnChannel`. Report the ' +
+      'works dates it states for the contract, not the tender: the start on site or contract commencement as ' +
+      '`worksStartOn` and the completion date as `worksCompletionOn` (both YYYY-MM-DD), and the construction period ' +
+      'in calendar days as `worksPeriodDays` only where it states a period rather than a date — each null where it ' +
+      'does not state one. For every ' +
       'requirement and every deliverable give `sourceQuote`: a short passage copied character for character from ' +
       'the document that states it, so a person can find it. Where the text is several documents, each begins with ' +
       'a "=== Document:" line; a requirement in one may be explained in another, so read them together. Quote the ' +
@@ -525,6 +529,9 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
         siteVisitLocal: { type: ['string', 'null'] },
         issuedOn: { type: ['string', 'null'] },
         returnChannel: { type: ['string', 'null'], enum: ['PORTAL', 'EMAIL', 'PHYSICAL', 'HAND_DELIVERY', null] },
+        worksStartOn: { type: ['string', 'null'] },
+        worksCompletionOn: { type: ['string', 'null'] },
+        worksPeriodDays: { type: ['integer', 'null'] },
         requirements: {
           type: 'array',
           items: {
@@ -1273,8 +1280,10 @@ export async function extractFromText(
   if (text.length < 200) {
     throw new DomainError(
       'PERCEPTION_TEXT_TOO_SHORT',
-      'That is not enough of an invitation to read. Paste the requirements, the return deliverables and the terms, ' +
-        'or upload the document itself.',
+      input.task === 'ITT_REQUIREMENTS'
+        ? 'That is not enough of an invitation to read. Paste the requirements, the return deliverables and the terms, ' +
+            'or upload the document itself.'
+        : `That is not enough text to read as ${definition.label.toLowerCase()}. Upload the document itself.`,
       422,
       [{ field: 'text', message: 'Paste the part of the invitation that states what the bidder must do' }],
     );

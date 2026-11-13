@@ -14433,6 +14433,8 @@ export const ROUTES: Route[] = [
           costCode: String(item.costCode ?? ''),
           description: String(item.description ?? ''),
           unit: String(item.unit ?? ''),
+          // As the platform writes it, so a picker matches m² to a rate in m2.
+          unitSymbol: units.unitSymbol(String(item.unit ?? '')) ?? null,
           quantity: Number(item.quantity ?? 0),
           packageId: String(item.packageId ?? ''),
           measurementRule: String(item.measurementRule ?? 'NRM2'),
@@ -28231,6 +28233,25 @@ export const ROUTES: Route[] = [
     description: 'Read an ingested file as an invitation to tender, from the text ingestion read out of it — any format the platform can read as text',
     schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (platform, ctx) => ingestion.ittFromFile(projectContext(platform, ctx), { ingestionId: ctx.params.ingestionId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/ingestion/:ingestionId/price-list',
+    // From the file's text, not its pages: its own task type, priced apart from
+    // the reading of a scan.
+    ai: {
+      engine: 'TENDER',
+      taskType: perception.textTaskType('PRICE_LIST_BOQ', 'INGESTED_FILE'),
+      capability: 'REASONING',
+    },
+    description:
+      "Read an ingested file as the buyer's pricing schedule from the text the platform read out of it — items, units and quantities, never a rate — with the reading checked against the document",
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      ingestion.priceListFromFile(projectContext(platform, ctx), {
+        ingestionId: ctx.params.ingestionId as string,
+        check: tenderreading.checkPriceListReading,
+      }),
   },
   {
     method: 'POST',

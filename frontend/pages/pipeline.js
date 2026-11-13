@@ -404,7 +404,12 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                   // document, because the pricing schedule arrives as a Word
                   // file, a PDF or a scan and the person holding it is on this
                   // screen. Quantities only — the reader returns no rate.
-                  available && file && (road === 'TEXT' || road === 'LOOK' || String(file.kind ?? '') === 'DRAWING')
+                  textAvailable && file && road === 'TEXT'
+                    ? html`<button class="btn quiet sm" data-read-boq-text="${file.ingestionId}"
+                        title="Read this as the buyer's priced Bill of Quantities, from the text the platform has already read out of it — every item, unit and quantity into the bill for you to price, checked against the document. It reads quantities only, never a rate.">
+                          Read as a pricing schedule
+                        </button>`
+                    : available && file && (road === 'LOOK' || String(file.kind ?? '') === 'DRAWING')
                     ? html`<button class="btn quiet sm" data-read-boq="${entry.hash}"
                         title="Read this as the buyer's priced Bill of Quantities — the AI extracts every item, unit and quantity into the bill for you to price. It reads quantities only, never a rate.">
                           Read as a pricing schedule
@@ -526,6 +531,16 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                           </div>`
                         : ''
                     }
+                    ${
+                      read.worksStartOn || read.worksCompletionOn || read.worksPeriodDays
+                        ? html`<div class="row">
+                            <span class="lbl">Works: start · completion</span>
+                            <span class="val">
+                              ${read.worksStartOn ?? '—'} · ${read.worksCompletionOn ?? (read.worksPeriodDays ? String(read.worksPeriodDays) + ' days' : '—')}
+                            </span>
+                          </div>`
+                        : ''
+                    }
                     <div class="row">
                       <span class="lbl">Found</span>
                       <span class="val">${requirements.length} requirement(s), ${deliverables.length} deliverable(s)</span>
@@ -609,7 +624,34 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                   const items = draft.extraction?.items ?? [];
                   const omitted = draft.extraction?.omitted ?? [];
                   const fromSchedule = draft.task === 'PRICE_LIST_BOQ';
+                  const checks = draft.checks?.checks ?? [];
                   return html`<div class="card" style="margin-bottom:10px">
+                    ${
+                      draft.checks
+                        ? html`<div class="notice ${draft.checks.attention > 0 ? 'warn' : 'ok'}" style="margin-bottom:10px">
+                            <div>
+                              <b>Checked in code against the document: ${draft.checks.summary}</b>
+                              ${
+                                checks.length > 0
+                                  ? html`<ul style="margin:6px 0 0 18px;padding:0">
+                                      ${checks.map(
+                                        (check) => html`<li style="margin-bottom:4px">
+                                          ${check.severity === 'ATTENTION' ? badge('look', 'warn') : badge('note', '')}
+                                          <b>${check.title}.</b> ${check.detail}
+                                          ${
+                                            (check.references ?? []).length > 0
+                                              ? html`<span style="color:var(--text-3)"> (${check.references.slice(0, 30).join(', ')}${check.references.length > 30 ? ', …' : ''})</span>`
+                                              : ''
+                                          }
+                                        </li>`,
+                                      )}
+                                    </ul>`
+                                  : ''
+                              }
+                            </div>
+                          </div>`
+                        : ''
+                    }
                     <div class="metric-sub" style="margin-bottom:8px">
                       ${items.length} item${items.length === 1 ? '' : 's'} ${fromSchedule ? 'read from the buyer’s schedule' : 'measured'}${
                         draft.extraction?.scale ? html` · scale ${draft.extraction.scale}` : ''
@@ -4583,6 +4625,30 @@ export async function pipeline(root) {
       return;
     }
 
+    const readBoqText = event.target.closest('[data-read-boq-text]');
+    if (readBoqText) {
+      const path = `/v1/projects/${projectId}/ingestion/${readBoqText.dataset.readBoqText}/price-list`;
+      if (!(await spends('Read this file as a pricing schedule', path, 'Read it'))) return;
+      readBoqText.disabled = true;
+      readBoqText.textContent = 'Reading…';
+      try {
+        const reading = await api.post(path, {});
+        toast(
+          'Read — check it below',
+          `${(reading.extraction?.items ?? []).length} item(s) read. ${reading.checks?.summary ?? ''} Nothing reaches the bill until you confirm it.`,
+          reading.checks?.attention > 0 ? 'warn' : 'ok',
+        );
+      } catch (error) {
+        toast(
+          error.code === 'PERCEPTION_NOT_LEGIBLE' ? 'No priced items in this file' : 'Not read',
+          error.message,
+          error.code === 'PERCEPTION_NOT_LEGIBLE' || error.code === 'NO_REASONING_PROVIDER' ? 'warn' : 'err',
+        );
+      }
+      await draw();
+      return;
+    }
+
     const readText = event.target.closest('[data-read-itt-text]');
     if (readText) {
       if (!(await spends('Read this invitation', `/v1/projects/${projectId}/ingestion/${readText.dataset.readIttText}/itt`, 'Read it'))) return;
@@ -5224,6 +5290,21 @@ export async function pipeline(root) {
     // quick option for pasting into a portal's own text boxes.
     const tpDraft = event.target.closest('[data-tp-draft]');
     if (tpDraft) {
+      /*
+       * The works dates, from the latest reading of this tender that states
+       * them — the contract's start and completion, which the programme is
+       * drafted to. Offered, never fixed: the person sees where they came from
+       * and changes them.
+       */
+      const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+      const dated = (perception?.drafts ?? [])
+        .filter((draft) => draft.task === 'ITT_REQUIREMENTS' && draft.status !== 'DISCARDED')
+        .filter((draft) => ISO_DAY.test(String(draft.extraction?.worksStartOn ?? '')))
+        .sort((a, b) => String(b.producedAt ?? '').localeCompare(String(a.producedAt ?? '')))[0];
+      const works = dated?.extraction ?? {};
+      const fromReading = dated
+        ? ` Read from ${dated.textSource === 'TENDER_PACK' ? 'the tender pack' : (dated.textLabel ?? 'the invitation')} — check it against the documents.`
+        : '';
       const done = await command({
         title: 'Draft the tender programme',
         intent:
@@ -5234,12 +5315,19 @@ export async function pipeline(root) {
         path: `/v1/projects/${state.session.projectId}/programme/tender-draft`,
         submitLabel: 'Draft it',
         fields: [
-          { name: 'startDate', label: 'Start on site', type: 'date', hint: 'The first day of work on site.' },
+          {
+            name: 'startDate',
+            label: 'Start on site',
+            type: 'date',
+            value: works.worksStartOn ?? '',
+            hint: `The first day of work on site.${fromReading}`,
+          },
           {
             name: 'completionDate',
             label: 'Completion date the buyer fixed',
             type: 'date',
             required: false,
+            value: ISO_DAY.test(String(works.worksCompletionOn ?? '')) ? works.worksCompletionOn : '',
             hint: 'From the contract data or the invitation. Give this or the period below — the date wins.',
           },
           {
@@ -5247,6 +5335,7 @@ export async function pipeline(root) {
             label: 'Or: construction period (calendar days)',
             type: 'number',
             required: false,
+            value: Number.isInteger(works.worksPeriodDays) && !works.worksCompletionOn ? works.worksPeriodDays : '',
             hint: 'Only if the buyer gave a period rather than a date — 84 for twelve weeks.',
           },
           {

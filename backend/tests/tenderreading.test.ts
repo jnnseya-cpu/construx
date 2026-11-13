@@ -11,14 +11,14 @@ import * as bidresponse from '../src/domain/bidresponse.ts';
 import * as business from '../src/domain/business.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tenderintake from '../src/domain/tenderintake.ts';
-import { checkTenderReading, confirmReading, packText, readTenderPack, type InvitationFromReading } from '../src/domain/tenderreading.ts';
+import { checkPriceListReading, checkTenderReading, confirmReading, packText, readTenderPack, type InvitationFromReading } from '../src/domain/tenderreading.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import * as perception from '../src/engines/perception.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
-import { ingestFile, packText as packTextOf } from '../src/evidence/pipeline.ts';
+import { ingestFile, ingestedFiles, packText as packTextOf, priceListFromFile } from '../src/evidence/pipeline.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
-import { docxOf, paragraph } from './fixtures/zip.ts';
+import { docxOf, paragraph, wordTable } from './fixtures/zip.ts';
 
 /**
  * The tender pack, read together in one run.
@@ -40,6 +40,8 @@ let seed: SeedResult;
 let projectId: string;
 const requests: ProviderRequest[] = [];
 let reading: Record<string, unknown>;
+let priceReading: Record<string, unknown>;
+let packageId: string;
 
 function reasoningStub(): AIProviderAdapter {
   return {
@@ -53,9 +55,12 @@ function reasoningStub(): AIProviderAdapter {
       requests.push(request);
       // A drafting request is answered with prose; anything else is the reading.
       const drafting = typeof request.task === 'string' && request.task.includes('one section of a construction tender submission');
+      const pricing = typeof request.task === 'string' && request.task.includes('bill of quantities or pricing schedule');
       const output = drafting
         ? { body: ['We will replace the retaining wall at Waterloo Cottage with soil nails and a masonry facing.'] }
-        : reading;
+        : pricing
+          ? priceReading
+          : reading;
       return { provider: 'OPENAI', modelClass: 'reasoning-standard', output, rawCostMinor: 25, latencyMs: 6, confidence: 0.88 };
     },
   };
@@ -129,6 +134,10 @@ function conwyReading(): Record<string, unknown> {
     siteVisitLocal: null,
     issuedOn: '2026-10-22',
     returnChannel: 'PORTAL',
+    // "18/01/2027 Contract commencement date. 09/04/2027 Contract completion date."
+    worksStartOn: '2027-01-18',
+    worksCompletionOn: '2027-04-09',
+    worksPeriodDays: null,
     requirements: [
       {
         reference: 'SSIP',
@@ -157,6 +166,40 @@ function conwyReading(): Record<string, unknown> {
       sourceQuote: title,
     })),
     terms: { contractForm: 'NEC4 Engineering and Construction Short Contract' },
+    omitted: [],
+  };
+}
+
+/** The Conwy price list, as it sits in Volume 2: a table of items, units and quantities, the rates blank. */
+const PRICE_ITEMS: Array<[string, string, string, number]> = [
+  ['990.1', 'Establishment of temporary accommodation and equipment for the Contractor', 'Item', 1],
+  ['990.5', 'Daily Maintenance of temporary scaffolding/propping', 'Day', 84],
+  ['106.3', 'Maintenance and adjustment for closure of Waterloo Road at location shown on drawing ERCF2509N 05 T101', 'Day', 84],
+  ['109.2', 'Vegetation clearance', 'm²', 350],
+  ['202.2', 'DBM asphalt 125 Pen 20 mm aggregate binder course 60mm thick in carriageway, hard shoulder and hard strip', 'm²', 320],
+];
+const PRICE_DOCX = docxOf(
+  paragraph('Price List') +
+    wordTable([
+      ['Item no.', 'Description', 'Unit', 'Quantity', 'Rate', 'Price'],
+      ['', 'GC 990/MMHW - Contractors Preliminaries', '', '', '', ''],
+      ...PRICE_ITEMS.map(([reference, description, unit, quantity]) => [reference, description, unit, String(quantity), '', '']),
+    ]) +
+    paragraph('The method and rules used to compile the Price List are the Method of Measurement for Highway Works.'),
+);
+
+/** A correct reading of the price list: quantities only, never a rate. */
+function conwyPriceReading(): Record<string, unknown> {
+  return {
+    methodOfMeasurement: 'Method of Measurement for Highway Works',
+    items: PRICE_ITEMS.map(([reference, description, unit, quantity]) => ({
+      reference,
+      description,
+      unit,
+      quantity,
+      section: 'GC 990/MMHW - Contractors Preliminaries',
+      coverage: null,
+    })),
     omitted: [],
   };
 }
@@ -202,7 +245,7 @@ before(async () => {
     plannedCompletion: '2027-04-09',
   }).projectId;
   const pm = platform.context(seed.users.pm!.auth, projectId);
-  const { packageId } = structure.createScopePackage(pm, {
+  ({ packageId } = structure.createScopePackage(pm, {
     name: 'Retaining wall',
     discipline: 'CIVILS',
     scopeOfWorks: 'Replacement of the retaining wall with soil nails and masonry facing.',
@@ -211,7 +254,7 @@ before(async () => {
     acceptanceCriteria: ['Engineer sign-off'],
     estimatedValueMinor: 30_000_000,
     designResponsibility: 'CLIENT',
-  });
+  }));
   structure.transitionPhase(platform.context(admin, projectId), { to: 'DESIGN', justification: 'Scope defined' });
   structure.assessDesignMaturity(pm, {
     packageId,
@@ -221,6 +264,7 @@ before(async () => {
   });
   structure.transitionPhase(platform.context(admin, projectId), { to: 'TENDER', justification: 'Priceable' });
   reading = conwyReading();
+  priceReading = conwyPriceReading();
 });
 
 after(() => rmSync(directory, { recursive: true, force: true }));
@@ -337,6 +381,13 @@ describe('the checks, run in code on a reading before anybody sees it', () => {
   it('catches a deadline that is not a date, and one already past', () => {
     assert.ok(ids({ ...conwyReading(), returnByLocal: 'Thursday afternoon' }).includes('DEADLINE_UNREAD'));
     assert.ok(ids(conwyReading(), { today: '2026-11-20' }).includes('DEADLINE_PAST'));
+  });
+
+  it('catches works dates that cannot be right: a completion before the start, a start before the return', () => {
+    assert.ok(ids({ ...conwyReading(), worksCompletionOn: '2027-01-10' }).includes('COMPLETION_BEFORE_START'));
+    assert.ok(ids({ ...conwyReading(), worksStartOn: '2026-11-02' }).includes('WORKS_BEFORE_RETURN'));
+    assert.ok(!ids(conwyReading()).includes('COMPLETION_BEFORE_START'), 'the real Conwy dates pass');
+    assert.ok(!ids(conwyReading()).includes('WORKS_BEFORE_RETURN'));
   });
 
   it('catches the last date for questions falling after the return', () => {
@@ -514,5 +565,57 @@ describe('confirming the reading records the invitation, the matrix and the retu
     const route = ROUTES.find((entry) => entry.pattern === '/v1/projects/:projectId/perception/:draftId/confirm')!;
     const properties = (route.schema as { properties: Record<string, { required?: string[] }> }).properties;
     assert.deepEqual(properties.invitation?.required, ['reference', 'clientName', 'issuedAt', 'returnLocal', 'timeZone', 'timeZoneStated', 'channel']);
+  });
+});
+
+describe('the buyer\'s price list, read from the text of the document it sits in', () => {
+  let ingestionId: string;
+
+  before(async () => {
+    await file('ERCF2509N 05 Volume 2 - Price List.docx', PRICE_DOCX);
+    ingestionId = ingestedFiles(ctx('qs')).find((entry) => entry.filename === 'ERCF2509N 05 Volume 2 - Price List.docx')!.ingestionId;
+  });
+
+  it('reads items, units and quantities from the text, checks them against it, and files a draft', async () => {
+    const read = await priceListFromFile(ctx('qs'), { ingestionId, check: checkPriceListReading });
+    assert.equal(read.task, 'PRICE_LIST_BOQ');
+    const sent = JSON.stringify(requests.at(-1));
+    assert.match(sent, /Daily Maintenance of temporary scaffolding/, 'the text was sent, not the file');
+    const checks = read.checks as ReturnType<typeof checkPriceListReading>;
+    assert.equal(checks.attention, 0, JSON.stringify(checks.checks));
+    const draft = platform.ledger.require({ refType: 'PerceptionDraft', refId: read.draftId }).state;
+    assert.equal(draft.status, 'DRAFT');
+    assert.deepEqual(draft.checks, checks);
+
+    // Confirmed, it is the bill: one item per line, quantities as read.
+    const confirmed = await perception.confirm(ctx('qs'), { draftId: read.draftId, packageId, costCodePrefix: 'WC' });
+    assert.equal((confirmed.result.boqItemIds as string[]).length, PRICE_ITEMS.length);
+  });
+
+  it('catches an item number the reading missed, a line not in the document, a quantity that is not one', () => {
+    const text = ingestedFiles(ctx('qs')).find((entry) => entry.ingestionId === ingestionId)!.extraction.text!;
+    const missedOne = conwyPriceReading();
+    (missedOne.items as unknown[]).splice(3, 1); // 109.2 left out
+    const missed = checkPriceListReading(missedOne, text).checks.find((check) => check.id === 'ITEMS_MISSED')!;
+    assert.deepEqual(missed.references, ['109.2']);
+
+    const invented = conwyPriceReading();
+    (invented.items as Array<Record<string, unknown>>).push({ reference: '990.9', description: 'Provision of a site welfare cabin for the Employer', unit: 'Item', quantity: 1 });
+    assert.deepEqual(
+      checkPriceListReading(invented, text).checks.find((check) => check.id === 'NOT_IN_DOCUMENT')!.references,
+      ['990.9'],
+    );
+
+    const zero = conwyPriceReading();
+    (zero.items as Array<Record<string, unknown>>)[1]!.quantity = 0;
+    assert.deepEqual(checkPriceListReading(zero, text).checks.find((check) => check.id === 'QUANTITY_INVALID')!.references, ['990.5']);
+
+    assert.match(checkPriceListReading(conwyPriceReading(), text).summary, /Every check passed: 5 item/);
+  });
+
+  it('is routed and quoted as its own text reading', () => {
+    const route = ROUTES.find((entry) => entry.pattern === '/v1/projects/:projectId/ingestion/:ingestionId/price-list')!;
+    assert.equal(route.ai?.capability, 'REASONING');
+    assert.equal(route.ai?.taskType, perception.textTaskType('PRICE_LIST_BOQ', 'INGESTED_FILE'));
   });
 });

@@ -288,6 +288,32 @@ export function checkTenderReading(
     });
   }
 
+  // The works dates: the contract's, which the tender programme is drafted to.
+  const dateOnly = (value: unknown): string | undefined => {
+    const text = typeof value === 'string' ? value.trim() : '';
+    return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : undefined;
+  };
+  const worksStart = dateOnly(extraction.worksStartOn);
+  const worksCompletion = dateOnly(extraction.worksCompletionOn);
+  if (worksStart && worksCompletion && worksCompletion <= worksStart) {
+    add({
+      id: 'COMPLETION_BEFORE_START',
+      severity: 'ATTENTION',
+      title: 'The completion date read is not after the start',
+      detail: `Works start ${worksStart} and complete ${worksCompletion}. One of the two was misread.`,
+      references: [],
+    });
+  }
+  if (worksStart && returnLocal && worksStart <= returnLocal.slice(0, 10)) {
+    add({
+      id: 'WORKS_BEFORE_RETURN',
+      severity: 'ATTENTION',
+      title: 'The works start read is not after the tender return',
+      detail: `Works start ${worksStart}, returns are due ${returnLocal.slice(0, 10)}. A contract cannot start before its tenders are in; one was misread.`,
+      references: [],
+    });
+  }
+
   // Weightings: the scored questions' marks.
   const weighted = requirements
     .map((line, index) => ({ line, index }))
@@ -428,6 +454,132 @@ export function checkTenderReading(
     summary:
       checks.length === 0
         ? 'Every check passed: dates read, weightings add to 100%, every line found in the documents.'
+        : `${attention} to look at before confirming, ${checks.length - attention} to note.`,
+  };
+}
+
+// --- The checks on a reading of the buyer's price list -------------------------
+
+/**
+ * Where a reading of a price list needs a person's eye, found by code.
+ *
+ * The failures a bill reading actually has: a long schedule read part-way and
+ * the rest silently missing, a line whose words are not in the document, a
+ * quantity that is not a quantity, the same item number twice (the take-off
+ * keeps one line per item). A rate is never checked for because none is read:
+ * the reader returns quantities only, and pricing stays with the estimator.
+ */
+export function checkPriceListReading(extraction: Record<string, unknown>, documentText: string): ReadingChecks {
+  const checks: ReadingCheck[] = [];
+  const document = normalise(documentText);
+  const items = (Array.isArray(extraction.items) ? extraction.items : []) as Array<Record<string, unknown>>;
+  const ref = (item: Record<string, unknown>, index: number): string => String(item.reference ?? '').trim() || `line ${index + 1}`;
+
+  // Items whose description cannot be found. The first forty characters are
+  // matched, because a description wraps across table cells and the reader
+  // joins it up; the opening words survive that, a paraphrase does not.
+  const untraced = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => {
+      const words = normalise(String(item.description ?? '')).slice(0, 40).trim();
+      return words.length < 8 || !document.includes(words);
+    });
+  if (untraced.length > 0) {
+    checks.push({
+      id: 'NOT_IN_DOCUMENT',
+      severity: 'ATTENTION',
+      title: `${untraced.length} item(s) could not be found in the document`,
+      detail: 'The opening words of the description appear nowhere in the schedule. It may be reworded, or not there at all.',
+      references: untraced.map(({ item, index }) => ref(item, index)),
+    });
+  }
+
+  const badQuantities = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => typeof item.quantity !== 'number' || !Number.isFinite(item.quantity) || item.quantity <= 0);
+  if (badQuantities.length > 0) {
+    checks.push({
+      id: 'QUANTITY_INVALID',
+      severity: 'ATTENTION',
+      title: `${badQuantities.length} item(s) carry no usable quantity`,
+      detail: 'A quantity is a positive number. Read it from the schedule before confirming; a zero prices to nothing.',
+      references: badQuantities.map(({ item, index }) => ref(item, index)),
+    });
+  }
+
+  const seen = new Map<string, number>();
+  for (const [index, item] of items.entries()) {
+    const key = ref(item, index).toLowerCase();
+    seen.set(key, (seen.get(key) ?? 0) + 1);
+  }
+  const repeated = [...seen.entries()].filter(([, count]) => count > 1).map(([key]) => key);
+  if (repeated.length > 0) {
+    checks.push({
+      id: 'REFERENCE_REPEATED',
+      severity: 'ATTENTION',
+      title: 'Two items carry the same item number',
+      detail: 'The bill keeps one line per item, so one of these would be lost.',
+      references: repeated,
+    });
+  }
+
+  /*
+   * Item numbers in the document the reading did not return.
+   *
+   * Where the reading's own numbering is dotted ("990.1", "202.3"), every
+   * dotted number that opens a row of a table in the document — followed by a
+   * tab or a column gap, as an item number in a schedule is — is an item the
+   * reading should have returned, if its group sits within the groups the
+   * reading found (105 to 990 on Conwy). That keeps a clause number ("1.16
+   * Return of Tenders") from being mistaken for a missed item, and it still
+   * finds a whole section left out, which searching only the groups already
+   * read would not. A long schedule read part-way is the commonest wrong
+   * reading of a bill, and the one a person checking twenty lines by eye does
+   * not see.
+   */
+  const dotted = items.map((item) => String(item.reference ?? '').trim()).filter((value) => /^\d+\.\d+$/.test(value));
+  if (dotted.length >= 3 && dotted.length >= items.length / 2) {
+    const groups = dotted.map((value) => Number(value.split('.')[0]));
+    const lowest = Math.min(...groups);
+    const highest = Math.max(...groups);
+    const read = new Set(dotted);
+    const inDocument = new Set(
+      [...documentText.matchAll(/^[ \t]*(\d{1,4}\.\d{1,3})(?=\t| {2,})/gm)]
+        .map((match) => match[1]!)
+        .filter((value) => {
+          const group = Number(value.split('.')[0]);
+          return group >= lowest && group <= highest;
+        }),
+    );
+    const missed = [...inDocument].filter((value) => !read.has(value));
+    if (missed.length > 0) {
+      checks.push({
+        id: 'ITEMS_MISSED',
+        severity: 'ATTENTION',
+        title: `${missed.length} item number(s) in the document were not read`,
+        detail: 'Each opens a row of a table in the schedule and is not in the reading. Check whether each is a priced item.',
+        references: missed.sort((a, b) => a.localeCompare(b, 'en', { numeric: true })),
+      });
+    }
+  }
+
+  if (items.length === 0) {
+    checks.push({
+      id: 'NO_ITEMS',
+      severity: 'ATTENTION',
+      title: 'Nothing was read as a priced item',
+      detail: 'Check this is the pricing schedule, not the instructions or a drawing.',
+      references: [],
+    });
+  }
+
+  const attention = checks.filter((check) => check.severity === 'ATTENTION').length;
+  return {
+    checks,
+    attention,
+    summary:
+      checks.length === 0
+        ? `Every check passed: ${items.length} item(s), each found in the document, every quantity a positive number.`
         : `${attention} to look at before confirming, ${checks.length - attention} to note.`,
   };
 }

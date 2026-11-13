@@ -34399,3 +34399,95 @@ limit; none passed or failed. Three causes, each fixed at the root:
 
 The job limit is 20 minutes: the suite alone takes about four and a half on a
 runner, and the image build and boot follow it.
+
+## 2026-11 the buyer's price list read from text, checked against the document
+
+The pricing half of the second part, first step: getting the buyer's bill
+into the platform. Conwy's price list sits inside Volume 2 (the contract-data
+Word document), and the only reading of a price list needed a model that sees
+pages and a PDF or scan. A Word price list could not be read by AI at all.
+
+- `POST /v1/projects/:projectId/ingestion/:ingestionId/price-list`
+  (`priceListFromFile`, `evidence/pipeline.ts`): the existing PRICE_LIST_BOQ
+  task — items, units, quantities, never a rate — run on the text the platform
+  read out of the file. Its own task type, priced from the file's text.
+  Confirming is unchanged: the take-off draft card, a package and a cost-code
+  prefix, the method of measurement pre-selected from the document.
+- **Checks in code** (`checkPriceListReading`, `domain/tenderreading.ts`), filed
+  with the draft and shown on the card: a description whose opening words are
+  not in the document; a quantity that is not a positive number; an item number
+  used twice; and item numbers that open a table row in the document, within the
+  groups the reading covers, but are not in the reading. The last is the
+  commonest wrong reading of a long bill — read part-way, the rest silently
+  missing — and it finds a whole missing section, not only gaps inside one.
+- The file row offers "Read as a pricing schedule" on any document whose text
+  is held where a reasoning provider is configured; the page-reading version
+  stays for scans and drawings where a vision provider is.
+
+Verified: on the platform's own extraction of the real Conwy Volume 2, the
+schedule has **67 priced items**; a reading of all 67 passes every check with
+nothing falsely flagged, and leaving out 109.2 and 202.3 flags exactly those
+two (`tests/tenderreading.test.ts` holds the same on a fixture of Conwy's own
+rows, plus confirmation into the bill). In the browser on the stand-in server
+(whose answer lifts the rows out of the text by pattern — a check of the
+platform, not of a model): read, 67 items, "Every check passed", confirmed,
+67 items written to the bill with the Highway Works method selected.
+
+**Not done yet in pricing:** proposing a rate for each line from the firm's
+own rate library and past jobs for a person to accept — the next step.
+
+## 2026-11 the rate picker matches units, and breaks ties on the right line
+
+"Price the bill" already pre-selects, for every measured line, the closest rate
+in the firm's own library — by unit, then by shared words — so the estimator
+confirms rather than searches. That is the rate proposal the plan called for;
+it was measured rather than rebuilt.
+
+Measured on the 67 real Conwy lines against the test account's library (the
+owner's own Conwy rates): **67 of 67 correct** as it stood, because library and
+bill used the same units. With the bill's units written as rate cards often
+write them (m2, m3, nr for m², m³, No), the same library gave **37 right,
+5 wrong, 25 with nothing offered**. Two fixes:
+
+- **Units by the platform's one unit table.** Library rates and bill lines now
+  publish `unitSymbol` (`core/units.ts` `unitSymbol`: m² and m2 are "m2", No
+  and nr are "nr", an unreadable unit is null), and the picker groups on it,
+  falling back to the typed unit only where the platform cannot read one.
+- **Ties broken on the right line.** Two library rates can share every word of
+  a line ("Disposal of unacceptable earthworks material Class U1A" and the
+  same "(compound area)"); the first one met won. A tie now goes to the rate
+  with the line's own item reference, then to the one with fewer words the line
+  does not have. A shared reference only breaks a tie — another buyer's 601.6
+  may be different work.
+
+After both: **67 of 67 correct** with the bill's units written either way.
+`tests/costintel.test.ts` (unit symbols on library rates, null where
+unreadable), `tests/pricingline.test.ts` (every bill line publishes one).
+
+## 2026-11 the tender programme starts from the invitation's own works dates
+
+The last piece of the second part. "Draft the tender programme" asked for the
+start on site and the completion date, which the invitation already states —
+Conwy's timetable gives contract commencement 18/01/2027 and completion
+09/04/2027.
+
+- The ITT reading now asks for the contract's works dates — `worksStartOn`,
+  `worksCompletionOn` (YYYY-MM-DD) and `worksPeriodDays` only where a period is
+  stated rather than a date — each null where the documents do not state it.
+- Two checks in code (`checkTenderReading`): a completion not after the start,
+  and a works start not after the tender return; either means a misread.
+- The review shows "Works: start · completion"; the programme form opens with
+  the latest reading's dates filled in and says they were read from the tender
+  pack, to be checked against the documents. Nothing is fixed: the person
+  changes them, and the programme is still drafted and confirmed as before.
+
+Verified: `tests/tenderreading.test.ts` (the real Conwy dates pass; a completion
+before the start and a start before the return are flagged). In the browser on
+the stand-in server: the review row read "2027-01-18 · 2027-04-09" and the
+programme form opened with both filled in.
+
+**The second part, where it stands:** answers drafted in one press with the
+documents in view; the buyer's price list read from text and checked; the rate
+picker matching units and ties correctly; the programme dated from the
+invitation. Still not built: the readiness check before a tender starts
+(company facts, brand, registered details, numbering, AI clearance).

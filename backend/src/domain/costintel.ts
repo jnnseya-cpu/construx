@@ -1,3 +1,4 @@
+import { unitSymbol } from '../core/units.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
@@ -160,6 +161,12 @@ export type RateSummary = {
    * one — an imported rate reads as a starting point, never as history.
    */
   provenance: 'COMMITTED' | 'IMPORTED' | 'MIXED';
+  /**
+   * The unit as the platform writes it ("m2" for "m²", "nr" for "No"), or null
+   * where it cannot read it — so a measured line in m² is offered the rate the
+   * rate card wrote in m2. Matched on this, never on the text as typed.
+   */
+  unitSymbol: string | null;
   confidence: Confidence;
   medianMinor: number;
   lowMinor: number;
@@ -486,6 +493,7 @@ export function costIntelligence(
         key: observations[0]!.key,
         description: observations[0]!.description,
         unit: observations[0]!.unit,
+        unitSymbol: unitSymbol(observations[0]!.unit) ?? null,
         observations: observations.length,
         committedObservations,
         importedObservations,
