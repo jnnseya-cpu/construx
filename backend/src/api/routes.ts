@@ -14433,6 +14433,8 @@ export const ROUTES: Route[] = [
           costCode: String(item.costCode ?? ''),
           description: String(item.description ?? ''),
           unit: String(item.unit ?? ''),
+          // As the platform writes it, so a picker matches m² to a rate in m2.
+          unitSymbol: units.unitSymbol(String(item.unit ?? '')) ?? null,
           quantity: Number(item.quantity ?? 0),
           packageId: String(item.packageId ?? ''),
           measurementRule: String(item.measurementRule ?? 'NRM2'),

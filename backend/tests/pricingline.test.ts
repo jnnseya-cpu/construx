@@ -702,6 +702,12 @@ describe('the pricing line, end to end over HTTP', () => {
       expected,
       `the bill holds ${(boq.body.items ?? []).length} items and the pack holds ${expected}`,
     );
+    // Each line says its unit as the platform writes it, so the rate picker
+    // matches a line in m² to a library rate typed in m2.
+    for (const item of boq.body.items as Array<{ unit: string; unitSymbol: string | null }>) {
+      assert.ok('unitSymbol' in item, 'every bill line publishes its unit symbol');
+    }
+    assert.ok((boq.body.items as Array<{ unitSymbol: string | null }>).some((item) => item.unitSymbol !== null));
   });
 
   it('refuses to measure the same pack into the same package twice', async () => {

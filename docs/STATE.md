@@ -34435,3 +34435,31 @@ platform, not of a model): read, 67 items, "Every check passed", confirmed,
 
 **Not done yet in pricing:** proposing a rate for each line from the firm's
 own rate library and past jobs for a person to accept — the next step.
+
+## 2026-11 the rate picker matches units, and breaks ties on the right line
+
+"Price the bill" already pre-selects, for every measured line, the closest rate
+in the firm's own library — by unit, then by shared words — so the estimator
+confirms rather than searches. That is the rate proposal the plan called for;
+it was measured rather than rebuilt.
+
+Measured on the 67 real Conwy lines against the test account's library (the
+owner's own Conwy rates): **67 of 67 correct** as it stood, because library and
+bill used the same units. With the bill's units written as rate cards often
+write them (m2, m3, nr for m², m³, No), the same library gave **37 right,
+5 wrong, 25 with nothing offered**. Two fixes:
+
+- **Units by the platform's one unit table.** Library rates and bill lines now
+  publish `unitSymbol` (`core/units.ts` `unitSymbol`: m² and m2 are "m2", No
+  and nr are "nr", an unreadable unit is null), and the picker groups on it,
+  falling back to the typed unit only where the platform cannot read one.
+- **Ties broken on the right line.** Two library rates can share every word of
+  a line ("Disposal of unacceptable earthworks material Class U1A" and the
+  same "(compound area)"); the first one met won. A tie now goes to the rate
+  with the line's own item reference, then to the one with fewer words the line
+  does not have. A shared reference only breaks a tie — another buyer's 601.6
+  may be different work.
+
+After both: **67 of 67 correct** with the bill's units written either way.
+`tests/costintel.test.ts` (unit symbols on library rates, null where
+unreadable), `tests/pricingline.test.ts` (every bill line publishes one).
