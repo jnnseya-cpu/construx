@@ -228,6 +228,12 @@ const UNFINISHED: readonly RegExp[] = [
   /\bplaceholders?\b/gi,
   /\[(?:insert|tbc|tbd|tba|name|date|value|x{2,})[^\]]*\]/gi,
   /\b(?:TBC|TBD|TBA)\b/g,
+  // Any other square-bracketed blank. A submission answer has no reason to use
+  // square brackets except as a gap to fill, and the narrow list above let
+  // "[ref, date]", "[fortnightly]", "[site]", "[result]" and "[confirm exact
+  // Companies House name…" through on the Telford pack. A citation ("[3]",
+  // "[1–4]") and "[sic]" are not blanks.
+  /\[(?!\s*(?:\d+(?:\s*[,–-]\s*\d+)*|sic)\s*\])[^\]\n]{1,120}(?:\]|$)/gim,
 ];
 
 /** Each unfinished note in a piece of prose, quoted with enough around it to find it. */

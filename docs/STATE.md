@@ -33997,3 +33997,47 @@ reading is confirmed by a person, who sees each question listed.
 Not built: detecting that a reading **missed** questions of a questionnaire (e.g.
 Q1–Q6 absent while Q7 is present). The matrix shows what was read; a person
 confirms it.
+
+## 2026-11 acceptance test against two real tenders (Conwy, Telford) — first findings
+
+The unit suite proves the code does what its tests say on invented tenders. It had
+never been run against a real tender pack. This is the first such run, on the
+real documents of two tenders the owner bid: Conwy (ERCF2509N 05, works, NEC4
+ECSC) and Telford & Wrekin Minor Building Works DPS (Stage 1 application).
+Scripts and outputs live outside the repository (session scratchpad); this
+records what they found.
+
+**Run without a model (free, done):**
+- *Text extraction* (`evidence/ingest.ts extractText`): all four Conwy volumes and
+  all five Telford documents read natively. Conwy Vol 2 carries Q1–Q7 and "No more
+  than 1000 words are required per answer"; Vol 1 carries Table 1 with the
+  weightings (30/10/15/15/10/10/10). The text was never the problem.
+- *Conwy root cause, cross-document split — NOT FIXED*: the scored questions
+  (Vol 2) and their weightings (Vol 1) are in different documents. Each document
+  is read in its own model call and merged by reference (`mergeRequirements`),
+  which (a) cannot join a Table 1 row to its Q-number, so a question can appear
+  twice, once weighted and once word-limited — `planScope` would then plan both;
+  and (b) where references do match, replaces the earlier line wholesale, so a
+  weighting read from one volume is wiped by a later volume that omits it. This
+  is consistent with BID-0001 carrying "2.3 … (Table 1)" and "Appendix 1 … Q7" as
+  separate sections and no Q1–Q6. Proposed: read a tender's documents together
+  in one call, and merge field-wise (keep a weighting/limit/date a later reading
+  omits). Not started — needs a live model to verify the reading half.
+- *Submission gate on the Telford pack*: `unfinishedPhrases` caught 5 of the
+  pack's 15 square-bracketed blanks ("[ref, date]", "[fortnightly]", "[site]",
+  "[result]", "[confirm exact Companies House name…" went through). **Fixed**: any
+  square-bracketed span is now a blank unless it is a numeric citation or
+  "[sic]"; all 15 are caught (bidresponse.test.ts adds the Telford phrases and
+  the citation negatives).
+- *Telford pack against the Stage 1 guidance* (findings for the owner, not
+  platform defects): criteria 1 (Constructionline Gold) and 2 (CHAS/SSIP) are
+  pass/fail and recorded in the pack as NOT HELD; Answer 4 states employers'
+  liability of £5m on the policy and, in the same paragraph, that the firm is
+  exempt — while section 4 says the certificate shows none; the asbestos-awareness
+  claim conflicts with the pack's own note that the certificate is over 2 years
+  old; the modern-slavery answer commits to site managers and supervisors the
+  firm does not have.
+
+**Not run (needs a model, none in this environment):** the reading of the real
+Conwy text into a matrix, the planned pack, the drafted answers and their cost.
+That requires the owner's provider key in this environment.

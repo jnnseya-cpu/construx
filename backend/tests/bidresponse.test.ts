@@ -607,6 +607,28 @@ describe('unfinishedPhrases — a note to the team, never the buyer’s own word
       assert.deepEqual(bidresponse.unfinishedPhrases(text), [], `flagged a legitimate sentence: ${text}`);
     }
   });
+
+  it('catches every square-bracketed blank the Telford pack carried, and leaves citations alone', () => {
+    for (const text of [
+      'Our Modern Slavery & Ethical Labour Policy [ref, date] covers our own workforce.',
+      'Our H&S adviser inspects each site at least [fortnightly] and the reports go to progress meetings.',
+      'We will deliver [project] as principal contractor under CDM 2015.',
+      'Tailor the [site] details per job.',
+      'Spend with Telford-based sub-contractors: target [x]% of sub-contract value.',
+      'Works were [result].',
+      'Applicant legal name JNN Global Ltd [confirm exact Companies House name + company no. — must match the',
+      'Contract works cover [quote per job].',
+    ]) {
+      assert.ok(bidresponse.unfinishedPhrases(text).length > 0, `missed a blank: ${text}`);
+    }
+    for (const text of [
+      'As set out in the Safe Working document [3], every operative is inducted.',
+      'Clauses [10–12] apply to payment.',
+      'The buyer wrote "contractors [sic] must attend".',
+    ]) {
+      assert.deepEqual(bidresponse.unfinishedPhrases(text), [], `flagged a citation: ${text}`);
+    }
+  });
 });
 
 describe('submissionBlocks — the question is printed in full', () => {
