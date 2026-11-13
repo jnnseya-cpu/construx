@@ -34066,3 +34066,19 @@ requirements through the planner now gives 70 sections (drawing notes and the
 11 duplicate pairs gone) — not 7, because that reading never captured Q1–Q6 or
 any weighting. Whether a model now captures them under the corrected reading
 prompt is still **not verified**: no provider key in this environment.
+
+## 2026-11 "Redraft this section" said "has no section" for a section that exists
+
+Reported from BID-0001 (screenshot): Redraft on "Amlinelliad o Ofynion y
+Cytundeb: Outline of Contract Requirements:" answered "BID-0001 has no section
+Amlinelliad o Ofynion y Cytundeb:Outline…". The key holds a line break, and the
+Redraft and "Cut it to length" buttons put the key into the URL path
+unencoded; a browser strips line breaks from a URL (and would split on "/" and
+turn "\" into "/"), so the server looked up a different key. "Edit" already
+encoded it. Both now use `encodeURIComponent`; the router already decodes.
+
+Verified: in a real browser, a section keyed "Amlinelliad o Ofynion y
+Cytundeb:⏎Outline / of Contract \ Requirements:" reaches the server intact
+(the refusal is now "no reasoning provider", this environment having none —
+not "no section"); bidresponse.test.ts scans every page for a `/sections/${…}`
+path that is not encoded, and fails on the old code.

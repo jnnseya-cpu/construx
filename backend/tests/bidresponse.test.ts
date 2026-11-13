@@ -1021,3 +1021,25 @@ describe('one question stated in two documents is answered once', () => {
     assert.deepEqual(stale.map((s) => s.key), ['2.3 Table 1 row 1']);
   });
 });
+
+/*
+ * A section's key is the buyer's own reference, and buyers write anything:
+ * "Amlinelliad o Ofynion y Cytundeb:⏎Outline of Contract Requirements:". Put in
+ * a URL path unencoded, the line break is stripped by the browser, a "/" splits
+ * the path and a "\" becomes "/" — and the server answers "has no section" for a
+ * section that exists. That is what the Redraft button did on BID-0001.
+ */
+describe('a section key travels in a URL encoded', () => {
+  it('every section route the screen calls encodes the key', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs');
+    const pages = readdirSync('frontend/pages').filter((file) => file.endsWith('.js'));
+    const unencoded: string[] = [];
+    for (const file of pages) {
+      const source = readFileSync(`frontend/pages/${file}`, 'utf8');
+      for (const match of source.matchAll(/\/sections\/\$\{([^}]*)\}/g)) {
+        if (!match[1]!.startsWith('encodeURIComponent(')) unencoded.push(`${file}: /sections/\${${match[1]}}`);
+      }
+    }
+    assert.deepEqual(unencoded, [], 'a section key is put in a URL without encoding');
+  });
+});

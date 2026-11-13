@@ -4718,7 +4718,7 @@ export async function pipeline(root) {
     button.textContent = 'Redrafting…';
     try {
       const result = await api.post(
-        `/v1/projects/${projectId}/bid-responses/${button.dataset.pack}/sections/${button.dataset.redraft}/redraft`,
+        `/v1/projects/${projectId}/bid-responses/${button.dataset.pack}/sections/${encodeURIComponent(button.dataset.redraft)}/redraft`,
         {},
       );
       toast(
@@ -4742,7 +4742,7 @@ export async function pipeline(root) {
     button.textContent = 'Cutting…';
     try {
       const result = await api.post(
-        `/v1/projects/${projectId}/bid-responses/${button.dataset.pack}/sections/${button.dataset.shorten}/shorten`,
+        `/v1/projects/${projectId}/bid-responses/${button.dataset.pack}/sections/${encodeURIComponent(button.dataset.shorten)}/shorten`,
         {},
       );
       toast(
