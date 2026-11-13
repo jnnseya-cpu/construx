@@ -134,6 +134,10 @@ function conwyReading(): Record<string, unknown> {
     siteVisitLocal: null,
     issuedOn: '2026-10-22',
     returnChannel: 'PORTAL',
+    // "18/01/2027 Contract commencement date. 09/04/2027 Contract completion date."
+    worksStartOn: '2027-01-18',
+    worksCompletionOn: '2027-04-09',
+    worksPeriodDays: null,
     requirements: [
       {
         reference: 'SSIP',
@@ -377,6 +381,13 @@ describe('the checks, run in code on a reading before anybody sees it', () => {
   it('catches a deadline that is not a date, and one already past', () => {
     assert.ok(ids({ ...conwyReading(), returnByLocal: 'Thursday afternoon' }).includes('DEADLINE_UNREAD'));
     assert.ok(ids(conwyReading(), { today: '2026-11-20' }).includes('DEADLINE_PAST'));
+  });
+
+  it('catches works dates that cannot be right: a completion before the start, a start before the return', () => {
+    assert.ok(ids({ ...conwyReading(), worksCompletionOn: '2027-01-10' }).includes('COMPLETION_BEFORE_START'));
+    assert.ok(ids({ ...conwyReading(), worksStartOn: '2026-11-02' }).includes('WORKS_BEFORE_RETURN'));
+    assert.ok(!ids(conwyReading()).includes('COMPLETION_BEFORE_START'), 'the real Conwy dates pass');
+    assert.ok(!ids(conwyReading()).includes('WORKS_BEFORE_RETURN'));
   });
 
   it('catches the last date for questions falling after the return', () => {

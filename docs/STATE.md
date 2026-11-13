@@ -34463,3 +34463,31 @@ write them (m2, m3, nr for m², m³, No), the same library gave **37 right,
 After both: **67 of 67 correct** with the bill's units written either way.
 `tests/costintel.test.ts` (unit symbols on library rates, null where
 unreadable), `tests/pricingline.test.ts` (every bill line publishes one).
+
+## 2026-11 the tender programme starts from the invitation's own works dates
+
+The last piece of the second part. "Draft the tender programme" asked for the
+start on site and the completion date, which the invitation already states —
+Conwy's timetable gives contract commencement 18/01/2027 and completion
+09/04/2027.
+
+- The ITT reading now asks for the contract's works dates — `worksStartOn`,
+  `worksCompletionOn` (YYYY-MM-DD) and `worksPeriodDays` only where a period is
+  stated rather than a date — each null where the documents do not state it.
+- Two checks in code (`checkTenderReading`): a completion not after the start,
+  and a works start not after the tender return; either means a misread.
+- The review shows "Works: start · completion"; the programme form opens with
+  the latest reading's dates filled in and says they were read from the tender
+  pack, to be checked against the documents. Nothing is fixed: the person
+  changes them, and the programme is still drafted and confirmed as before.
+
+Verified: `tests/tenderreading.test.ts` (the real Conwy dates pass; a completion
+before the start and a start before the return are flagged). In the browser on
+the stand-in server: the review row read "2027-01-18 · 2027-04-09" and the
+programme form opened with both filled in.
+
+**The second part, where it stands:** answers drafted in one press with the
+documents in view; the buyer's price list read from text and checked; the rate
+picker matching units and ties correctly; the programme dated from the
+invitation. Still not built: the readiness check before a tender starts
+(company facts, brand, registered details, numbering, AI clearance).

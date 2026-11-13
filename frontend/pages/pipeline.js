@@ -531,6 +531,16 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                           </div>`
                         : ''
                     }
+                    ${
+                      read.worksStartOn || read.worksCompletionOn || read.worksPeriodDays
+                        ? html`<div class="row">
+                            <span class="lbl">Works: start · completion</span>
+                            <span class="val">
+                              ${read.worksStartOn ?? '—'} · ${read.worksCompletionOn ?? (read.worksPeriodDays ? String(read.worksPeriodDays) + ' days' : '—')}
+                            </span>
+                          </div>`
+                        : ''
+                    }
                     <div class="row">
                       <span class="lbl">Found</span>
                       <span class="val">${requirements.length} requirement(s), ${deliverables.length} deliverable(s)</span>
@@ -5280,6 +5290,21 @@ export async function pipeline(root) {
     // quick option for pasting into a portal's own text boxes.
     const tpDraft = event.target.closest('[data-tp-draft]');
     if (tpDraft) {
+      /*
+       * The works dates, from the latest reading of this tender that states
+       * them — the contract's start and completion, which the programme is
+       * drafted to. Offered, never fixed: the person sees where they came from
+       * and changes them.
+       */
+      const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+      const dated = (perception?.drafts ?? [])
+        .filter((draft) => draft.task === 'ITT_REQUIREMENTS' && draft.status !== 'DISCARDED')
+        .filter((draft) => ISO_DAY.test(String(draft.extraction?.worksStartOn ?? '')))
+        .sort((a, b) => String(b.producedAt ?? '').localeCompare(String(a.producedAt ?? '')))[0];
+      const works = dated?.extraction ?? {};
+      const fromReading = dated
+        ? ` Read from ${dated.textSource === 'TENDER_PACK' ? 'the tender pack' : (dated.textLabel ?? 'the invitation')} — check it against the documents.`
+        : '';
       const done = await command({
         title: 'Draft the tender programme',
         intent:
@@ -5290,12 +5315,19 @@ export async function pipeline(root) {
         path: `/v1/projects/${state.session.projectId}/programme/tender-draft`,
         submitLabel: 'Draft it',
         fields: [
-          { name: 'startDate', label: 'Start on site', type: 'date', hint: 'The first day of work on site.' },
+          {
+            name: 'startDate',
+            label: 'Start on site',
+            type: 'date',
+            value: works.worksStartOn ?? '',
+            hint: `The first day of work on site.${fromReading}`,
+          },
           {
             name: 'completionDate',
             label: 'Completion date the buyer fixed',
             type: 'date',
             required: false,
+            value: ISO_DAY.test(String(works.worksCompletionOn ?? '')) ? works.worksCompletionOn : '',
             hint: 'From the contract data or the invitation. Give this or the period below — the date wins.',
           },
           {
@@ -5303,6 +5335,7 @@ export async function pipeline(root) {
             label: 'Or: construction period (calendar days)',
             type: 'number',
             required: false,
+            value: Number.isInteger(works.worksPeriodDays) && !works.worksCompletionOn ? works.worksPeriodDays : '',
             hint: 'Only if the buyer gave a period rather than a date — 84 for twelve weeks.',
           },
           {

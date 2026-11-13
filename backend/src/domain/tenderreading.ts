@@ -288,6 +288,32 @@ export function checkTenderReading(
     });
   }
 
+  // The works dates: the contract's, which the tender programme is drafted to.
+  const dateOnly = (value: unknown): string | undefined => {
+    const text = typeof value === 'string' ? value.trim() : '';
+    return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : undefined;
+  };
+  const worksStart = dateOnly(extraction.worksStartOn);
+  const worksCompletion = dateOnly(extraction.worksCompletionOn);
+  if (worksStart && worksCompletion && worksCompletion <= worksStart) {
+    add({
+      id: 'COMPLETION_BEFORE_START',
+      severity: 'ATTENTION',
+      title: 'The completion date read is not after the start',
+      detail: `Works start ${worksStart} and complete ${worksCompletion}. One of the two was misread.`,
+      references: [],
+    });
+  }
+  if (worksStart && returnLocal && worksStart <= returnLocal.slice(0, 10)) {
+    add({
+      id: 'WORKS_BEFORE_RETURN',
+      severity: 'ATTENTION',
+      title: 'The works start read is not after the tender return',
+      detail: `Works start ${worksStart}, returns are due ${returnLocal.slice(0, 10)}. A contract cannot start before its tenders are in; one was misread.`,
+      references: [],
+    });
+  }
+
   // Weightings: the scored questions' marks.
   const weighted = requirements
     .map((line, index) => ({ line, index }))
