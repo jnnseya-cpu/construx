@@ -544,6 +544,107 @@ const COVERAGE_LABEL = {
   NO_EVIDENCE_ASKED: 'no evidence asked',
 };
 
+/**
+ * The tender programme: drafted from the measured bill, checked by the
+ * platform's own critical-path engine, confirmed by a person into the project's
+ * programme, and downloaded as a Gantt chart for the portal.
+ *
+ * A denial is shown as a denial, never as "no programme".
+ */
+function tenderProgrammePanel(tenderDrafts) {
+  const intro = html`<h2 style="font-size:14px;margin:0 0 4px">Tender programme</h2>
+    <p class="metric-sub" style="margin:0 0 11px">
+      The programme a buyer asks for with the return. Drafted from your measured bill — activities, working-day
+      durations, the logic between them, who does each, and a risk allowance — and checked by the platform’s own
+      critical-path engine against your period and the bank holidays. Nothing goes into the programme until you
+      confirm it; after that it is the project’s programme, editable on the Programme screen, and the download
+      always shows it as it now is.
+    </p>`;
+  if (tenderDrafts?.error) {
+    return html`<div style="margin:16px 17px 4px">${intro}${notice(
+      isRoleDenial(tenderDrafts.error)
+        ? 'Your role cannot see this project’s programme.'
+        : `The tender programme could not be read: ${tenderDrafts.error.message ?? 'unknown error'}.`,
+      isRoleDenial(tenderDrafts.error) ? 'warn' : 'bad',
+    )}</div>`;
+  }
+  const drafts = tenderDrafts?.drafts ?? [];
+  const confirmed = drafts.find((d) => d.status === 'CONFIRMED');
+  const waiting = drafts.find((d) => d.status === 'DRAFT');
+  const draftButton = html`<button class="btn ${confirmed ? 'quiet' : ''} sm" data-tp-draft>${
+    waiting || confirmed ? 'Draft it again' : 'Draft the tender programme from the bill'
+  }</button>`;
+
+  const confirmedBlock = confirmed
+    ? html`<div class="card" style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
+          <span>
+            ${badge('confirmed', 'ok')} Starts ${date(confirmed.startDate)} · completion date
+            ${date(confirmed.forecast.completionBy)} · ${confirmed.activities.length} activities ·
+            ${confirmed.calendar?.name ?? 'five-day week'}
+          </span>
+          <span style="flex:none;display:flex;gap:7px;flex-wrap:wrap">
+            <button class="btn sm" data-tp-download="PDF">Download programme (PDF)</button>
+            <button class="btn quiet sm" data-tp-download="DOCX">Word</button>
+          </span>
+        </div>
+      </div>`
+    : '';
+
+  const waitingBlock = waiting
+    ? html`<div class="card" style="margin-bottom:10px">
+        <div class="metric-sub" style="margin-bottom:8px">
+          ${waiting.forecast.fits
+            ? badge('fits the period', 'ok')
+            : badge('overruns the period', 'bad')}
+          Draft finishes ${date(waiting.forecast.finishDate)} against a completion date of
+          ${date(waiting.forecast.completionBy)} — computed by the critical-path engine on
+          ${waiting.calendar?.name ?? 'a five-day week'}, not claimed by the drafter.
+          Critical path: ${waiting.forecast.criticalRefs.join(' → ') || 'none'}.
+        </div>
+        ${table({
+          headers: ['Ref', 'Activity', 'Days', 'Follows', 'Resource / subcontract', 'Bill items'],
+          align: ['', '', 'num', '', '', ''],
+          rows: waiting.activities.map((a) => [
+            a.ref,
+            a.riskAllowance ? `${a.name} (risk allowance)` : a.name,
+            a.milestone ? 'Milestone' : String(a.durationDays),
+            a.predecessors.map((l) => `${l.ref}${l.type === 'FS' ? '' : ` ${l.type}`}${l.lagDays ? ` +${l.lagDays}d` : ''}`).join(', ') || '—',
+            [a.resource, a.subcontract ? `Subcontract: ${a.subcontract}` : ''].filter(Boolean).join(' · ') || '—',
+            (a.boqRefs ?? []).join(', ') || '—',
+          ]),
+        })}
+        ${waiting.corrections.length > 0
+          ? html`<div class="notice warn" style="margin-top:9px"><div>
+              <b>Corrected before you saw it:</b> ${waiting.corrections.join(' ')}
+            </div></div>`
+          : ''}
+        ${waiting.assumptions.length > 0
+          ? html`<div class="metric-sub" style="margin-top:9px">
+              <b>Assumptions behind the durations — check each against your own outputs:</b>
+              <ul style="margin:4px 0 0 18px">${waiting.assumptions.map((line) => html`<li>${line}</li>`)}</ul>
+            </div>`
+          : ''}
+        <div class="actions" style="margin-top:11px">
+          <button class="btn" data-tp-confirm="${waiting.id}" ${raw(confirmed ? 'disabled' : '')}>Confirm as the programme</button>
+          ${draftButton}
+        </div>
+        ${confirmed
+          ? html`<div class="metric-sub" style="margin-top:6px">
+              The project already has its programme. Change it on the Programme screen; a draft is not written over it.
+            </div>`
+          : ''}
+      </div>`
+    : '';
+
+  return html`<div style="margin:16px 17px 4px">
+    ${intro}
+    ${confirmedBlock}
+    ${waitingBlock}
+    ${waiting ? '' : html`<div class="actions">${draftButton}</div>`}
+  </div>`;
+}
+
 function matrixDetail(analysis, waivers, addenda, coverage) {
   const gapRefs = new Set(analysis.mandatoryGaps.map((line) => line.reference));
   // A waiver is read live, so a line waived after the matrix was analysed reads
@@ -1152,7 +1253,7 @@ export async function pipeline(root) {
   // The reader is project-scoped: a reading is filed against the project the
   // tender is bid from, and it costs ACUs against that project's tenancy.
   const projectId = state.session?.projectId;
-  const [perception, evidence, ingestion, bidPacks, assurance, portalPort, submissions, flow] = projectId
+  const [perception, evidence, ingestion, bidPacks, assurance, portalPort, submissions, flow, tenderDrafts] = projectId
     ? await Promise.all([
         api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
         api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
@@ -1176,8 +1277,11 @@ export async function pipeline(root) {
         // Where this job is on the road from an enquiry to a price or a
         // submission, and the one thing to do next. Computed server-side.
         loadFlow(projectId),
+        // The programme the buyer asks for with the return, drafted from the
+        // measured bill and confirmed into the project's programme.
+        api.read(`/v1/projects/${projectId}/programme/tender-drafts`, 'WORKPACKAGES_TASKS').catch((error) => ({ error })),
       ])
-    : [null, null, null, null, null, null, null, null];
+    : [null, null, null, null, null, null, null, null, null];
 
   // The register carries counts; the findings themselves are what somebody acts
   // on, so the newest review is opened in full rather than left behind a click.
@@ -1990,6 +2094,7 @@ export async function pipeline(root) {
                   })()
                 }
               `}
+              ${projectId ? tenderProgrammePanel(tenderDrafts) : ''}
               ${
                 /*
                  * The submission, read back and made editable. Until this, a
@@ -2029,7 +2134,7 @@ export async function pipeline(root) {
                             ${sections.map(
                               (section) => html`<div style="border-top:1px solid var(--line);padding:11px 14px">
                                 <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
-                                  <b style="font-size:13px">${section.key} — ${section.title}</b>
+                                  <b style="font-size:13px">${section.key} — ${section.deliverable || section.title}</b>
                                   <span style="flex:none">${
                                     section.status === 'DRAFTED'
                                       ? badge(
@@ -4672,6 +4777,86 @@ export async function pipeline(root) {
     // answer: the submission is produced and downloaded in the platform, not
     // copied out and finished elsewhere. The clipboard copy below stays as the
     // quick option for pasting into a portal's own text boxes.
+    const tpDraft = event.target.closest('[data-tp-draft]');
+    if (tpDraft) {
+      const done = await command({
+        title: 'Draft the tender programme',
+        intent:
+          'Reads your measured bill and the tender’s own programme requirements and drafts the activities, durations, ' +
+          'logic, resources and a risk allowance. The platform checks it with its critical-path engine against the ' +
+          'period and the bank holidays. It is an AI pass and is charged; nothing is written to the programme until you ' +
+          'confirm it.',
+        path: `/v1/projects/${state.session.projectId}/programme/tender-draft`,
+        submitLabel: 'Draft it',
+        fields: [
+          { name: 'startDate', label: 'Start on site', type: 'date', hint: 'The first day of work on site.' },
+          {
+            name: 'completionDate',
+            label: 'Completion date the buyer fixed',
+            type: 'date',
+            required: false,
+            hint: 'From the contract data or the invitation. Give this or the period below — the date wins.',
+          },
+          {
+            name: 'periodDays',
+            label: 'Or: construction period (calendar days)',
+            type: 'number',
+            required: false,
+            hint: 'Only if the buyer gave a period rather than a date — 84 for twelve weeks.',
+          },
+          {
+            name: 'guidance',
+            label: 'What you know that the bill does not say',
+            type: 'textarea',
+            required: false,
+            hint:
+              'For example “road closure from 18/01/2027; grout cures 7 days before testing”. Passed to the drafter ' +
+              'as your guidance, never as a fact about the tender.',
+          },
+        ],
+      });
+      if (done) {
+        toast(
+          'Programme drafted',
+          `${done.draft.activities.length} activities, finishing ${done.draft.forecast.finishDate}` +
+            `${done.draft.forecast.fits ? '' : ' — after the completion date'}. Check it, then confirm.`,
+          done.draft.forecast.fits ? 'ok' : '',
+        );
+        await draw();
+      }
+      return;
+    }
+
+    const tpConfirm = event.target.closest('[data-tp-confirm]');
+    if (tpConfirm) {
+      tpConfirm.disabled = true;
+      try {
+        const result = await api.post(
+          `/v1/projects/${state.session.projectId}/programme/tender-drafts/${tpConfirm.dataset.tpConfirm}/confirm`,
+          {},
+        );
+        toast('Programme confirmed', `It is now this project’s programme, finishing ${result.finishDate}.`, 'ok');
+        await draw();
+      } catch (error) {
+        toast('Not confirmed', error.detail ?? error.message ?? 'The programme is unchanged.', 'err');
+        tpConfirm.disabled = false;
+      }
+      return;
+    }
+
+    const tpDownload = event.target.closest('[data-tp-download]');
+    if (tpDownload) {
+      try {
+        await api.download(`/v1/projects/${state.session.projectId}/programme/tender.pdf`, {
+          format: tpDownload.dataset.tpDownload,
+        });
+        toast('Downloaded', 'Your tender programme has been saved.', 'ok');
+      } catch (error) {
+        toast('Could not download', error?.message ?? 'Could not generate the programme.', 'err');
+      }
+      return;
+    }
+
     const downloadPackBtn = event.target.closest('[data-download-pack]');
     if (downloadPackBtn) {
       try {
@@ -4697,7 +4882,9 @@ export async function pipeline(root) {
       const found = fullPacks.find((fp) => fp.pack.id === copyPackBtn.dataset.copyPack);
       if (!found) return;
       const blocks = found.sections.map((section) => {
-        const heading = `${section.key} — ${section.title}`;
+        // The full requirement, never the 67-character title: this text is
+        // pasted into the buyer's portal.
+        const heading = `${section.key} — ${(section.deliverable || section.title).replace(/\\[nrt]/g, ' ').replace(/\s+/g, ' ').trim()}`;
         const body =
           section.status === 'DRAFTED' && (section.body ?? []).length > 0
             ? section.body.join('\n\n')

@@ -503,6 +503,11 @@ function renderBlock(
       return;
     }
 
+    case 'GANTT': {
+      renderGantt(sheet, block, accent);
+      return;
+    }
+
     case 'PHOTOGRAPH': {
       const placed = photos.get(block.evidenceHash);
       const caption = block.takenOn ? `${block.caption} — ${block.takenOn}` : block.caption;
@@ -752,6 +757,112 @@ function niceBarLength(widthMetres: number): number {
     if (magnitude * step >= target) return magnitude * step;
   }
   return magnitude * 10;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * A programme as a bar chart: the activity on the left, a bar on a timeline of
+ * weeks to the right, the critical path in the document's accent colour.
+ *
+ * Every label wraps rather than being cut — a bar chart whose activity names end
+ * in "…" is a chart nobody can check against the method statement. The week
+ * header is repeated after a page break, as a table's is.
+ */
+function renderGantt(sheet: Sheet, block: Extract<DocumentBlock, { kind: 'GANTT' }>, accent: [number, number, number]): void {
+  if (block.rows.length === 0) return;
+  const LABEL = 175;
+  const left = MARGIN.left + LABEL;
+  const width = CONTENT_WIDTH - LABEL;
+  const day = (iso: string): number => Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / 86_400_000;
+  const from = day(block.from);
+  const span = Math.max(1, day(block.to) - from + 1);
+  const perDay = width / span;
+  const xOf = (iso: string): number => left + Math.min(span, Math.max(0, day(iso) - from)) * perDay;
+  const GREY: [number, number, number] = [0.42, 0.42, 0.45];
+  const NONCRITICAL: [number, number, number] = [0.36, 0.42, 0.48];
+  const RISK: [number, number, number] = [0.72, 0.72, 0.75];
+  const GRID: [number, number, number] = [0.9, 0.9, 0.92];
+
+  // The Mondays on the timeline, labelled as often as the width allows.
+  const start = new Date(block.from.slice(0, 10) + 'T00:00:00Z');
+  const firstMonday = (8 - start.getUTCDay()) % 7;
+  const mondays: number[] = [];
+  for (let offset = firstMonday; offset < span; offset += 7) mondays.push(offset);
+  const every = Math.max(1, Math.ceil((mondays.length * 24) / width));
+  const labelOf = (offset: number): string => {
+    const at = new Date((from + offset) * 86_400_000);
+    return `${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]}`;
+  };
+
+  sheet.reserve(40);
+  sheet.advance(8);
+  sheet.text(block.caption, { font: 'Helvetica-Bold', size: 10 });
+  sheet.advance(16);
+
+  const drawHeader = (): void => {
+    sheet.reserve(18);
+    sheet.fill(MARGIN.left, sheet.y - 5, CONTENT_WIDTH, 15, [0.95, 0.95, 0.96]);
+    sheet.text('Activity', { font: 'Helvetica-Bold', size: 7.5, x: MARGIN.left + 4, colour: [0.25, 0.25, 0.28] });
+    mondays.forEach((offset, index) => {
+      if (index % every === 0) sheet.text(labelOf(offset), { size: 6.5, x: left + offset * perDay + 1, colour: GREY });
+    });
+    sheet.advance(14);
+  };
+  drawHeader();
+
+  for (const row of block.rows) {
+    const lines = wrap(row.label, 'Helvetica', 7.5, LABEL - 8);
+    const height = lines.length * 9 + 5;
+    const before = sheet.y;
+    sheet.reserve(height);
+    if (sheet.y > before) drawHeader();
+
+    // Week lines first, so the bar sits over them.
+    const top = sheet.y + 8;
+    const bottom = sheet.y - (lines.length - 1) * 9 - 4;
+    for (const offset of mondays) sheet.fill(left + offset * perDay, bottom, 0.3, top - bottom, GRID);
+
+    lines.forEach((line, index) => {
+      sheet.advance(index === 0 ? 0 : 9);
+      sheet.text(line, { size: 7.5, x: MARGIN.left + 4, colour: row.critical ? [0.1, 0.1, 0.1] : [0.2, 0.2, 0.22] });
+    });
+    sheet.advance(-(lines.length - 1) * 9);
+
+    // The allowance is shown as an allowance even though it sits on the critical
+    // path — that is where an allowance belongs, and drawing it as critical work
+    // would hide the one bar a buyer asked to see.
+    const colour = row.riskAllowance ? RISK : row.critical ? accent : NONCRITICAL;
+    if (row.milestone) {
+      const x = xOf(row.start);
+      sheet.fill(x - 3, sheet.y - 1, 6, 6, colour);
+      sheet.text(labelOf(day(row.start) - from), { size: 6.5, x: x + 5, colour: GREY });
+    } else {
+      const x0 = xOf(row.start);
+      const x1 = Math.max(x0 + 1.5, xOf(row.finish) + perDay);
+      sheet.fill(x0, sheet.y - 1, Math.min(x1, left + width) - x0, 6, colour);
+    }
+
+    sheet.advance(height);
+    sheet.rule([0.93, 0.93, 0.94]);
+  }
+
+  // The key, because a colour nobody explained is decoration.
+  sheet.reserve(20);
+  sheet.advance(12);
+  let x = MARGIN.left;
+  for (const [label, colour] of [
+    ['Critical path', accent],
+    ['Other activity', NONCRITICAL],
+    ['Risk allowance', RISK],
+  ] as Array<[string, [number, number, number]]>) {
+    sheet.fill(x, sheet.y - 1, 14, 6, colour);
+    sheet.text(label, { size: 7.5, x: x + 18, colour: GREY });
+    x += 18 + widthOf(label, 'Helvetica', 7.5) + 16;
+  }
+  sheet.fill(x + 4, sheet.y - 1, 6, 6, NONCRITICAL);
+  sheet.text('Milestone', { size: 7.5, x: x + 14, colour: GREY });
+  sheet.advance(14);
 }
 
 function renderTable(sheet: Sheet, block: Extract<DocumentBlock, { kind: 'TABLE' }>, accent: [number, number, number]): void {

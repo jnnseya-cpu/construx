@@ -878,6 +878,12 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('ACTIVITY_ATTRIBUTES_SET', 'Task', 'UPDATE', 'PROJECT_CONTROL'),
   def('ACTIVITY_STATUS_RECORDED', 'Task', 'UPDATE', 'PROJECT_CONTROL'),
   def('SCHEDULE_RUN', 'ScheduleRun', 'CREATE', 'PROJECT_CONTROL'),
+  // The tender programme drafted from the bill. Drafting and superseding an
+  // older waiting draft are the reading's own writes; confirming it into the
+  // project programme is a person's commitment, so no agent reaches it.
+  def('TENDER_PROGRAMME_DRAFTED', 'TenderProgrammeDraft', 'CREATE', 'PROJECT_CONTROL', { aiAllowed: true }),
+  def('TENDER_PROGRAMME_SUPERSEDED', 'TenderProgrammeDraft', 'UPDATE', 'PROJECT_CONTROL', { aiAllowed: true }),
+  def('TENDER_PROGRAMME_CONFIRMED', 'TenderProgrammeDraft', 'UPDATE', 'PROJECT_CONTROL'),
   // Resources: what the programme needs and how much of it there is. The
   // availability limit is a statement about the business, so it is recorded
   // rather than assumed, and levelling is computed from it rather than stored.

@@ -33875,3 +33875,67 @@ now raises all of them itself, on the bid pack, every time (`bidCompleteness`):
 The review context (`reviewContextFor`: one-person flag, people, contract form) is
 read from the company profile and the stored analysis; `bidCompleteness` takes it
 as an optional fifth argument so existing callers and tests are unchanged.
+
+## 2026-11 the tender programme, drafted from the bill by the platform
+
+"Tenderers are to submit a programme with the tender return" meant typing every
+activity onto the Programme screen or drawing a bar chart elsewhere. Now
+(`domain/tenderprogramme.ts`, door on Pipeline & Bids → "Tender programme"):
+
+- **Draft** (`POST …/programme/tender-draft`, AI task `tender_programme_draft`):
+  the model gets the live measured bill, the start date, the period — or, better,
+  the completion date the buyer fixed (which then decides the period: "84 days"
+  from a Monday ends on a Sunday) — the invitation's time/access/sequence
+  requirements, the firm's people and self-delivered trades, and optional
+  estimator guidance (passed as guidance, never as a tender fact). It returns
+  activities, working-day durations, logic, resource, specialist subcontract trade
+  (by trade, never a company), bill references, a labelled risk allowance and the
+  productivity assumptions behind the durations. `normaliseDraft` (pure, tested)
+  drops and names links to non-activities, refuses a loop, and computes the finish
+  with the platform's own CPM engine (`schedule`) — `fits` is computed, never
+  claimed. A newer draft supersedes a waiting one. Nothing touches the programme.
+- **Calendar**: five-day week less the jurisdiction's bank holidays from
+  `constructionAct.bankHolidays` (England & Wales unless the location says
+  Scotland / Northern Ireland; none invented outside the UK). The standard
+  calendar has no holidays, which put work on Good Friday and Easter Monday.
+- **Milestones**: start/finish milestone types, and FS links out of a start
+  milestone become SS, into a finish milestone FF — the engine gives a milestone
+  its own day, so FS links added a day at each end. Same logic, honest dates.
+- **Confirm** (`POST …/tender-drafts/:draftId/confirm`, human only): checks both
+  WORKPACKAGES_TASKS C and PROGRAMME_BASELINES U *before* writing (a PM holds the
+  first, not the second — otherwise activities would be written and never
+  scheduled); refuses onto a project that already has activities; writes through
+  `createTasks` / `linkTasks` / `setActivityAttributes` / `defineCalendar` and
+  `runSchedule` — the project's one programme, editable on the Programme screen.
+- **Export** (`POST …/programme/tender.pdf`, PDF or DOCX): read from the live
+  programme. New export block `GANTT` — PDF draws bars on a week timeline
+  (labels wrap, never "…"; header repeats after a page break; critical path in the
+  accent, risk allowance in its own grey even though it sits on the critical path,
+  milestones with dates, a key); DOCX is an editable week-grid table with shaded
+  cells; HTML a proportional table. Then the activity table (logic incl. SS/lag,
+  resource/subcontract, bill items, critical), assumptions, "for tender purposes".
+- Events `TENDER_PROGRAMME_DRAFTED` / `_SUPERSEDED` (aiAllowed) and
+  `_CONFIRMED` (human); entity `TenderProgrammeDraft` (WORKPACKAGES_TASKS).
+- Also: the pack's read view and "Copy all answers" (pasted into portals) now use
+  the full requirement, not the 67-character title.
+
+Verified: tenderprogramme.test.ts (bill required, payload, dropped link, loop
+refused, overrun flagged, completion-date period, bank holidays over Easter 2027,
+supersede, confirm writes 10 tasks/10 links/1 run finishing 2027-04-05, both
+permissions checked before writing, refusal onto an existing programme, Gantt
+blocks, PDF and DOCX render); rendered PDF/DOCX inspected; panel, dialog and the
+refusal path driven in a real browser against the running server. Not verified
+here: draft quality from a live model (no provider in this environment) — the
+person confirms it, and every duration's assumption is printed for checking.
+
+Not built: editing a waiting draft in place (redraft with guidance, or confirm
+and edit on the Programme screen).
+
+Found and **not** changed (unrelated, recorded per rule 11):
+- `POST /programme/dependencies` accepts `lagDays`, but the engine reads `lag`, so
+  a lag entered through that route is scheduled as zero.
+- The CPM engine gives a zero-duration activity/milestone its own day, so an FS
+  successor starts the next working day (worked around above for tender drafts;
+  hand-built programmes are still affected).
+- `pipeline.js` uses a badge tone `good` that the design system does not define
+  ("issued · read-only" renders unstyled).

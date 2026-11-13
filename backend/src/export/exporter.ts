@@ -177,6 +177,30 @@ export type DocumentBlock =
         outlineOnly?: boolean;
       }>;
       legend: Array<{ label: string; colour: string }>;
+    }
+  /**
+   * A bar chart of a programme: one row per activity, a bar from its start to its
+   * finish on a timeline of working weeks.
+   *
+   * Dates, not page positions, so the JSON and HTML forms carry a programme
+   * somebody can check and each renderer scales it to its own page. The critical
+   * path is marked because it is the one thing a reader of a bar chart needs and
+   * cannot see; a milestone is a moment, drawn as one.
+   */
+  | {
+      kind: 'GANTT';
+      caption: string;
+      /** First and last day of the timeline, YYYY-MM-DD. */
+      from: string;
+      to: string;
+      rows: Array<{
+        label: string;
+        start: string;
+        finish: string;
+        critical?: boolean;
+        milestone?: boolean;
+        riskAllowance?: boolean;
+      }>;
     };
 
 export type ExportDocument = {
@@ -981,6 +1005,27 @@ export class ExportService {
               `${block.takenOn ? ` — ${escape(block.takenOn)}` : ''}</figcaption>` +
               `<p><code>${escape(block.evidenceHash)}</code></p></figure>`
             );
+          case 'GANTT': {
+            // Bars as proportional widths: the same dates as the PDF, scaled to
+            // whatever width the reader's window gives the cell.
+            const day = (iso: string) => Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / 86_400_000;
+            const span = Math.max(1, day(block.to) - day(block.from) + 1);
+            const row = (r: (typeof block.rows)[number]) => {
+              const left = ((day(r.start) - day(block.from)) / span) * 100;
+              const width = r.milestone ? 0.8 : Math.max(0.8, ((day(r.finish) - day(r.start) + 1) / span) * 100);
+              const colour = r.riskAllowance ? '#b9b9c0' : r.critical ? document.branding.primaryColour : '#5b6b7a';
+              return (
+                `<tr><td>${escape(r.label)}</td><td>${escape(r.start)}</td><td>${escape(r.finish)}</td>` +
+                `<td style="position:relative;min-width:240px"><div style="position:absolute;top:30%;height:40%;` +
+                `left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${colour}"></div></td></tr>`
+              );
+            };
+            return (
+              `<table class="gantt"><caption>${escape(block.caption)}</caption>` +
+              `<thead><tr><th>Activity</th><th>Start</th><th>Finish</th><th>${escape(block.from)} → ${escape(block.to)}</th></tr></thead>` +
+              `<tbody>${block.rows.map(row).join('')}</tbody></table>`
+            );
+          }
           case 'ATTESTATION':
             return (
               `<section class="attestation"><h3>Attestation</h3>` +

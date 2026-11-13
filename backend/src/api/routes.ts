@@ -171,6 +171,7 @@ import * as pricelineage from '../domain/pricelineage.ts';
 import * as redteam from '../domain/redteam.ts';
 import * as evidenceclaim from '../domain/evidenceclaim.ts';
 import * as bidresponse from '../domain/bidresponse.ts';
+import * as tenderprogramme from '../domain/tenderprogramme.ts';
 import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
 import * as tenderpackcheck from '../domain/tenderpackcheck.ts';
@@ -13984,6 +13985,84 @@ export const ROUTES: Route[] = [
       'same arithmetic the quotation uses, for transcribing into the buyer’s Appendix B or attaching as the priced ' +
       'breakdown. Reads the latest complete estimate and refuses an incomplete one rather than exporting a wrong total',
     handler: (platform, ctx) => pricingSchedule(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/programme/tender-drafts',
+    readOnly: true,
+    description: 'The tender programme drafts on this project, newest first — waiting, confirmed or replaced',
+    handler: (platform, ctx) => ({ drafts: tenderprogramme.tenderProgrammeDrafts(projectContext(platform, ctx)) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/tender-draft',
+    description:
+      'Draft the tender programme from the measured bill — activities, working-day durations, logic, resources, specialist subcontract trades and a risk allowance — checked by the critical-path engine against the period. A draft only: nothing is written to the programme until a person confirms it',
+    ai: { engine: 'TENDER', taskType: 'tender_programme_draft', capability: 'REASONING' },
+    schema: {
+      type: 'object',
+      // The period from whichever the buyer stated: a completion date usually,
+      // sometimes a number of days. The engine refuses when neither is given.
+      required: ['startDate'],
+      properties: {
+        startDate: stringField,
+        periodDays: { type: 'integer', minimum: 1, maximum: 3650 },
+        completionDate: stringField,
+        // What the estimator knows that the bill does not say — "soil nails take
+        // four weeks", "the closure runs from 18 January". Passed to the drafter
+        // as guidance, never as a fact about the tender.
+        guidance: { type: 'string', maxLength: 2000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderprogramme.draftTenderProgramme(
+        projectContext(platform, ctx),
+        body<{ startDate: string; periodDays?: number; completionDate?: string; guidance?: string }>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/tender-drafts/:draftId/confirm',
+    description:
+      'Accept a tender programme draft: its activities and logic are written into this project’s programme and scheduled from the start date, editable on the Programme screen from then on',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      tenderprogramme.confirmTenderProgramme(projectContext(platform, ctx), { draftId: ctx.params.draftId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/tender.pdf',
+    binary: true,
+    description:
+      'The confirmed tender programme as a branded, downloadable document (PDF or DOCX) — a Gantt chart with the critical path, the activity table with logic, resources and bill items, and the assumptions behind the durations — for the buyer’s portal',
+    schema: {
+      type: 'object',
+      properties: { format: { type: 'string', enum: ['PDF', 'DOCX'] } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const projectId = ctx.params.projectId as string;
+      const actor = auth(ctx);
+      const chosen: RenderableFormat = body<{ format?: RenderableFormat }>(ctx).format ?? 'PDF';
+      const { blocks, projectName } = tenderprogramme.tenderProgrammeBlocks(projectContext(platform, ctx));
+      const client = String(platform.ledger.get({ refType: 'Project', refId: projectId })?.state.client ?? '').trim();
+      const document = platform.exports.document(actor, projectId, {
+        title: 'Tender Programme',
+        subtitle: projectName,
+        blocks,
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+        ...(client ? { preparedFor: client } : {}),
+      });
+      return renderAndCharge(
+        platform.spendingWalletFor(actor, projectId).wallet,
+        document,
+        { format: chosen, projectId, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
   },
   {
     method: 'POST',

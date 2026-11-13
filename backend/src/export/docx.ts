@@ -323,9 +323,85 @@ function blockXml(
       return drawingXml(id, images.length - 1, block.takenOn ? `${block.caption} — ${block.takenOn}` : block.caption);
     }
 
+    case 'GANTT':
+      return (
+        para(run(block.caption), '<w:pPr><w:pStyle w:val="Caption"/></w:pPr>') + ganttXml(block, branding)
+      );
+
     default:
       return '';
   }
+}
+
+/**
+ * A programme as a Word table: a column per period, the activity's periods
+ * shaded. Editable in Word, which is the reason to send a .docx at all — a
+ * picture of a bar chart would have to be redrawn to move a bar.
+ *
+ * A period is a week, or two or more weeks where a long programme would leave
+ * columns too narrow to read; the header says which.
+ */
+function ganttXml(block: Extract<DocumentBlock, { kind: 'GANTT' }>, branding: ClientBranding): string {
+  const day = (iso: string): number => Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / 86_400_000;
+  const from = day(block.from);
+  const span = Math.max(1, day(block.to) - from + 1);
+  const weeks = Math.ceil(span / 7);
+  const perColumn = 7 * Math.max(1, Math.ceil(weeks / 26));
+  const columns = Math.ceil(span / perColumn);
+  const ACTIVITY = 3000;
+  const DATE = 1050;
+  const cellWidth = Math.max(60, Math.floor((TEXT_WIDTH - ACTIVITY - 2 * DATE) / columns));
+  const accent = hex(branding.primaryColour);
+  const label = (offset: number): string => {
+    const at = new Date((from + offset) * 86_400_000);
+    return `${at.getUTCDate()}/${at.getUTCMonth() + 1}`;
+  };
+
+  const cell = (text: string, w: number, fill?: string, bold = false): string =>
+    `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>` : ''}</w:tcPr>${para(
+      run(text, `<w:rPr>${bold ? '<w:b/>' : ''}<w:sz w:val="14"/></w:rPr>`),
+      '<w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr>',
+    )}</w:tc>`;
+
+  const grid =
+    `<w:gridCol w:w="${ACTIVITY}"/><w:gridCol w:w="${DATE}"/><w:gridCol w:w="${DATE}"/>` +
+    Array.from({ length: columns }, () => `<w:gridCol w:w="${cellWidth}"/>`).join('');
+  const header =
+    `<w:tr><w:trPr><w:tblHeader/></w:trPr>${cell('Activity', ACTIVITY, undefined, true)}${cell('Start', DATE, undefined, true)}` +
+    `${cell('Finish', DATE, undefined, true)}${Array.from({ length: columns }, (_, index) =>
+      cell(label(index * perColumn), cellWidth, undefined, true),
+    ).join('')}</w:tr>`;
+  const rows = block.rows
+    .map((row) => {
+      const s = day(row.start) - from;
+      const f = day(row.finish) - from;
+      const fill = row.riskAllowance ? 'C8C8CE' : row.critical ? accent : '5B6B7A';
+      const periods = Array.from({ length: columns }, (_, index) => {
+        const p0 = index * perColumn;
+        const p1 = p0 + perColumn - 1;
+        const on = row.milestone ? s >= p0 && s <= p1 : s <= p1 && f >= p0;
+        return cell(row.milestone && on ? '◆' : '', cellWidth, on && !row.milestone ? fill : undefined);
+      }).join('');
+      return `<w:tr>${cell(row.label, ACTIVITY)}${cell(row.start, DATE)}${cell(row.finish, DATE)}${periods}</w:tr>`;
+    })
+    .join('');
+  const borders = ['top', 'left', 'bottom', 'right', 'insideH', 'insideV']
+    .map((edge) => `<w:${edge} w:val="single" w:sz="2" w:space="0" w:color="D5DBE0"/>`)
+    .join('');
+  const key = para(
+    run(
+      `Each column is ${perColumn === 7 ? 'a week' : `${perColumn / 7} weeks`}, headed by its first day. ` +
+        'Shaded in the accent colour: critical path. Grey: other activities. Light grey: risk allowance. ◆ milestone.',
+      '<w:rPr><w:sz w:val="14"/></w:rPr>',
+    ),
+  );
+  return (
+    // Narrow week columns need narrow padding, or Word wraps "18/1" onto two lines.
+    `<w:tbl><w:tblPr><w:tblW w:w="${ACTIVITY + 2 * DATE + columns * cellWidth}" w:type="dxa"/><w:tblLayout w:type="fixed"/>` +
+    `<w:tblCellMar><w:left w:w="28" w:type="dxa"/><w:right w:w="28" w:type="dxa"/></w:tblCellMar>` +
+    `<w:tblBorders>${borders}</w:tblBorders></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${header}${rows}</w:tbl>` +
+    key
+  );
 }
 
 /**
