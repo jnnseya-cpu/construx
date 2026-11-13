@@ -1,7 +1,7 @@
 import { expertBriefing } from '../ai/expertise.ts';
 import { DomainError } from '../core/errors.ts';
 import { authorise, currentPhase, runAI, type EngineContext } from '../engines/context.ts';
-import { ingestedFiles } from '../evidence/pipeline.ts';
+import { packDocuments } from '../evidence/pipeline.ts';
 
 /**
  * Check a clarification against the tender pack before it is sent.
@@ -63,13 +63,7 @@ export async function checkClarificationAgainstPack(
   // The pack is the ingested documents that yielded text. A drawing's text layer
   // is its title block, so a check runs against the documents that actually say
   // something, and names which they were.
-  const docs = ingestedFiles(ctx)
-    .filter((file) => file.status === 'INGESTED')
-    .map((file) => ({
-      label: file.filename ?? file.classification?.kind ?? file.hash.slice(0, 8),
-      text: String((file.extraction as { text?: unknown } | undefined)?.text ?? '').trim(),
-    }))
-    .filter((doc) => doc.text.length > 0);
+  const docs = packDocuments(ctx);
 
   const documentsSearched = docs.map((doc) => doc.label);
 

@@ -185,7 +185,7 @@ function heldTenderFiles(evidence, ingestion) {
  */
 const CANNOT_BE_AN_INVITATION = ['DRAWING', 'CALCULATION', 'REPORT', 'SCHEDULE', 'PHOTOGRAPH', 'MODEL', 'CERTIFICATE'];
 
-function ittReadingPanel({ perception, evidence, ingestion, projectId, projectName, blocked, tenderProjects, invitationOptions }) {
+function ittReadingPanel({ perception, evidence, ingestion, projectId, projectName, blocked, tenderProjects, invitationOptions, projectHasInvitation }) {
   // Three separate reasons this cannot run, and they need different sentences.
   // Collapsing them into one "unavailable" is how somebody spends an afternoon
   // fixing the wrong thing.
@@ -200,6 +200,9 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
   }
 
   const available = perception?.capability?.available === true;
+  // Reading text needs a model that reasons, not one that sees: a deployment
+  // with only the first can still read every document whose words are held.
+  const textAvailable = perception?.capability?.textReading?.available === true;
   const published = new Map((perception?.capability?.tasks ?? []).map((entry) => [entry.task, entry]));
   const ittTask = published.get('ITT_REQUIREMENTS');
   const drafts = (perception?.drafts ?? []).filter((d) => d.task === 'ITT_REQUIREMENTS' && d.status === 'DRAFT');
@@ -214,6 +217,9 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
     (d) => (d.task === 'DRAWING_TAKEOFF' || d.task === 'PRICE_LIST_BOQ') && d.status === 'DRAFT',
   );
   const readable = heldTenderFiles(evidence, ingestion);
+  // The documents whose words the platform has read itself — what one reading
+  // of the whole pack sends.
+  const textDocuments = readable.filter((row) => row.road === 'TEXT').length;
 
   return html`
     <div class="card pad0" style="margin-bottom:14px">
@@ -233,9 +239,26 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
         ${
           !blocked
             ? html`<div class="actions" style="margin-bottom:12px">
-                <button class="btn" data-upload-tender>Upload a tender document</button>
+                <button class="btn ${textAvailable && textDocuments > 0 ? 'quiet' : ''}" data-upload-tender>Upload a tender document</button>
+                ${
+                  textAvailable && textDocuments > 0
+                    ? html`<button class="btn" data-read-pack>
+                        Read all ${textDocuments} document${textDocuments === 1 ? '' : 's'} together
+                      </button>`
+                    : ''
+                }
                 <button class="btn quiet" data-paste-tender>Paste the invitation instead</button>
-              </div>`
+              </div>
+              ${
+                textAvailable && textDocuments > 0
+                  ? html`<p class="metric-sub" style="margin:-4px 0 12px">
+                      One reading of the whole pack — the instructions, the questionnaire, the price list and the
+                      reports together, as one tender — into one draft: the deadline and how to return, the scored
+                      questions with their weightings and limits, and the documents to send back. Code then checks the
+                      reading against the documents before you see it. The estimate is shown before anything is sent.
+                    </p>`
+                  : ''
+              }`
             : ''
         }
 
@@ -262,7 +285,19 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
         }
 
         ${
-          !blocked && !available
+          !blocked && !available && textAvailable
+            ? html`<div class="notice info" style="margin-bottom:12px">
+                <div>
+                  <b>Text is read here; pictures of pages are not.</b> ${perception?.capability?.reason ?? ''}
+                  Every document whose words the platform has read itself — Word, a spreadsheet, a PDF with a text
+                  layer — can be read below. A scan or a drawing that is only an image cannot.
+                </div>
+              </div>`
+            : ''
+        }
+
+        ${
+          !blocked && !available && !textAvailable
             ? html`<div class="notice warn" style="margin-bottom:12px">
                 <div>
                   <b>AI reading is not available on this deployment.</b><br />${perception?.capability?.reason ?? ''}
@@ -336,13 +371,13 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                  * on a road (DRAWING/TEXT/LOOK) that carries one.
                  */
                 html`${
-                  !available
+                  !(available || (textAvailable && road === 'TEXT'))
                   ? road === 'UNREAD'
                     ? html`<button class="btn quiet sm" data-ingest-tender="${entry.hash}" data-name="${entry.description}">
                         Look at the file first
                       </button>`
                     : ''
-                  : file && String(file.kind ?? '') === 'DRAWING'
+                  : available && file && String(file.kind ?? '') === 'DRAWING'
                   ? html`<button class="btn sm" data-take-off="${entry.hash}">Measure quantities</button>
                       <button class="btn quiet sm" data-read-itt-text="${file.ingestionId}"
                         title="A drawing states no tender requirements. This will run and will almost certainly find none.">
@@ -418,8 +453,50 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                 const requirements = read.requirements ?? [];
                 const deliverables = read.deliverables ?? [];
                 const omitted = read.omitted ?? read.omissions ?? [];
+                const checks = draft.checks?.checks ?? [];
+                const untraced = new Set(
+                  checks.filter((check) => check.id === 'NOT_IN_PACK').flatMap((check) => check.references ?? []),
+                );
+                const when = (value) => (value ? String(value).replace('T', ' ') : null);
+                const notStated = html`<i style="color:var(--text-3)">not stated</i>`;
                 return html`<div class="card" style="margin-bottom:10px">
+                  ${
+                    draft.checks
+                      ? html`<div class="notice ${draft.checks.attention > 0 ? 'warn' : 'ok'}" style="margin-bottom:10px">
+                          <div>
+                            <b>Checked in code against the documents: ${draft.checks.summary}</b>
+                            ${
+                              checks.length > 0
+                                ? html`<ul style="margin:6px 0 0 18px;padding:0">
+                                    ${checks.map(
+                                      (check) => html`<li style="margin-bottom:4px">
+                                        ${check.severity === 'ATTENTION' ? badge('look', 'warn') : badge('note', '')}
+                                        <b>${check.title}.</b> ${check.detail}
+                                        ${
+                                          (check.references ?? []).length > 0
+                                            ? html`<span style="color:var(--text-3)"> (${check.references.join(', ')})</span>`
+                                            : ''
+                                        }
+                                      </li>`,
+                                    )}
+                                  </ul>`
+                                : ''
+                            }
+                          </div>
+                        </div>`
+                      : ''
+                  }
                   <div class="split-list">
+                    ${
+                      Array.isArray(draft.packFiles) && draft.packFiles.length > 0
+                        ? html`<div class="row">
+                            <span class="lbl">Read together</span>
+                            <span class="val" style="font-size:12px">${draft.packFiles
+                              .map((file) => `${file.filename} (${humanise(String(file.kind ?? '')).toLowerCase()})`)
+                              .join(' · ')}</span>
+                          </div>`
+                        : ''
+                    }
                     <div class="row">
                       <span class="lbl">Reference it read</span>
                       <span class="val">${read.reference ?? html`<i style="color:var(--text-3)">not stated in the document</i>`}</span>
@@ -430,8 +507,25 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                     </div>
                     <div class="row">
                       <span class="lbl">Returns by</span>
-                      <span class="val">${read.returnBy ?? html`<i style="color:var(--text-3)">not stated</i>`}</span>
+                      <span class="val">${
+                        when(read.returnByLocal)
+                          ? html`${when(read.returnByLocal)} ${
+                              read.returnTimeZone ? read.returnTimeZone : html`<i style="color:var(--text-3)">(no zone stated)</i>`
+                            }`
+                          : read.returnBy ?? notStated
+                      }</span>
                     </div>
+                    ${
+                      read.returnChannel || read.clarificationLocal || read.siteVisitLocal || read.issuedOn
+                        ? html`<div class="row">
+                            <span class="lbl">Issued · questions by · site visit · returned through</span>
+                            <span class="val">
+                              ${read.issuedOn ?? '—'} · ${when(read.clarificationLocal) ?? '—'} · ${when(read.siteVisitLocal) ?? '—'} ·
+                              ${read.returnChannel ? humanise(String(read.returnChannel)) : '—'}
+                            </span>
+                          </div>`
+                        : ''
+                    }
                     <div class="row">
                       <span class="lbl">Found</span>
                       <span class="val">${requirements.length} requirement(s), ${deliverables.length} deliverable(s)</span>
@@ -455,14 +549,21 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                   ${
                     requirements.length > 0
                       ? table({
-                          headers: ['Ref', 'Category', 'Requirement', 'Mandatory', 'Weight', 'Evidence demanded'],
-                          align: ['', '', '', '', 'num', ''],
-                          rows: requirements.slice(0, 40).map((r) => [
-                            r.reference ?? '—',
+                          headers: ['Ref', 'Category', 'Requirement', 'Mandatory', 'Weight', 'Limit', 'Evidence demanded'],
+                          align: ['', '', '', '', 'num', '', ''],
+                          rows: requirements.slice(0, 60).map((r, index) => [
+                            html`${r.reference ?? '—'}${
+                              untraced.has(String(r.reference ?? '').trim() || `line ${index + 1}`)
+                                ? html` ${badge('not found in the documents', 'warn')}`
+                                : ''
+                            }`,
                             html`<span style="font-size:12px;color:var(--text-3)">${humanise(String(r.category ?? ''))}</span>`,
                             r.requirement ?? '',
                             r.mandatory === true ? badge('pass/fail', 'warn') : 'scored',
                             r.weightingPercent === undefined || r.weightingPercent === null ? '—' : `${r.weightingPercent}%`,
+                            [r.wordLimit != null ? `${r.wordLimit} words` : '', r.pageLimit != null ? `${r.pageLimit} pages` : '']
+                              .filter(Boolean)
+                              .join(', ') || '—',
                             html`<span style="font-size:12px;color:var(--text-3)">${r.evidenceRequired ?? ''}</span>`,
                           ]),
                         })
@@ -470,8 +571,12 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                   }
                   <div class="actions" style="margin-top:11px">
                     <button class="btn" data-confirm-itt="${draft.id}"
-                      ${raw(invitationOptions.length === 0 ? 'disabled title="Record the invitation first — a reading is filed against one"' : '')}>
-                      Confirm and build the matrix
+                      ${raw(
+                        projectHasInvitation && invitationOptions.length === 0
+                          ? 'disabled title="The tender on this project is closed. A reading is filed against a live one."'
+                          : '',
+                      )}>
+                      ${projectHasInvitation ? 'Confirm and build the matrix' : 'Confirm — record the invitation and build the matrix'}
                     </button>
                     <button class="btn quiet" data-reject-itt="${draft.id}">Reject this reading</button>
                   </div>
@@ -1922,6 +2027,7 @@ export async function pipeline(root) {
         blocked: readBlocked,
         tenderProjects,
         invitationOptions: scopedInvitationOptions,
+        projectHasInvitation: focused,
       })}
 
       <section class="card" style="margin-bottom:14px" aria-labelledby="pl-bid-h">
@@ -4374,6 +4480,46 @@ export async function pipeline(root) {
       return;
     }
 
+    /*
+     * The whole pack, read together in one run.
+     *
+     * The same reader and the same draft as reading one file, sent every
+     * document whose words the platform has read — so the questionnaire's
+     * weightings and the instructions' deadline land in one reading rather than
+     * five, and the checks below run across all of it.
+     */
+    const readPack = event.target.closest('[data-read-pack]');
+    if (readPack) {
+      const proceed = await confirmCost({
+        title: 'Read the whole tender pack',
+        path: `/v1/projects/${projectId}/tender/read-pack`,
+        runLabel: 'Read the pack',
+        intent:
+          'Sends the text of every tender document on this project to an AI provider, in one request. The estimate ' +
+          'below is sized from that text; nothing is charged unless you press the button.',
+      });
+      if (!proceed) return;
+      readPack.disabled = true;
+      readPack.textContent = 'Reading the pack…';
+      try {
+        const reading = await api.post(`/v1/projects/${projectId}/tender/read-pack`, {});
+        toast(
+          'Read — check it below',
+          reading.checks?.summary ?? 'The reading is below, awaiting a person.',
+          reading.checks?.attention > 0 ? 'warn' : 'ok',
+        );
+      } catch (error) {
+        toast(
+          error.code === 'PERCEPTION_NOT_LEGIBLE' ? 'No requirements found in the pack' : 'Not read',
+          error.message,
+          error.code === 'PERCEPTION_NOT_LEGIBLE' || error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err',
+        );
+      }
+      // Either way: a reading that came back too thin still files its draft.
+      await draw();
+      return;
+    }
+
     const readText = event.target.closest('[data-read-itt-text]');
     if (readText) {
       if (!(await spends('Read this invitation', `/v1/projects/${projectId}/ingestion/${readText.dataset.readIttText}/itt`, 'Read it'))) return;
@@ -4567,6 +4713,55 @@ export async function pipeline(root) {
         await recordCompanyFacts();
         return;
       }
+      /*
+       * Where this project has no invitation yet, the invitation is recorded
+       * from the reading on this same form — the reference, client, deadline
+       * and channel it found, put in front of the person to correct — rather
+       * than refused until somebody types into another form what the reading
+       * has just found. A field the reading did not find is left empty for the
+       * person to fill, never guessed.
+       */
+      const draft = (perception?.drafts ?? []).find((entry) => entry.id === confirmIt.dataset.confirmItt);
+      const read = draft?.extraction ?? {};
+      const localOf = (value) => {
+        const text = typeof value === 'string' ? value.trim().replace(' ', 'T') : '';
+        return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text) ? text : '';
+      };
+      const dateOnly = typeof read.returnByLocal === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(read.returnByLocal.trim());
+      const zones = timeZoneOptions();
+      const readZone = zones.some((zone) => zone.value === read.returnTimeZone) ? read.returnTimeZone : '';
+      const issuedOn = typeof read.issuedOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(read.issuedOn) ? read.issuedOn : '';
+      const recordsInvitation = !focused;
+      const invitationFields = recordsInvitation
+        ? [
+            { name: 'reference', label: 'The buyer’s reference', type: 'text', value: read.reference ?? '',
+              hint: read.reference ? 'As the reading found it. Correct it if the documents say otherwise.' : 'The reading found none — type it from the invitation.' },
+            { name: 'clientName', label: 'Client', type: 'text', value: read.clientName ?? '' },
+            { name: 'issuedAt', label: 'Issued', type: 'datetime-local', value: issuedOn ? `${issuedOn}T00:00` : '',
+              hint: issuedOn ? 'The date the reading found.' : 'The reading found no issue date — when did the invitation arrive?' },
+            { name: 'returnLocal', label: 'Returns by (as the invitation states it)', type: 'datetime-local', value: localOf(read.returnByLocal),
+              hint: dateOnly
+                ? `The reading found the date ${read.returnByLocal} but no time. Enter the time printed in the invitation.`
+                : 'The wall-clock time printed in the invitation, not converted.' },
+            { name: 'timeZone', label: 'Read in', type: 'select', options: zones, value: readZone || 'Europe/London' },
+            { name: 'timeZoneStated', label: 'Did the invitation state the zone?', type: 'select', value: readZone ? 'true' : 'false',
+              options: [{ value: 'true', label: 'Yes — it says so in the documents' }, { value: 'false', label: 'No — the zone above is our assumption' }],
+              hint: 'An assumed zone is raised as a critical clarification for the buyer.' },
+            { name: 'channel', label: 'Returned through', type: 'select', placeholder: 'Choose how it is returned',
+              value: read.returnChannel ?? '',
+              options: ['PORTAL', 'EMAIL', 'PHYSICAL', 'HAND_DELIVERY'].map((c) => ({ value: c, label: humanise(c) })) },
+            { name: 'clarificationLocal', label: 'Last date for questions', type: 'datetime-local', required: false, value: localOf(read.clarificationLocal) },
+            { name: 'siteVisitLocal', label: 'Site visit', type: 'datetime-local', required: false, value: localOf(read.siteVisitLocal) },
+          ]
+        : [
+            {
+              name: 'invitationId',
+              label: 'Against which invitation',
+              type: 'select',
+              options: scopedInvitationOptions,
+              hint: 'The reading is filed against the invitation it came from.',
+            },
+          ];
       // Only the invitation is required. The value, duration and margin are
       // optional: the matrix needs none of them, and an estimator cannot give a
       // contract value before the take-off. Left blank, the commercial-term risk
@@ -4575,20 +4770,18 @@ export async function pipeline(root) {
       const accepted = await command({
         title: 'Confirm what the AI read',
         intent:
+          (recordsInvitation
+            ? 'This project has no invitation recorded yet, so the one the reading found is recorded with it. Check ' +
+              'each field against the documents — a field the reading did not find is left empty for you. '
+            : '') +
           'Confirming files the reading through the same commands as typing the requirements in by hand — the ' +
           'analyst, its authorisation and its ACU cost are unchanged. Only the invitation is needed. The three ' +
           'figures below are optional and are not in the invitation — leave them blank if you have not priced the ' +
           'job yet, and the contract-term risk is sized once you have.',
         path: () => `/v1/projects/${projectId}/perception/${confirmIt.dataset.confirmItt}/confirm`,
-        submitLabel: 'Confirm and build the matrix',
+        submitLabel: recordsInvitation ? 'Record the invitation and build the matrix' : 'Confirm and build the matrix',
         fields: [
-          {
-            name: 'invitationId',
-            label: 'Against which invitation',
-            type: 'select',
-            options: scopedInvitationOptions,
-            hint: 'The reading is filed against the invitation it came from.',
-          },
+          ...invitationFields,
           {
             name: 'estimatedValue',
             label: 'What we expect to price (£) — optional',
@@ -4609,7 +4802,21 @@ export async function pipeline(root) {
           },
         ],
         transform: (v) => ({
-          invitationId: v.invitationId,
+          ...(recordsInvitation
+            ? {
+                invitation: {
+                  reference: v.reference,
+                  clientName: v.clientName,
+                  issuedAt: new Date(v.issuedAt).toISOString(),
+                  returnLocal: v.returnLocal,
+                  timeZone: v.timeZone,
+                  timeZoneStated: v.timeZoneStated === 'true',
+                  channel: v.channel,
+                  ...(v.clarificationLocal ? { clarificationLocal: v.clarificationLocal } : {}),
+                  ...(v.siteVisitLocal ? { siteVisitLocal: v.siteVisitLocal } : {}),
+                },
+              }
+            : { invitationId: v.invitationId }),
           // Pounds in the form, minor units on the wire. Omitted when blank, so a
           // value nobody has yet is absent rather than a misleading zero.
           ...(v.estimatedValue !== '' && v.estimatedValue !== undefined
@@ -4620,7 +4827,13 @@ export async function pipeline(root) {
         }),
       });
       if (accepted) {
-        toast('Filed', 'The compliance matrix and the return register are on the record', 'ok');
+        toast(
+          'Filed',
+          recordsInvitation
+            ? 'The invitation, the compliance matrix and the return register are on the record'
+            : 'The compliance matrix and the return register are on the record',
+          'ok',
+        );
         await draw();
       }
       return;

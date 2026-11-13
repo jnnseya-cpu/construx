@@ -34248,3 +34248,89 @@ Found while verifying, and fixed: **"Show all tenders" did nothing.** It cleared
 the project and the redraw's context load picked the first project again, so a
 second tender on the board could never be acted on. A deliberate close is now
 remembered (`projectClosed`) and cleared when a project is chosen.
+
+## 2026-11 the tender pack read in one run, checked in code, confirmed in one step
+
+The owner compared three weeks on the platform with five bids in under two
+hours by giving a chat model every document and one prompt. The direction he
+set: keep every process, make each one work, accurately and fast. This is the
+first part — upload, one reading of the whole pack, its review and checks, and
+one confirmation that files the invitation, the matrix and the returns.
+
+**What changed, built on what was there** (same reader, prompt, draft, cost
+confirmation and confirm path as reading one file):
+
+- `POST /v1/projects/:projectId/tender/read-pack` (`domain/tenderreading.ts`,
+  `readTenderPack`). Every tender document whose text the platform has read is
+  sent in one request, each under a `=== Document: name (kind) ===` heading,
+  invitation documents first and then by name (`packText`, over
+  `evidence/pipeline.ts` `packDocuments`, which `tenderpackcheck.ts` now shares).
+  Its own task type (`itt_requirement_extraction_pack`) so its learned price is
+  not averaged with single files. Refused before any call with no readable
+  document (`NO_PACK`) or over the 400k-character reading limit
+  (`PACK_TOO_LARGE`, naming the three largest files). The real Conwy pack is
+  about 108k characters of document text, ~27k tokens: one request.
+- The quote is sized from the pack: `Route.ai.quoteInputText` hands the quote
+  route the text the run will send.
+- The ITT prompt and schema now ask for the deadline as printed
+  (`returnByLocal`), the zone only where stated, the questions and site-visit
+  dates, the issue date, the return channel, and a `sourceQuote` copied from the
+  documents for every requirement and return.
+- **Checks in code, filed with the draft** (`checkTenderReading`): deadline not
+  a date, deadline past, no zone stated (note), questions closing after the
+  return, scored weightings not adding to 100, a limited question with no
+  weighting (note), a limit that is not a count, a reference used twice, a
+  drawing note or the marking scheme read as a requirement, a requirement or a
+  return whose quote and words are nowhere in the pack, nothing to return.
+  None blocks the confirmation; each is shown first with its references.
+- **One review**: the draft card shows the documents read together, the
+  deadline with its zone, issue/questions/site visit/channel, the checks, a
+  Limit column and a "not found in the documents" badge on each untraced line.
+- **Confirm records the invitation where the project has none**
+  (`confirmReading`, `invitationForReading`): the form is prefilled from the
+  reading (a field it did not find is left empty, never guessed) and goes
+  through `registerOpportunity` (linked to the project) and `recordInvitation`
+  with every rule they apply. The draft and the user's authority are checked
+  before anything is written. Where the project already has an invitation it is
+  used, never recorded twice; a closed tender (no-bid, lost, converted) refuses
+  with `TENDER_CLOSED`. An invitation refused by its own rules leaves at most
+  the pursuit, which the next attempt reuses.
+
+**Two defects found by running it in a browser, fixed at the root:**
+
+- **The same pack on a second project was never read.** The upload finds its
+  record by hash across the tenancy, which is the *first* project's; the
+  on-arrival reading ran there, was refused as already read, and the project
+  being uploaded to kept five files "not yet looked at". Each project that filed
+  the bytes as a tender document is now read on its own project, under the
+  uploader's authority (`tests/tenderupload.test.ts`).
+- **Text reading was switched off whenever no vision provider was present.**
+  Every reading button was gated on the perception (seeing) provider, although
+  reading text needs only a reasoning one. `perceptionCapability` now also
+  publishes `textReading`; the text buttons and the pack button follow it.
+
+**Verified.** `tests/tenderreading.test.ts` (20) on the Conwy wording; the
+full suite and typecheck. In a real browser on a copy of the test journal with
+a **stand-in model** (a fixed answer shaped like a correct Conwy reading — no
+provider was called and nothing was spent): the five real Conwy files uploaded
+to a fresh project and were read on arrival; one press read all five; the cost
+box sized it at ~27k tokens; the correct reading traced every quote against the
+platform's own extraction of the real PDFs and DOCX (0 to look at, 1 note: no
+zone stated); a second reading with planted mistakes was flagged (weights adding
+to 30%, a Q8 not in the documents); the prefilled form recorded ERCF2509N, the
+8-line matrix and 8 returns in one confirmation. The same fixed answer against
+the five real Telford DPS documents was flagged on all 8 requirements and all 8
+returns as not in the documents.
+
+**Not verified, and cannot be here:** how well a real model reads a real pack.
+No provider can be called from this environment; everything above proves the
+platform around the model, not the model.
+
+**Recorded, not changed:** the Telford DPS guidance documents (Stage 1 and 2)
+are classified SPECIFICATION, not INVITATION. The pack reading sends every
+document whatever its kind, so it does not affect this path; the per-file
+"Read this invitation" offer is unchanged.
+
+**Next, in the order agreed:** the answers, pricing and programme filled from
+the confirmed reading in the same way, and a readiness check before a tender
+starts (company facts, brand, registered details, numbering, AI clearance).

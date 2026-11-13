@@ -968,6 +968,28 @@ export async function ingestionPosition(ctx: EngineContext, store: EvidenceStore
  * traceable to the bytes exactly as the multimodal one is — which is what makes
  * this a second road to the same place rather than a way round the record.
  */
+/**
+ * The tender pack as text: every ingested document on this project that
+ * yielded readable text, labelled with its filename and what it was read as.
+ *
+ * One definition for every reader of the whole pack — the clarification check
+ * and the whole-pack reading — so they read the same documents in the same
+ * order and name them the same way.
+ */
+export function packDocuments(
+  ctx: EngineContext,
+): Array<{ ingestionId: string; label: string; kind: string; text: string }> {
+  return ingestedFiles(ctx)
+    .filter((file) => file.status === 'INGESTED')
+    .map((file) => ({
+      ingestionId: file.ingestionId,
+      label: file.filename ?? file.classification?.kind ?? file.hash.slice(0, 8),
+      kind: String(file.classification?.kind ?? 'UNKNOWN'),
+      text: String((file.extraction as { text?: unknown } | undefined)?.text ?? '').trim(),
+    }))
+    .filter((doc) => doc.text.length > 0);
+}
+
 export async function ittFromFile(
   ctx: EngineContext,
   input: { ingestionId: string },

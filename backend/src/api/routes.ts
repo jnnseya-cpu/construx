@@ -175,6 +175,7 @@ import * as tenderprogramme from '../domain/tenderprogramme.ts';
 import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
 import * as tenderpackcheck from '../domain/tenderpackcheck.ts';
+import * as tenderreading from '../domain/tenderreading.ts';
 import * as clarificationreview from '../domain/clarificationreview.ts';
 import * as riskreview from '../domain/riskreview.ts';
 import { DURATION_COMPLEXITY } from '../engines/maths/programmeDuration.ts';
@@ -356,7 +357,7 @@ import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode,
 } from '../identity/roles.ts';
 import { customRoleRegister, GRANTABLE_AREAS } from '../identity/customroles.ts';
 import { roleExpertise, expertRole } from '../ai/expertise.ts';
-import { authorise, AUTHZ_OPTIONS, currentPhase, registerEvidence, write } from '../engines/context.ts';
+import { authorise, AUTHZ_OPTIONS, currentPhase, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 import { ulid } from '../core/ids.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import { COMMERCIAL_OUTCOMES, DELIVERY_STATUSES, LIFECYCLE_STATES, LIFECYCLE_STATE_CODES } from '../lifecycle/state.ts';
@@ -490,7 +491,18 @@ export type Route = {
    * minds; one that turns out higher is the platform having understated what
    * it was about to spend.
    */
-  ai?: { engine: Engine; taskType: string; capability: ProviderCapability; passes?: number };
+  ai?: {
+    engine: Engine;
+    taskType: string;
+    capability: ProviderCapability;
+    passes?: number;
+    /**
+     * The text the run will send, where it is assembled from the project rather
+     * than named in the path — the whole tender pack. The quote sizes the
+     * estimate from it, so the price shown is the price of what is sent.
+     */
+    quoteInputText?: (ctx: EngineContext) => string | undefined;
+  };
   /**
    * A control that never belongs on a handset, and which control it is.
    *
@@ -871,18 +883,55 @@ function evidenceUploadTarget(
 async function readTenderDocumentOnArrival(
   platform: Platform,
   engineCtx: ReturnType<Platform['context']>,
-  record: NonNullable<ReturnType<typeof evidence.findByHash>>,
+  _record: NonNullable<ReturnType<typeof evidence.findByHash>>,
   hash: string,
 ): Promise<Record<string, unknown>> {
-  const state = record.state as { type?: string; description?: string };
-  if (state.type !== 'TENDER_DOCUMENT') return {};
-  const filename = String(state.description ?? '').replace(/^Tender document:\s*/, '') || undefined;
-  try {
-    return { reading: await ingestion.ingestFile(engineCtx, platform.evidence, { hash, ...(filename ? { filename } : {}) }) };
-  } catch (error) {
-    const failure = error as { code?: string; message?: string };
-    return { readingRefused: { code: failure.code ?? 'NOT_READ', message: failure.message ?? 'The file was stored but not read.' } };
+  /*
+   * Every project that filed these bytes as a tender document, not only the
+   * first one the tenancy ever filed them on.
+   *
+   * The upload's record is found by hash across the tenancy, which answers with
+   * the *first* project to file the file. The same pack legitimately goes to a
+   * second project — a second lot, a re-tender — and its reading then ran on
+   * the first project, was refused there as already read, and the project the
+   * person was actually uploading to was left showing five files "not yet
+   * looked at". Each filing is read on its own project, under the uploader's
+   * own authority there, newest first: the one this upload follows.
+   */
+  const filings = platform.ledger
+    .listByTenant(engineCtx.tenantId, 'EvidenceItem')
+    .filter((entry) => {
+      const state = entry.state as { hash?: string; type?: string };
+      return state.hash === hash && state.type === 'TENDER_DOCUMENT';
+    })
+    .reverse();
+  let outcome: Record<string, unknown> = {};
+  let alreadyRead: Record<string, unknown> | undefined;
+  for (const filing of filings) {
+    const filename = String((filing.state as { description?: string }).description ?? '').replace(/^Tender document:\s*/, '') || undefined;
+    const onProject =
+      filing.projectId === engineCtx.projectId
+        ? engineCtx
+        : platform.context(engineCtx.auth, filing.projectId, { correlationId: engineCtx.correlationId, source: engineCtx.source });
+    try {
+      const reading = await ingestion.ingestFile(onProject, platform.evidence, { hash, ...(filename ? { filename } : {}) });
+      if (!('reading' in outcome)) outcome = { reading };
+    } catch (error) {
+      const failure = error as { code?: string; message?: string };
+      // Already read on that project: nothing to do there. Reported only when
+      // it is true of every filing, so the same file sent twice still says so.
+      if (failure.code === 'ALREADY_INGESTED') {
+        alreadyRead ??= { readingRefused: { code: failure.code, message: failure.message ?? 'Already read.' } };
+        continue;
+      }
+      if (Object.keys(outcome).length === 0) {
+        outcome = {
+          readingRefused: { code: failure.code ?? 'NOT_READ', message: failure.message ?? 'The file was stored but not read.' },
+        };
+      }
+    }
   }
+  return Object.keys(outcome).length > 0 ? outcome : (alreadyRead ?? {});
 }
 
 /**
@@ -27774,7 +27823,7 @@ export const ROUTES: Route[] = [
       const heldFile = ingestionId || input.hash
         ? ingestion.ingestedFiles(engineCtx).find((file) => (ingestionId ? file.ingestionId === ingestionId : file.hash === input.hash))
         : undefined;
-      const inputText = heldFile?.extraction.text;
+      const inputText = heldFile?.extraction.text || matched.route.ai.quoteInputText?.(engineCtx);
 
       return platform.orchestrator.quote({
         ...(inputText ? { inputText } : {}),
@@ -28188,6 +28237,23 @@ export const ROUTES: Route[] = [
         projectContext(platform, ctx),
         body<{ hash: string; filename?: string; invitationId?: string }>(ctx),
       ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/read-pack',
+    // Its own task type: a whole pack is several times the length of one file,
+    // and the price the orchestrator learns for it should not be averaged with
+    // single-file readings.
+    ai: {
+      engine: 'TENDER',
+      taskType: perception.textTaskType('ITT_REQUIREMENTS', 'TENDER_PACK'),
+      capability: 'REASONING',
+      quoteInputText: (engineCtx) => tenderreading.packText(engineCtx).text || undefined,
+    },
+    description:
+      'Read every tender document on the project together, in one run, into one draft: the invitation facts, the requirements matrix and the returns, with the checks run on it in code',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => tenderreading.readTenderPack(projectContext(platform, ctx)),
   },
   {
     method: 'POST',
@@ -29017,6 +29083,25 @@ export const ROUTES: Route[] = [
          * narrower than the room behind.
          */
         invitationId: stringField,
+        // Where the project has no invitation yet: the one the reading found,
+        // as the person confirmed it on the review. Recorded through the
+        // ordinary invitation command, with every rule it applies.
+        invitation: {
+          type: 'object',
+          required: ['reference', 'clientName', 'issuedAt', 'returnLocal', 'timeZone', 'timeZoneStated', 'channel'],
+          properties: {
+            reference: { type: 'string', minLength: 1, maxLength: 200 },
+            clientName: { type: 'string', minLength: 1, maxLength: 200 },
+            issuedAt: stringField,
+            returnLocal: stringField,
+            timeZone: stringField,
+            timeZoneStated: { type: 'boolean' },
+            channel: { type: 'string', enum: [...tenderintake.SUBMISSION_CHANNEL] },
+            clarificationLocal: stringField,
+            siteVisitLocal: stringField,
+          },
+          additionalProperties: false,
+        },
         estimatedValueMinor: { type: 'integer', minimum: 0 },
         durationWeeks: { type: 'integer', minimum: 1 },
         targetMarginPercent: { type: 'number', minimum: 0, maximum: 100 },
@@ -29038,9 +29123,9 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) =>
-      perception.confirm(projectContext(platform, ctx), {
+      tenderreading.confirmReading(projectContext(platform, ctx), () => tenantContext(platform, ctx), {
         draftId: ctx.params.draftId as string,
-        ...body<Omit<perception.ConfirmInput, 'draftId'>>(ctx),
+        ...body<Omit<perception.ConfirmInput, 'draftId'> & { invitation?: tenderreading.InvitationFromReading }>(ctx),
       }),
   },
   // --- The command catalogue -------------------------------------------------

@@ -9,6 +9,8 @@ import { ingestedFiles } from '../src/evidence/pipeline.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
+import * as structure from '../src/domain/structure.ts';
+import * as tenderintake from '../src/domain/tenderintake.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
 /**
@@ -112,5 +114,36 @@ describe('a tender document is read when it is uploaded', () => {
     const refused = again.body.readingRefused as Record<string, unknown> | undefined;
     assert.ok(refused, JSON.stringify(again.body));
     assert.equal(refused.code, 'ALREADY_INGESTED');
+  });
+
+  it('reads the same file on a second project that files it, not only on the first', async () => {
+    // The same pack going to a second lot. The upload's record is found by
+    // hash across the tenancy, which is the first project's; the reading used
+    // to run there, be refused as already read, and leave the second project
+    // with the file stored and never read.
+    const admin = seed.users.admin!.auth;
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const second = structure.createProject(platform.context(admin, `${seed.tenantId}-governance`), {
+      portfolioId,
+      name: 'Waterloo Cottage — lot 2',
+      sectorType: 'TRANSPORT',
+      assetType: 'Retaining wall',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Conwy' },
+      contractValueMinor: 0,
+      currency: 'GBP',
+      plannedStart: '2027-01-18',
+      plannedCompletion: '2027-04-09',
+      startingPhase: 'TENDER',
+      startingPhaseReason: 'Same pack, second lot',
+    }).projectId;
+    const onSecond = platform.context(seed.users.owner!.auth, second, { source: 'WEB' });
+    tenderintake.recordTenderDocument(onSecond, { hash: hashBytes(itt), filename: 'ITT Waterloo Cottage.txt' });
+
+    const stored = await upload(itt);
+    assert.equal(stored.status, 201, JSON.stringify(stored.body));
+    assert.ok(stored.body.reading, `the second project's filing was not read: ${JSON.stringify(stored.body)}`);
+    assert.ok(ingestedFiles(onSecond).some((held) => held.hash === hashBytes(itt)), 'read on the second project');
+    const first = platform.context(seed.users.owner!.auth, tenderProject(), { source: 'WEB' });
+    assert.equal(ingestedFiles(first).filter((held) => held.hash === hashBytes(itt)).length, 1, 'the first project still holds one reading');
   });
 });

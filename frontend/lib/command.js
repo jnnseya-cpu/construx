@@ -914,7 +914,7 @@ function quoteBasisText(quote) {
     return `Estimated from ${runs} of this action on your account.${range}`;
   }
   if (quote.sizedFromTokens) {
-    return `This action has not run on your account yet. The estimate is sized from this file — about ${Math.round(quote.sizedFromTokens / 1000)}k tokens of text — at the provider’s published rate; the answer it writes can add to it. It becomes a measured figure after the first run.`;
+    return `This action has not run on your account yet. The estimate is sized from the text it sends — about ${Math.round(quote.sizedFromTokens / 1000)}k tokens of text — at the provider’s published rate; the answer it writes can add to it. It becomes a measured figure after the first run.`;
   }
   return 'This action has not run on your account yet, so this is the provider’s floor cost rather than a prediction — the real charge is usually higher. It becomes a measured figure after the first run.';
 }

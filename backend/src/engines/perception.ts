@@ -503,14 +503,28 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       'read in conjunction with…) are not requirements; leave them out. Separately list every deliverable that must be ' +
       'returned, with its format, page limit, whether a signature or bond is required, and the channel it goes ' +
       'back through. Report the commercial terms it states — contract form, liquidated damages, bond, ' +
-      'retention, payment period, design liability. Quote the document rather than summarising it, and omit ' +
-      'anything it does not state rather than inferring it; list what you omitted and why.',
+      'retention, payment period, design liability. Report the invitation\'s own dates as the document states ' +
+      'them: the return deadline as `returnByLocal` (YYYY-MM-DDTHH:MM, the wall-clock time printed), the time zone ' +
+      'as `returnTimeZone` (an IANA name such as Europe/London, and only where the document names a zone or a ' +
+      'country\'s time — otherwise null), the last date for questions as `clarificationLocal`, a site visit as ' +
+      '`siteVisitLocal`, the issue date as `issuedOn`, and how the return is made as `returnChannel`. For every ' +
+      'requirement and every deliverable give `sourceQuote`: a short passage copied character for character from ' +
+      'the document that states it, so a person can find it. Where the text is several documents, each begins with ' +
+      'a "=== Document:" line; a requirement in one may be explained in another, so read them together. Quote the ' +
+      'document rather than summarising it, and omit anything it does not state rather than inferring it; list what ' +
+      'you omitted and why.',
     responseSchema: {
       type: 'object',
       properties: {
         reference: { type: ['string', 'null'] },
         clientName: { type: ['string', 'null'] },
         returnBy: { type: ['string', 'null'] },
+        returnByLocal: { type: ['string', 'null'] },
+        returnTimeZone: { type: ['string', 'null'] },
+        clarificationLocal: { type: ['string', 'null'] },
+        siteVisitLocal: { type: ['string', 'null'] },
+        issuedOn: { type: ['string', 'null'] },
+        returnChannel: { type: ['string', 'null'], enum: ['PORTAL', 'EMAIL', 'PHYSICAL', 'HAND_DELIVERY', null] },
         requirements: {
           type: 'array',
           items: {
@@ -540,6 +554,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
               wordLimit: { type: ['number', 'null'] },
               pageLimit: { type: ['number', 'null'] },
               limitStatedAs: { type: ['string', 'null'] },
+              sourceQuote: { type: ['string', 'null'] },
             },
             required: ['reference', 'category', 'requirement', 'mandatory', 'evidenceRequired'],
           },
@@ -558,6 +573,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
               signatureRequired: { type: ['boolean', 'null'] },
               bondRequired: { type: ['boolean', 'null'] },
               channel: { type: ['string', 'null'], enum: ['PORTAL', 'EMAIL', 'PHYSICAL', 'HAND_DELIVERY', null] },
+              sourceQuote: { type: ['string', 'null'] },
             },
             required: ['reference', 'title', 'mandatory'],
           },
@@ -1174,9 +1190,17 @@ export const PASTED_TEXT_MAX = 400_000;
  * The route declares it and the engine charges it, both from here, so the
  * quote and the charge that follows it cannot name different things.
  */
-export function textTaskType(task: PerceptionTask, source: 'PASTED' | 'INGESTED_FILE'): string {
-  return `${PERCEPTION_TASKS[task].taskType}_${source === 'PASTED' ? 'pasted' : 'file_text'}`;
+export function textTaskType(task: PerceptionTask, source: TextSource): string {
+  return `${PERCEPTION_TASKS[task].taskType}_${source === 'PASTED' ? 'pasted' : source === 'TENDER_PACK' ? 'pack' : 'file_text'}`;
 }
+
+/**
+ * Where a text reading's words came from. `TENDER_PACK` is every document on
+ * the tender read together in one run — the ITT, the questionnaire, the price
+ * list, the reports — because a requirement in one is often only understood
+ * against another, and reading them one at a time lost that.
+ */
+export type TextSource = 'PASTED' | 'INGESTED_FILE' | 'TENDER_PACK';
 
 /**
  * Read an invitation the platform was given as *text* rather than as a file.
@@ -1208,14 +1232,29 @@ export async function extractFromText(
     task: PerceptionTask;
     text: string;
     /** Where the text came from, said on the record rather than inferred. */
-    source: 'PASTED' | 'INGESTED_FILE';
+    source: TextSource;
     /** The file the text was read out of, where there was one. */
     documentHash?: string;
     evidenceId?: string;
     /** What to call it on the screen: a filename, or what the analyst pasted it from. */
     label: string;
+    /** The documents a whole-pack reading was made from, kept on the draft so it says what it read. */
+    packFiles?: ReadonlyArray<{ ingestionId: string; filename: string; kind: string; characters: number }>;
+    /**
+     * Checks run on the reading before anybody is shown it, kept on the draft.
+     * Code, not a model: a reading is a draft until a person confirms it, and
+     * these tell the person where to look first.
+     */
+    check?: (extraction: Record<string, unknown>) => unknown;
   },
-): Promise<{ draftId: string; task: PerceptionTask; extraction: Record<string, unknown>; confidence?: number; acuConsumed: number }> {
+): Promise<{
+  draftId: string;
+  task: PerceptionTask;
+  extraction: Record<string, unknown>;
+  confidence?: number;
+  acuConsumed: number;
+  checks?: unknown;
+}> {
   const definition = PERCEPTION_TASKS[input.task];
   if (!definition) throw new DomainError('PERCEPTION_TASK_UNKNOWN', `No perception task "${input.task}"`);
   if (!definition.acceptsText) {
@@ -1260,9 +1299,12 @@ export async function extractFromText(
     input.evidenceId !== undefined
       ? { refType: 'EvidenceItem' as const, refId: input.evidenceId }
       : registerEvidence(ctx, {
-          type: 'PASTED_INVITATION',
+          type: input.source === 'TENDER_PACK' ? 'TENDER_PACK_TEXT' : 'PASTED_INVITATION',
           hash: documentHash,
-          description: `Invitation text (${text.length} characters): ${input.label}`,
+          description:
+            input.source === 'TENDER_PACK'
+              ? `The tender pack read together (${text.length} characters): ${input.label}`
+              : `Invitation text (${text.length} characters): ${input.label}`,
         });
 
   const draftId = ulid();
@@ -1315,6 +1357,8 @@ export async function extractFromText(
           textSource: input.source,
           textLabel: input.label,
           textLength: text.length,
+          ...(input.packFiles ? { packFiles: input.packFiles } : {}),
+          ...(input.check ? { checks: input.check(underExpectedKey(definition.responseSchema, output)) } : {}),
           extraction: underExpectedKey(definition.responseSchema, output),
           confidence,
           status: 'DRAFT',
@@ -1369,10 +1413,11 @@ export async function extractFromText(
     extraction,
     confidence: result.output.confidence as number | undefined,
     acuConsumed: result.acuConsumed,
+    ...(input.check ? { checks: input.check(extraction) } : {}),
   };
 }
 
-function requireDraft(ctx: EngineContext, draftId: string): PerceptionDraft {
+export function requireDraft(ctx: EngineContext, draftId: string): PerceptionDraft {
   const record = ctx.ledger.get({ refType: 'PerceptionDraft', refId: draftId });
   if (!record || record.tenantId !== ctx.tenantId) {
     throw new DomainError('PERCEPTION_DRAFT_NOT_FOUND', `No perception draft ${draftId}`, 404);
@@ -2086,6 +2131,16 @@ export function drafts(ctx: EngineContext): PerceptionDraft[] {
 export function perceptionCapability(ctx: EngineContext): {
   available: boolean;
   reason?: string;
+  /**
+   * Whether text the platform has read itself can be read by a model here.
+   *
+   * A different question from `available`, which is about *seeing* a file.
+   * Reading an invitation's text — one file, a pasted page, the whole pack —
+   * needs a reasoning provider, not a vision one, and a deployment with only
+   * the first had every reading button switched off behind "AI reading is not
+   * available", including the ones that would have worked.
+   */
+  textReading: { available: boolean; reason?: string };
   tasks: Array<{
     task: PerceptionTask;
     label: string;
@@ -2106,9 +2161,22 @@ export function perceptionCapability(ctx: EngineContext): {
     reason = 'No healthy perception provider is available.';
   }
 
+  // The local stand-in is the one adapter that sends nothing anywhere, and it
+  // reads nothing either: `requireModel` refuses its answer. So a reasoning
+  // provider that transmits is the test for a model that can read text.
+  let textReading: { available: boolean; reason?: string };
+  try {
+    textReading = ctx.orchestrator.adapterFor('REASONING').transmits
+      ? { available: true }
+      : { available: false, reason: 'No reasoning provider is configured on this deployment, so no model can read the text.' };
+  } catch {
+    textReading = { available: false, reason: 'No healthy reasoning provider is available.' };
+  }
+
   return {
     available,
     reason,
+    textReading,
     tasks: Object.entries(PERCEPTION_TASKS).map(([task, definition]) => ({
       task: task as PerceptionTask,
       label: definition.label,
