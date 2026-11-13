@@ -987,6 +987,75 @@ describe('where the job is, and the one thing to do next', () => {
     assert.equal(bidFlow(platform, ctx).steps.find((step) => step.id === 'MATRIX')!.state, 'DONE');
   });
 
+  it('a loss recorded on the opportunity ends the road; a win still waits for the award notice', () => {
+    /*
+     * Found in a browser run: a portal submission recorded, then "Record how a
+     * bid ended" with a loss, marks and feedback — and the guide went on asking
+     * "Record how it ended" for an award notice, a loop a lost bidder cannot
+     * leave. A win still waits for the notice, where the standstill is counted.
+     */
+    const admin = seed.users.admin!.auth;
+    const governance = `${seed.tenantId}-governance`;
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const job = (name: string) =>
+      structure.createProject(platform.context(admin, governance), {
+        portfolioId,
+        name,
+        sectorType: 'TRANSPORT',
+        assetType: 'Retaining wall',
+        location: { continentCode: 'EU', countryCode: 'GB', city: 'Conwy' },
+        contractValueMinor: 51_542_354,
+        currency: 'GBP',
+        plannedStart: '2027-01-11',
+        plannedCompletion: '2027-04-30',
+      }).projectId;
+    const ended = (outcome: 'WON' | 'LOST') => {
+      const projectId = job(`Ended ${outcome.toLowerCase()} — ${Math.random().toString(36).slice(2, 8)}`);
+      const ctx = platform.context(seed.users.qs!.auth, projectId, { source: 'WEB' });
+      const commit = (chain: string, eventType: string, refType: string, refId: string, nextState: Record<string, unknown>) =>
+        ctx.ledger.commit({
+          tenantId: ctx.tenantId,
+          projectId: chain,
+          actor: { refType: 'User', refId: ctx.auth.actorId },
+          source: 'WEB',
+          correlationId: ctx.correlationId,
+          eventType,
+          entity: { refType, refId },
+          nextState: { id: refId, ...nextState },
+        } as Parameters<typeof ctx.ledger.commit>[0]);
+      // A matrix with a weighted question makes this a tender (the BID road),
+      // on which the award step is shown at all.
+      commit(projectId, 'ITT_ANALYSED', 'ITTAnalysis', `analysis-${projectId.slice(-6)}`, {
+        reference: 'ERCF2509N 05',
+        clientName: 'Conwy County Borough Council',
+        matrix: [{ reference: 'Q1', category: 'Quality', requirement: 'Methodology', mandatory: false, weightingPercent: 10, status: 'UNKNOWN' }],
+        mandatoryGaps: [],
+        weightings: { stated: 100, complete: true },
+        analysedAt: new Date().toISOString(),
+        analysedBy: ctx.auth.actorId,
+      });
+      commit(projectId, 'BID_SUBMITTED_EXTERNALLY', 'BidSubmissionPack', `pack-${projectId.slice(-6)}`, { status: 'SUBMITTED', external: true });
+      const award = () => bidFlow(platform, ctx).steps.find((step) => step.id === 'AWARD')!;
+      const before = award().state;
+      commit(governance, 'OPPORTUNITY_REGISTERED', 'Opportunity', `opp-${projectId.slice(-6)}`, {
+        title: 'Waterloo Cottage',
+        clientName: 'Conwy County Borough Council',
+        projectId,
+        stage: 'BID',
+        outcome: { outcome, decidedOn: '2027-01-08' },
+      });
+      return { before, after: award() };
+    };
+
+    const lost = ended('LOST');
+    assert.equal(lost.before, 'READY');
+    assert.equal(lost.after.state, 'DONE', 'a recorded loss still asked for an award notice');
+    assert.match(lost.after.detail, /Lost — recorded on the opportunity on 2027-01-08/);
+
+    const won = ended('WON');
+    assert.equal(won.after.state, 'READY', 'a win waits for the award notice and its standstill');
+  });
+
   it('treats a tender with a compliance matrix as a submission, even before the return register is filed', () => {
     /*
      * Reported on SHDC 000189, a 60/5/35 tender: the panel classed it as a

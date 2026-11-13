@@ -574,7 +574,20 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
   const settlements = ctx.ledger.list(ctx.projectId, 'Settlement').map((record) => record.state);
   const settlementApproved = settlements.some((s) => s.finalPriceMinor !== undefined);
   const submissionPacks = ctx.ledger.list(ctx.projectId, 'BidSubmissionPack').map((record) => record.state);
-  const awarded = submissionPacks.some((p) => (p.award as { outcome?: string } | undefined)?.outcome);
+  /*
+   * A loss recorded on the opportunity ("Record how a bid ended") ends the road
+   * as well. A browser run recorded a lost bid there — marks, reason, feedback —
+   * and the guide went on asking "Record how it ended" for an award notice a
+   * lost bidder has no use for. A win still waits for the award notice, because
+   * that is where the standstill is counted.
+   */
+  const opportunityOutcome = linkedOpportunityId
+    ? (ctx.ledger.get({ refType: 'Opportunity', refId: String(linkedOpportunityId) })?.state.outcome as
+        | { outcome?: string; decidedOn?: string }
+        | undefined)
+    : undefined;
+  const lostOnRecord = opportunityOutcome?.outcome === 'LOST';
+  const awarded = submissionPacks.some((p) => (p.award as { outcome?: string } | undefined)?.outcome) || lostOnRecord;
 
   steps.push(
     bidStep({
@@ -603,7 +616,9 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
       title: 'Record how it ended',
       state: awarded ? 'DONE' : submissionPacks.length > 0 ? 'READY' : 'BLOCKED',
       detail: awarded
-        ? 'The award outcome is on the record, with any standstill counted down.'
+        ? lostOnRecord
+          ? `Lost — recorded on the opportunity on ${opportunityOutcome?.decidedOn ?? 'its date'}, with the marks and the reason the calibration reads.`
+          : 'The award outcome is on the record, with any standstill counted down.'
         : submissionPacks.length > 0
           ? 'A pack has been submitted and carries no outcome yet.'
           : 'Nothing has been submitted, so there is no outcome to record.',

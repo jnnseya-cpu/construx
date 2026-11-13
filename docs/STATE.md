@@ -34147,6 +34147,12 @@ the fault is server-side):
   `shared/vocabulary.js`.
 - *Quotation defaulted to an incomplete estimate* (P2): estimates are listed
   complete first, newest first, with "incomplete — cannot be quoted" on the label.
+- *The guide looped on "Record how it ended" after a loss was recorded* (P2).
+  The AWARD step read only an award on the submission pack; a loss recorded on
+  the opportunity ("Record how a bid ended", with marks and feedback) left it
+  asking for an award notice a lost bidder never gets. A recorded loss now ends
+  the road; a win still waits for the award notice, where the standstill is
+  counted (`tests/bidrun.test.ts`).
 
 **Found and recorded, not changed** (each is a decision for the owner or a
 larger piece of work):
