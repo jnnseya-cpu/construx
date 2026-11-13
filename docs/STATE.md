@@ -34399,3 +34399,39 @@ limit; none passed or failed. Three causes, each fixed at the root:
 
 The job limit is 20 minutes: the suite alone takes about four and a half on a
 runner, and the image build and boot follow it.
+
+## 2026-11 the buyer's price list read from text, checked against the document
+
+The pricing half of the second part, first step: getting the buyer's bill
+into the platform. Conwy's price list sits inside Volume 2 (the contract-data
+Word document), and the only reading of a price list needed a model that sees
+pages and a PDF or scan. A Word price list could not be read by AI at all.
+
+- `POST /v1/projects/:projectId/ingestion/:ingestionId/price-list`
+  (`priceListFromFile`, `evidence/pipeline.ts`): the existing PRICE_LIST_BOQ
+  task — items, units, quantities, never a rate — run on the text the platform
+  read out of the file. Its own task type, priced from the file's text.
+  Confirming is unchanged: the take-off draft card, a package and a cost-code
+  prefix, the method of measurement pre-selected from the document.
+- **Checks in code** (`checkPriceListReading`, `domain/tenderreading.ts`), filed
+  with the draft and shown on the card: a description whose opening words are
+  not in the document; a quantity that is not a positive number; an item number
+  used twice; and item numbers that open a table row in the document, within the
+  groups the reading covers, but are not in the reading. The last is the
+  commonest wrong reading of a long bill — read part-way, the rest silently
+  missing — and it finds a whole missing section, not only gaps inside one.
+- The file row offers "Read as a pricing schedule" on any document whose text
+  is held where a reasoning provider is configured; the page-reading version
+  stays for scans and drawings where a vision provider is.
+
+Verified: on the platform's own extraction of the real Conwy Volume 2, the
+schedule has **67 priced items**; a reading of all 67 passes every check with
+nothing falsely flagged, and leaving out 109.2 and 202.3 flags exactly those
+two (`tests/tenderreading.test.ts` holds the same on a fixture of Conwy's own
+rows, plus confirmation into the bill). In the browser on the stand-in server
+(whose answer lifts the rows out of the text by pattern — a check of the
+platform, not of a model): read, 67 items, "Every check passed", confirmed,
+67 items written to the bill with the Highway Works method selected.
+
+**Not done yet in pricing:** proposing a rate for each line from the firm's
+own rate library and past jobs for a person to accept — the next step.

@@ -1273,8 +1273,10 @@ export async function extractFromText(
   if (text.length < 200) {
     throw new DomainError(
       'PERCEPTION_TEXT_TOO_SHORT',
-      'That is not enough of an invitation to read. Paste the requirements, the return deliverables and the terms, ' +
-        'or upload the document itself.',
+      input.task === 'ITT_REQUIREMENTS'
+        ? 'That is not enough of an invitation to read. Paste the requirements, the return deliverables and the terms, ' +
+            'or upload the document itself.'
+        : `That is not enough text to read as ${definition.label.toLowerCase()}. Upload the document itself.`,
       422,
       [{ field: 'text', message: 'Paste the part of the invitation that states what the bidder must do' }],
     );

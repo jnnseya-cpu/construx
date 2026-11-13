@@ -404,7 +404,12 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                   // document, because the pricing schedule arrives as a Word
                   // file, a PDF or a scan and the person holding it is on this
                   // screen. Quantities only — the reader returns no rate.
-                  available && file && (road === 'TEXT' || road === 'LOOK' || String(file.kind ?? '') === 'DRAWING')
+                  textAvailable && file && road === 'TEXT'
+                    ? html`<button class="btn quiet sm" data-read-boq-text="${file.ingestionId}"
+                        title="Read this as the buyer's priced Bill of Quantities, from the text the platform has already read out of it — every item, unit and quantity into the bill for you to price, checked against the document. It reads quantities only, never a rate.">
+                          Read as a pricing schedule
+                        </button>`
+                    : available && file && (road === 'LOOK' || String(file.kind ?? '') === 'DRAWING')
                     ? html`<button class="btn quiet sm" data-read-boq="${entry.hash}"
                         title="Read this as the buyer's priced Bill of Quantities — the AI extracts every item, unit and quantity into the bill for you to price. It reads quantities only, never a rate.">
                           Read as a pricing schedule
@@ -609,7 +614,34 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                   const items = draft.extraction?.items ?? [];
                   const omitted = draft.extraction?.omitted ?? [];
                   const fromSchedule = draft.task === 'PRICE_LIST_BOQ';
+                  const checks = draft.checks?.checks ?? [];
                   return html`<div class="card" style="margin-bottom:10px">
+                    ${
+                      draft.checks
+                        ? html`<div class="notice ${draft.checks.attention > 0 ? 'warn' : 'ok'}" style="margin-bottom:10px">
+                            <div>
+                              <b>Checked in code against the document: ${draft.checks.summary}</b>
+                              ${
+                                checks.length > 0
+                                  ? html`<ul style="margin:6px 0 0 18px;padding:0">
+                                      ${checks.map(
+                                        (check) => html`<li style="margin-bottom:4px">
+                                          ${check.severity === 'ATTENTION' ? badge('look', 'warn') : badge('note', '')}
+                                          <b>${check.title}.</b> ${check.detail}
+                                          ${
+                                            (check.references ?? []).length > 0
+                                              ? html`<span style="color:var(--text-3)"> (${check.references.slice(0, 30).join(', ')}${check.references.length > 30 ? ', …' : ''})</span>`
+                                              : ''
+                                          }
+                                        </li>`,
+                                      )}
+                                    </ul>`
+                                  : ''
+                              }
+                            </div>
+                          </div>`
+                        : ''
+                    }
                     <div class="metric-sub" style="margin-bottom:8px">
                       ${items.length} item${items.length === 1 ? '' : 's'} ${fromSchedule ? 'read from the buyer’s schedule' : 'measured'}${
                         draft.extraction?.scale ? html` · scale ${draft.extraction.scale}` : ''
@@ -4579,6 +4611,30 @@ export async function pipeline(root) {
         );
       }
       // Either way: a reading that came back too thin still files its draft.
+      await draw();
+      return;
+    }
+
+    const readBoqText = event.target.closest('[data-read-boq-text]');
+    if (readBoqText) {
+      const path = `/v1/projects/${projectId}/ingestion/${readBoqText.dataset.readBoqText}/price-list`;
+      if (!(await spends('Read this file as a pricing schedule', path, 'Read it'))) return;
+      readBoqText.disabled = true;
+      readBoqText.textContent = 'Reading…';
+      try {
+        const reading = await api.post(path, {});
+        toast(
+          'Read — check it below',
+          `${(reading.extraction?.items ?? []).length} item(s) read. ${reading.checks?.summary ?? ''} Nothing reaches the bill until you confirm it.`,
+          reading.checks?.attention > 0 ? 'warn' : 'ok',
+        );
+      } catch (error) {
+        toast(
+          error.code === 'PERCEPTION_NOT_LEGIBLE' ? 'No priced items in this file' : 'Not read',
+          error.message,
+          error.code === 'PERCEPTION_NOT_LEGIBLE' || error.code === 'NO_REASONING_PROVIDER' ? 'warn' : 'err',
+        );
+      }
       await draw();
       return;
     }

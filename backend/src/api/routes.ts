@@ -28234,6 +28234,25 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/ingestion/:ingestionId/price-list',
+    // From the file's text, not its pages: its own task type, priced apart from
+    // the reading of a scan.
+    ai: {
+      engine: 'TENDER',
+      taskType: perception.textTaskType('PRICE_LIST_BOQ', 'INGESTED_FILE'),
+      capability: 'REASONING',
+    },
+    description:
+      "Read an ingested file as the buyer's pricing schedule from the text the platform read out of it — items, units and quantities, never a rate — with the reading checked against the document",
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      ingestion.priceListFromFile(projectContext(platform, ctx), {
+        ingestionId: ctx.params.ingestionId as string,
+        check: tenderreading.checkPriceListReading,
+      }),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/tender/document',
     description: 'File a tender document against the project so its bytes may be uploaded and read',
     schema: {
