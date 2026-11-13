@@ -899,8 +899,8 @@ export function command({
  * it are all server-side facts, and duplicating any of them here would create a
  * second pricing model that drifts from the one that bills.
  */
-export function quoteAction(path) {
-  return api.post('/v1/ai/quote', { method: 'POST', path });
+export function quoteAction(path, extra = {}) {
+  return api.post('/v1/ai/quote', { method: 'POST', path, ...extra });
 }
 
 /** How confident the figure is, said in words rather than left to a label. */
@@ -913,7 +913,21 @@ function quoteBasisText(quote) {
     const runs = quote.observations === 1 ? 'one previous run' : `${quote.observations} previous runs`;
     return `Estimated from ${runs} of this action on your account.${range}`;
   }
+  if (quote.sizedFromTokens) {
+    return `This action has not run on your account yet. The estimate is sized from this file — about ${Math.round(quote.sizedFromTokens / 1000)}k tokens of text — at the provider’s published rate; the answer it writes can add to it. It becomes a measured figure after the first run.`;
+  }
   return 'This action has not run on your account yet, so this is the provider’s floor cost rather than a prediction — the real charge is usually higher. It becomes a measured figure after the first run.';
+}
+
+/**
+ * An exempt account, said in words.
+ *
+ * Its charge really is nil — nothing leaves its wallet — but "£0.00" alone read
+ * as "this AI is free", and the provider is paid either way. So the figure the
+ * provider will be paid is shown beside it.
+ */
+function exemptText(quote) {
+  return `This account is exempt: nothing is taken from its wallet. The provider is still paid for the run — about ${exact(quote.providerCostMinor)} — by whoever operates this platform.`;
 }
 
 /**
@@ -972,6 +986,7 @@ export function costBlock(quote) {
         }
       </div>
     </div>
+    ${quote.exempt ? `<div class="notice" style="margin-bottom:8px">${esc(exemptText(quote))}</div>` : ''}
     <div class="metric-sub">${esc(quoteBasisText(quote))}</div>
     ${disclosureBlock(quote.disclosure)}
     ${blocked ? `<div class="notice warn">${esc(quoteBlockedText(quote))}</div>` : ''}
@@ -1030,6 +1045,18 @@ function disclosureBlock(disclosure) {
         <span class="lbl">What it carries</span>
         <span class="val">${esc(sensitivityText(disclosure.sensitivity))}</span>
       </div>
+      ${
+        // What the vendor may receive, beside what this request carries. A
+        // request whose records turn out more sensitive than the vendor's
+        // clearance is refused before anything is sent or charged; showing the
+        // clearance here is how a person sees that limit before pressing.
+        disclosure.clearance && !stays
+          ? `<div class="row">
+              <span class="lbl">Cleared to receive</span>
+              <span class="val">${esc(sensitivityText(disclosure.clearance))} and below</span>
+            </div>`
+          : ''
+      }
     </div>
     <div class="notice ${tone}" style="margin-top:8px">${esc(disclosure.statement)}</div>
   </div>`;
@@ -1060,7 +1087,7 @@ function sensitivityText(level) {
  * a refusal, not a licence to spend — if the platform cannot say what something
  * costs, nobody is committed to it by default.
  */
-export function confirmCost({ title, intent, path, runLabel = 'Run' }) {
+export function confirmCost({ title, intent, path, runLabel = 'Run', quoteWith = {} }) {
   return new Promise((resolve) => {
     const host = document.createElement('div');
     host.className = 'modal-host';
@@ -1099,7 +1126,7 @@ export function confirmCost({ title, intent, path, runLabel = 'Run' }) {
     document.addEventListener('keydown', onKey);
     document.body.append(host);
 
-    quoteAction(path)
+    quoteAction(path, quoteWith)
       .then((quote) => {
         slot.innerHTML = costBlock(quote);
         if (quote.affordable) {

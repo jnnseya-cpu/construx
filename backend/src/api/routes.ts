@@ -5482,6 +5482,21 @@ export const ROUTES: Route[] = [
       redteam.challengeSubmission(projectContext(platform, ctx), { packId: ctx.params.packId as string }),
   },
   {
+    /*
+     * The same review with the model left out: the evaluator's deterministic
+     * lenses — every requirement answered, evidence that stands, limits kept,
+     * the quality floor — and nothing sent anywhere. No `ai` descriptor,
+     * because it calls no provider and costs nothing; a high finding it raises
+     * is cleared the same way, by a named person recording a decision.
+     */
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/checks',
+    description: 'Check the pack against the matrix without a model — the deterministic half of the review, at no cost',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      redteam.challengeSubmission(projectContext(platform, ctx), { packId: ctx.params.packId as string, withModel: false }),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/assurance',
     readOnly: true,
@@ -5721,7 +5736,12 @@ export const ROUTES: Route[] = [
     description: 'Back-plan the tender programme and the bid work packages from the return deadline',
     schema: {
       type: 'object',
-      properties: { from: stringField },
+      properties: {
+        from: stringField,
+        // Asked for, with a reason, when the window is shorter than the
+        // spine's minimum. Never applied silently.
+        compression: { type: 'object', required: ['reason'], properties: { reason: stringField }, additionalProperties: false },
+      },
       additionalProperties: false,
     },
     handler: (platform, ctx) =>
@@ -27675,11 +27695,14 @@ export const ROUTES: Route[] = [
       properties: {
         method: { type: 'string', enum: ['POST'] },
         path: stringField,
+        // The held file the action will send, where it is named by hash in
+        // the action's body rather than in its path.
+        hash: stringField,
       },
       additionalProperties: false,
     },
     handler: (platform, ctx) => {
-      const input = body<{ method: string; path: string }>(ctx);
+      const input = body<{ method: string; path: string; hash?: string }>(ctx);
       const [pathname] = input.path.split('?');
       const matched = matchRoute(input.method, pathname ?? '');
 
@@ -27740,7 +27763,21 @@ export const ROUTES: Route[] = [
 
       authorise(engineCtx, 'AI_EXECUTION', 'X', { lifecyclePhase: currentPhase(engineCtx) });
 
+      /*
+       * The file the run will send, where the action names one — by its
+       * ingestion in the path, or by hash. Its extracted text is what the
+       * provider is sent, so it is what the estimate is sized from. Reading a
+       * sixty-page invitation was quoted as an empty request — a penny — and
+       * the charge after the run would have been pounds.
+       */
+      const ingestionId = matched.params.ingestionId;
+      const heldFile = ingestionId || input.hash
+        ? ingestion.ingestedFiles(engineCtx).find((file) => (ingestionId ? file.ingestionId === ingestionId : file.hash === input.hash))
+        : undefined;
+      const inputText = heldFile?.extraction.text;
+
       return platform.orchestrator.quote({
+        ...(inputText ? { inputText } : {}),
         capability: matched.route.ai.capability,
         engine: matched.route.ai.engine,
         taskType: matched.route.ai.taskType,

@@ -329,6 +329,21 @@ export type CostQuote = {
   availableMinor: number;
   balanceAfterMinor: number;
   affordable: boolean;
+  /**
+   * The account is exempt: nothing is taken from its wallet, so the charge is
+   * truly nil. Said outright, with `providerCostMinor` beside it, because "£0.00"
+   * alone read as "this AI is free" — and the provider is paid either way, by
+   * whoever operates the platform.
+   */
+  exempt: boolean;
+  /** What the provider is estimated to be paid for this run, in minor units, before any multiplier. */
+  providerCostMinor: number;
+  /**
+   * Where a FLOOR estimate was sized from the actual material the run will
+   * send — the file's own text — rather than from an empty request. Absent
+   * where nothing was known about the input.
+   */
+  sizedFromTokens?: number;
   /** Present where the action cannot proceed, with the reason it cannot. */
   blockedReason?: string;
   /**
@@ -680,8 +695,12 @@ export class AIOrchestrator {
     if (cleared.length === 0) {
       throw new DomainError(
         'AI_CLEARANCE_REQUIRED',
-        `This request carries ${sensitivity} material and no configured AI provider is cleared to receive it. ` +
-          `Clear a provider in AI_PROVIDER_CLEARANCE once the contract with that vendor permits it.`,
+        `This request carries ${sensitivity} material and no configured AI provider is cleared to receive it ` +
+          `(configured here: ${chain.map((adapter) => `${adapter.name} cleared to ${clearanceFor(adapter.name)}`).join(', ')}). ` +
+          `Once the contract with a vendor permits it, set it in the server's environment — for example ` +
+          `AI_PROVIDER_CLEARANCE=${chain[0]?.name ?? 'OPENAI'}:${sensitivity} — and restart the server; the setting is read when it starts. ` +
+          'Nothing was sent and nothing was charged. Without AI: type the compliance matrix in, write the answers ' +
+          'yourself, and use "Check the pack — free, no AI" before issuing.',
         // 403, not 503. Nothing is broken and retrying will not help: the
         // platform is refusing on purpose, and a client that reads this as an
         // outage will keep trying.
@@ -859,6 +878,13 @@ export class AIOrchestrator {
      * are all decided against what will really be spent.
      */
     passes?: number;
+    /**
+     * The text the run will send, where the caller knows it — a held file's
+     * extracted text. Priced by the adapter's own estimator, the same one the
+     * reservation uses, so a sixty-page invitation is not quoted as an empty
+     * request. Ignored once the action has measured runs to go on.
+     */
+    inputText?: string;
   }): CostQuote {
     // Derived once and used twice: the adapter chosen must be one cleared for
     // this material, and the disclosure below has to name the same level the
@@ -869,7 +895,8 @@ export class AIOrchestrator {
 
     // The floor: what the adapter charges for this capability with nothing to
     // read. Every real call costs at least this and almost always more.
-    const floorRawMinor = adapter.estimateCostMinor({ task: input.taskType, payload: {} });
+    const sized = typeof input.inputText === 'string' && input.inputText.length > 0;
+    const floorRawMinor = adapter.estimateCostMinor({ task: input.taskType, payload: sized ? { text: input.inputText } : {} });
 
     const basis: QuoteBasis = observed.length > 0 ? 'MEASURED' : 'FLOOR';
     const passes = Math.max(1, Math.round(input.passes ?? 1));
@@ -895,6 +922,9 @@ export class AIOrchestrator {
       availableMinor: priced.availableMinor,
       balanceAfterMinor: Math.max(0, priced.availableMinor - priced.chargeMinor),
       affordable: priced.blockedReason === undefined,
+      exempt: input.wallet.unmetered() !== null,
+      providerCostMinor: estimatedRawCostMinor,
+      ...(sized && basis === 'FLOOR' ? { sizedFromTokens: Math.ceil(input.inputText!.length / CHARS_PER_TOKEN) } : {}),
       blockedReason: priced.blockedReason,
       blockedBy: priced.blockedBy,
       capBreach: priced.capBreach,

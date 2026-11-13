@@ -322,6 +322,23 @@ describe('severity is a gate', () => {
     assert.match(String(error.message), /no response/);
   });
 
+  it('runs as checks only when asked, spends nothing, and counts as a current review for the issue gate', async () => {
+    // The human route to issue: the deterministic lenses with no model, cleared
+    // by a named person's decisions. Before this every review sent the pack to
+    // a provider, and an empty wallet blocked even the checks that cost nothing.
+    const { review, acuConsumed } = await redteam.challengeSubmission(asQS(), { packId, withModel: false });
+    assert.equal(acuConsumed, 0);
+    assert.equal(review.modelChallenge.ran, false);
+    assert.match(review.modelChallenge.reason ?? '', /by choice, at no cost/);
+    assert.ok(review.findings.every((entry) => entry.raisedBy !== 'MODEL'), 'no finding claims a model raised it');
+    const pack = bidresponse.bidResponsePack(asQS(), packId);
+    assert.equal(redteam.assuranceStanding(review, pack).current, true, 'a checks-only review is a review of the pack as it stands');
+    // Reachable from the console as its own route, and not quoted as AI.
+    const route = ROUTES.find((r) => r.pattern === '/v1/projects/:projectId/bid-responses/:packId/checks');
+    assert.ok(route, 'no route for the checks-only review');
+    assert.equal(route.ai, undefined, 'a review that calls no provider must not be quoted as one');
+  });
+
   it('refuses a review of an earlier version of the pack', async () => {
     const { review } = await redteam.challengeSubmission(asQS(), { packId });
     const before_ = bidresponse.bidResponsePack(asQS(), packId);

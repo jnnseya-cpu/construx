@@ -856,6 +856,41 @@ describe('tender intake · the tender programme, back-planned', () => {
     assert.match(String(error.message), /not held up by it/);
   });
 
+  it('builds a compressed programme when a person asks for one and says why, and marks every short stage', () => {
+    // Conwy's real window: four working days. The refusal now offers this, and
+    // it is never applied silently — no reason, no compression.
+    const invitationId = bidding('2027-01-15T12:00');
+    throwsCode(() => tenderintake.generateBidProgramme(asQS(), invitationId, { from: '2027-01-11' }), 'TENDER_WINDOW_TOO_SHORT');
+    throwsCode(() => tenderintake.generateBidProgramme(asQS(), invitationId, { from: '2027-01-11', compression: { reason: '   ' } }), 'TENDER_WINDOW_TOO_SHORT');
+
+    const programme = tenderintake.generateBidProgramme(asQS(), invitationId, {
+      from: '2027-01-11',
+      compression: { reason: 'Found the tender late; prices from our own rates, no enquiries out' },
+    });
+    assert.equal(programme.availableBusinessDays, 4);
+    assert.equal(programme.milestones.reduce((sum, m) => sum + m.businessDays, 0), 4, 'the days that exist, all of them and no more');
+    assert.equal(programme.milestones.length, tenderintake.BID_SPINE.length, 'every stage is still on it');
+    assert.ok(programme.milestones.some((m) => m.belowMinimum), 'the short stages say so');
+    assert.ok(programme.milestones.every((m) => m.belowMinimum === (m.businessDays < tenderintake.BID_SPINE.find((st) => st.key === m.key)!.minDays)));
+    assert.equal(programme.milestones.at(-1)!.finish <= programme.submissionDay, true, 'it still finishes by the submission day');
+    assert.equal(programme.compression?.normalMinimumDays, tenderintake.BID_SPINE_MINIMUM_DAYS);
+    assert.match(programme.compression?.reason ?? '', /Found the tender late/);
+    assert.ok(programme.compression?.acceptedBy);
+
+    // A full-length window is never marked compressed, reason or not.
+    const normal = tenderintake.generateBidProgramme(asQS(), bidding('2027-03-12T12:00'), { from: '2027-01-11', compression: { reason: 'not needed' } });
+    assert.equal(normal.compression, undefined);
+    assert.ok(normal.milestones.every((m) => m.belowMinimum === undefined));
+  });
+
+  it('refuses outright when no working day remains, compressed or not', () => {
+    const invitationId = bidding('2027-01-11T12:00');
+    throwsCode(
+      () => tenderintake.generateBidProgramme(asQS(), invitationId, { from: '2027-01-11', compression: { reason: 'Last minute' } }),
+      'TENDER_WINDOW_CLOSED',
+    );
+  });
+
   it('builds work packages from the deliverables, each with its earliest date', () => {
     const programme = tenderintake.generateBidProgramme(asQS(), bidding('2027-03-12T12:00'), { from: '2027-01-11' });
 

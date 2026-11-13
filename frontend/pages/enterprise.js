@@ -239,7 +239,10 @@ export async function enterprise(root) {
     // Who has been asked onto this project and whether they took it up, with
     // the seat position beside it — an invitation holds a seat, and somebody
     // about to send one needs to know whether there is one to give.
-    api.get(`/v1/projects/${state.session.projectId}/invitations`).catch(() => null),
+    // Not asked at all without a project: a company minutes old has none, and
+    // the path read `/v1/projects/null/invitations` — a 404 on the first screen
+    // a new customer saw. Null is what the screen already draws for "none".
+    state.session.projectId ? api.get(`/v1/projects/${state.session.projectId}/invitations`).catch(() => null) : Promise.resolve(null),
     // The supply-chain register, so an external supplier can be invited as a
     // named firm's person rather than a stranger with a supplier role. Null
     // where the reader may not see the register; the invitation still works.
@@ -247,7 +250,7 @@ export async function enterprise(root) {
     // Everybody appointed to this project, with whose licence covers them and
     // who pays for their AI — the members table the commercial rule is read
     // from. Null where the reader may not see it.
-    api.get(`/v1/projects/${state.session.projectId}/members`).catch(() => null),
+    state.session.projectId ? api.get(`/v1/projects/${state.session.projectId}/members`).catch(() => null) : Promise.resolve(null),
     // Who this organisation has asked to pay for a guest's AI, and what it
     // has agreed to pay itself.
     api.read('/v1/acu-sponsorships', 'BILLING_ACU').catch(() => null),
@@ -991,13 +994,13 @@ export async function enterprise(root) {
             { value: 'HYBRID', label: 'Hybrid' },
           ],
         },
-        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT },
+        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT, value: state.me?.activeCompany?.region ?? undefined },
         // A list of countries, not a box for a code. The stored value is
         // still the two-letter code — that is the standard and every reader
         // downstream expects it — but nobody has to know their own country's
         // code to fill the form in, and the picker cannot produce a
         // jurisdiction that does not exist.
-        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY,
+        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY, value: state.me?.activeCompany?.jurisdiction ?? undefined,
           hint: 'Stored as its ISO 3166-1 alpha-2 code. Leave as it is for a multi-country portfolio.' },
         { name: 'city', label: 'City' },
         {
@@ -1046,8 +1049,8 @@ export async function enterprise(root) {
         // stored stays one of the nine ONS categories.
         { name: 'sectorType', label: 'Sector', type: 'select', options: SECTOR_GROUPED },
         { name: 'assetType', label: 'Asset type', hint: 'What is being built — "Reservoir spillway", "Distribution centre"' },
-        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT },
-        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY, hint: 'Where the works are. Stored as its ISO 3166-1 alpha-2 code.' },
+        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT, value: state.me?.activeCompany?.region ?? undefined },
+        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY, value: state.me?.activeCompany?.jurisdiction ?? undefined, hint: 'Where the works are. Stored as its ISO 3166-1 alpha-2 code.' },
         { name: 'city', label: 'City' },
         {
           /*

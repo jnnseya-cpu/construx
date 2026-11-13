@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { config } from '../config.ts';
 import { ulid } from '../core/ids.ts';
 import { DomainError, NotFoundError, ValidationError } from '../core/errors.ts';
-import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
+import { CURRENCIES, JURISDICTIONS, REGION_OF_JURISDICTION } from '../domain/locale.ts';
 import { ensureFirstPortfolio } from '../domain/structure.ts';
 import type { Platform } from '../platform.ts';
 import { acusFromMinor, subscriptionAcuAllocationMinor } from '../billing/acu.ts';
@@ -15,22 +15,6 @@ import { recordTrialTaken, resetTrials, trialGrantAllowed } from './trials.ts';
 import { scopesForRoles } from './scopes.ts';
 import { signFor, verifyFor } from './secrets.ts';
 
-/**
- * The region each jurisdiction the platform holds rules for sits in.
- *
- * A portfolio must name its region, and a new customer names a jurisdiction
- * rather than a continent. Written out in full rather than derived, because
- * the set is the five in `JURISDICTIONS` and a table of two hundred countries
- * to answer a question about five would be a second vocabulary to keep in step
- * with the first.
- */
-const CONTINENT_OF: Record<keyof typeof JURISDICTIONS, 'EU' | 'AM' | 'AF' | 'AS' | 'OC' | 'AN'> = {
-  GB: 'EU',
-  IE: 'EU',
-  AE: 'AS',
-  ZA: 'AF',
-  US: 'AM',
-};
 
 /**
  * Public registration.
@@ -504,7 +488,7 @@ export function verify(
    * here would be bypassing the paywall to fix an onboarding problem.
    */
   ensureFirstPortfolio(platform, tenant.id, {
-    continentCode: CONTINENT_OF[record.jurisdiction] ?? 'EU',
+    continentCode: REGION_OF_JURISDICTION[record.jurisdiction] ?? 'EU',
     countryCode: record.jurisdiction,
   });
 

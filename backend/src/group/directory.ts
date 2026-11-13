@@ -5,6 +5,7 @@ import { chargesFor } from '../billing/collection.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import type { Platform, PlatformUser, Tenant } from '../platform.ts';
 import { grantLifecycle } from '../identity/modules.ts';
+import { REGION_OF_JURISDICTION } from '../domain/locale.ts';
 
 /**
  * The Group: one licence agreement, one bill, several legal entities.
@@ -454,7 +455,11 @@ export function membershipsByEmail(platform: Platform, email: string): Membershi
  */
 export function whoAmI(platform: Platform, actor: AuthContext): {
   user: { id: string; name: string; email: string; tenantId: string; roles: string[]; pictureHash?: string; coverHash?: string };
-  activeCompany: { tenantId: string; name: string; slug: string | null };
+  /**
+   * `jurisdiction` and `region` are the company's own — what a new portfolio or
+   * project defaults to, rather than the first country in the list.
+   */
+  activeCompany: { tenantId: string; name: string; slug: string | null; jurisdiction: string; region: string | null };
   memberships: Membership[];
   group: { id: string; slug: string; displayName: string; roles: GroupRoleName[] } | null;
   entitlements: string[];
@@ -483,6 +488,8 @@ export function whoAmI(platform: Platform, actor: AuthContext): {
       tenantId: tenant.id,
       name: tenant.legalName,
       slug: group?.costCentres.find((centre) => centre.tenantId === tenant.id)?.slug ?? null,
+      jurisdiction: tenant.jurisdiction,
+      region: REGION_OF_JURISDICTION[tenant.jurisdiction] ?? null,
     },
     memberships: membershipsByEmail(platform, user.email),
     group: group ? { id: group.id, slug: group.slug, displayName: group.displayName, roles: groupRolesFor(platform, group.id, user.email) } : null,

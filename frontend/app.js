@@ -837,18 +837,13 @@ async function establishSession(verified) {
   // sign-in through this path printed "undefined › undefined" above the work.
   // They are two ordinary tenant-scoped reads; a tenancy that has neither yet is
   // a new tenancy, and the crumb below falls back rather than inventing one.
-  const [enterprise, portfolio] = await Promise.all([
-    api.get('/v1/enterprises').then((r) => r.enterprises?.[0]?.name ?? null).catch(() => null),
-    api.get('/v1/portfolios').then((r) => r.portfolios?.[0]?.name ?? null).catch(() => null),
-  ]);
-
   session.set({
     ...session.get(),
     projectId: first?.id ?? first?.projectId ?? null,
-    enterprise,
-    portfolio,
+    projectClosed: false,
   });
   state.session = session.get();
+  await refreshEstateNames();
   state.project = null;
   state.gate = null;
   state.wallet = null;
@@ -1371,6 +1366,32 @@ function topbar() {
   </header>`;
 }
 
+/**
+ * The two names above the project in the breadcrumb, read from the record.
+ *
+ * They were read once, at sign-in, and never again — so a company that signed
+ * in with nothing and then created its portfolio and project on Enterprise &
+ * Portfolio saw "no portfolio yet" above the project it had just put in that
+ * portfolio, until it signed out. The portfolio named is the current
+ * project's own, so a company with two portfolios sees the right one.
+ */
+async function refreshEstateNames() {
+  const [enterprises, portfolios] = await Promise.all([
+    api.get('/v1/enterprises').catch(() => null),
+    api.get('/v1/portfolios').catch(() => null),
+  ]);
+  if (!enterprises && !portfolios) return;
+  const list = portfolios?.portfolios ?? [];
+  const own = list.find((portfolio) => portfolio.id === state.project?.portfolioId) ?? list[0];
+  const names = {
+    enterprise: enterprises?.enterprises?.[0]?.name ?? state.session?.enterprise ?? null,
+    portfolio: own?.name ?? null,
+  };
+  if (names.enterprise === state.session?.enterprise && names.portfolio === state.session?.portfolio) return;
+  session.set({ ...session.get(), ...names });
+  state.session = session.get();
+}
+
 async function loadContext() {
   // An operator has no project context to load — asking for one would be denied,
   // correctly, by the same rule that hides delivery navigation from them.
@@ -1398,11 +1419,14 @@ async function loadContext() {
     // out and back in. A live tenancy hit exactly that: project created, Site
     // Services still saying there was no project. The list is the truth, and
     // it is asked here rather than remembered from sign-in.
+    //
+    // Not after the person closed one on purpose ("Show all tenders"): then the
+    // list is kept for the picker and no project is chosen for them.
     const listed = await api.get('/v1/projects').catch(() => null);
     const projects = listed?.projects ?? listed?.items ?? (Array.isArray(listed) ? listed : []);
     const first = projects[0];
     const firstId = first?.id ?? first?.projectId ?? null;
-    if (firstId) {
+    if (firstId && !state.session?.projectClosed) {
       session.set({ ...session.get(), projectId: firstId });
       state.session = session.get();
       return loadContext();
@@ -1410,7 +1434,7 @@ async function loadContext() {
 
     state.project = null;
     state.gate = null;
-    state.projects = [];
+    state.projects = projects;
     // The wallet needs BILLING_ACU, which most delivery roles do not hold. The
     // matrix is already loaded by this point, so the refusal is known in
     // advance and the request is not made — the same rule the command bar
@@ -1445,6 +1469,7 @@ async function loadContext() {
   state.project = detail.project;
   state.gate = detail.gate;
   state.wallet = wallet;
+  await refreshEstateNames();
 }
 
 /**
@@ -1459,6 +1484,7 @@ async function loadContext() {
  * the picker, because an empty picker reads as "the estate has gone".
  */
 async function refreshProjectList() {
+  if (!state.session?.portfolio) await refreshEstateNames();
   const listed = await api.get('/v1/projects').catch(() => null);
   if (!listed) return;
   state.projects = listed.projects ?? listed.items ?? (Array.isArray(listed) ? listed : state.projects);
@@ -1496,7 +1522,7 @@ async function refreshProjectList() {
  */
 function selectProject(projectId) {
   if (!projectId || projectId === state.session?.projectId) return false;
-  session.set({ ...session.get(), projectId });
+  session.set({ ...session.get(), projectId, projectClosed: false });
   state.session = session.get();
   state.project = null;
   state.gate = null;
@@ -1525,7 +1551,14 @@ export async function openProject(projectId) {
  */
 export async function closeProject() {
   if (!state.session?.projectId) return;
-  session.set({ ...session.get(), projectId: undefined });
+  /*
+   * Closed on purpose, and remembered as such. The redraw below loads context
+   * with no project, and that path picks the first project for a session that
+   * never chose one — so "Show all tenders" re-focused the very tender it was
+   * pressed to leave, and a second tender on the board could not be acted on.
+   * Choosing a project again (`openProject`) clears the mark.
+   */
+  session.set({ ...session.get(), projectId: undefined, projectClosed: true });
   state.session = session.get();
   state.project = null;
   state.gate = null;

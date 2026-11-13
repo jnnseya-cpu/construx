@@ -4,6 +4,7 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { Platform } from '../platform.ts';
 import { ensureFirstPortfolio } from '../domain/structure.ts';
+import { REGION_OF_JURISDICTION } from '../domain/locale.ts';
 import { reportConversion } from '../site/conversions.ts';
 import { PACKAGES, type PackageTier } from './seats.ts';
 import { subscriptionPriceMinor } from '../group/agreement.ts';
@@ -410,7 +411,6 @@ export async function attemptCollection(
  * portfolio must name its region and a tenancy records a jurisdiction; the set
  * is small and closed, so this is complete rather than a guess.
  */
-const CONTINENT_OF: Record<string, string> = { GB: 'EU', IE: 'EU', AE: 'AS', ZA: 'AF', US: 'AM' };
 
 export function settleCharge(
   platform: Platform,
@@ -481,7 +481,7 @@ export function settleCharge(
      */
     const tenant = platform.tenant(charge.tenantId);
     ensureFirstPortfolio(platform, charge.tenantId, {
-      continentCode: CONTINENT_OF[tenant.jurisdiction] ?? 'EU',
+      continentCode: REGION_OF_JURISDICTION[tenant.jurisdiction] ?? 'EU',
       countryCode: tenant.jurisdiction,
     });
 

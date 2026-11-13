@@ -1,5 +1,5 @@
 import { api, isRoleDenial } from '../lib/api.js';
-import { command, commandBar } from '../lib/command.js';
+import { command, commandBar, confirmCost } from '../lib/command.js';
 import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, resolveHtml, table, time, toast } from '../lib/ui.js';
 import { donutChart } from '../lib/charts.js';
 import { flowPanel, loadFlow } from '../lib/flow.js';
@@ -183,7 +183,7 @@ function heldTenderFiles(evidence, ingestion) {
  * schedule lists quantities; a photograph shows a place. Requirements live in
  * the invitation letter, the instructions to tenderers and the specification.
  */
-const CANNOT_BE_AN_INVITATION = ['DRAWING', 'CALCULATION', 'SCHEDULE', 'PHOTOGRAPH', 'MODEL', 'CERTIFICATE'];
+const CANNOT_BE_AN_INVITATION = ['DRAWING', 'CALCULATION', 'REPORT', 'SCHEDULE', 'PHOTOGRAPH', 'MODEL', 'CERTIFICATE'];
 
 function ittReadingPanel({ perception, evidence, ingestion, projectId, projectName, blocked, tenderProjects, invitationOptions }) {
   // Three separate reasons this cannot run, and they need different sentences.
@@ -265,9 +265,10 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
           !blocked && !available
             ? html`<div class="notice warn" style="margin-bottom:12px">
                 <div>
-                  <b>Not available on this deployment.</b><br />${perception?.capability?.reason ?? ''}
-                  An invitation is not read here at all, rather than read badly and filed as fact — a fabricated
-                  requirement is a bid disqualified.
+                  <b>AI reading is not available on this deployment.</b><br />${perception?.capability?.reason ?? ''}
+                  Your files are still stored and their text read below, free. Type the compliance matrix in with
+                  “Read the invitation into a matrix” above — nothing is read by a model here, rather than read badly
+                  and filed as fact.
                 </div>
               </div>`
             : ''
@@ -283,7 +284,14 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
       </div>
 
       ${
-        !blocked && available
+        /*
+         * The files, whether or not a model is configured. Storing a tender
+         * document and reading its text is the platform's own free stage; only
+         * the buttons that send it to a model depend on a provider. The table
+         * used to be drawn only where one was configured, so a company with no
+         * AI uploaded five files and was shown none of them.
+         */
+        !blocked
           ? table({
               headers: ['The document', 'Type', 'What the platform has read', 'Held since', ''],
               rows: readable.slice(0, 20).map(({ entry, file, road, says }) => [
@@ -328,7 +336,13 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                  * on a road (DRAWING/TEXT/LOOK) that carries one.
                  */
                 html`${
-                  file && String(file.kind ?? '') === 'DRAWING'
+                  !available
+                  ? road === 'UNREAD'
+                    ? html`<button class="btn quiet sm" data-ingest-tender="${entry.hash}" data-name="${entry.description}">
+                        Look at the file first
+                      </button>`
+                    : ''
+                  : file && String(file.kind ?? '') === 'DRAWING'
                   ? html`<button class="btn sm" data-take-off="${entry.hash}">Measure quantities</button>
                       <button class="btn quiet sm" data-read-itt-text="${file.ingestionId}"
                         title="A drawing states no tender requirements. This will run and will almost certainly find none.">
@@ -355,7 +369,7 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                   // document, because the pricing schedule arrives as a Word
                   // file, a PDF or a scan and the person holding it is on this
                   // screen. Quantities only — the reader returns no rate.
-                  file && (road === 'TEXT' || road === 'LOOK' || String(file.kind ?? '') === 'DRAWING')
+                  available && file && (road === 'TEXT' || road === 'LOOK' || String(file.kind ?? '') === 'DRAWING')
                     ? html`<button class="btn quiet sm" data-read-boq="${entry.hash}"
                         title="Read this as the buyer's priced Bill of Quantities — the AI extracts every item, unit and quantity into the bill for you to price. It reads quantities only, never a rate.">
                           Read as a pricing schedule
@@ -1797,9 +1811,39 @@ export async function pipeline(root) {
            * no project there is nowhere for them to go, and it says so rather
            * than offering a button that would land on somebody else's job.
            */
-          visibleBoard.some((t) => t.siteVisit || t.clarificationDeadline)
+          visibleBoard.some((t) => t.siteVisit || t.clarificationDeadline || t.programme)
             ? html`<div class="split-list" style="padding:0 17px 15px">
                 ${visibleBoard.flatMap((t) => [
+                  /*
+                   * The bid programme, where one is built. It was recorded and
+                   * never shown — "Build tender programme" answered "Recorded"
+                   * and the stages it had worked out were on no screen.
+                   */
+                  ...(t.programme
+                    ? [
+                        html`<div class="row" style="align-items:flex-start">
+                          <span class="lbl">
+                            ${t.reference} · bid programme
+                            ${t.programme.compression
+                              ? html`<div>${badge('compressed', 'warn')}</div>
+                                  <div class="metric-sub" style="max-width:260px">
+                                    ${t.programme.availableBusinessDays} working days against the normal
+                                    ${t.programme.compression.normalMinimumDays}. Why: ${t.programme.compression.reason}
+                                  </div>`
+                              : ''}
+                          </span>
+                          <span class="val" style="text-align:left">
+                            ${t.programme.milestones.map(
+                              (m) => html`<div>
+                                ${m.label}: ${date(m.start)}${m.finish !== m.start ? html` → ${date(m.finish)}` : ''}
+                                <span class="metric-sub">· ${m.businessDays === 0 ? 'same day as the stage before' : `${m.businessDays} working day${m.businessDays === 1 ? '' : 's'}`}</span>
+                                ${m.belowMinimum ? badge('short', 'warn') : ''}
+                              </div>`,
+                            )}
+                          </span>
+                        </div>`,
+                      ]
+                    : []),
                   ...(t.clarificationDeadline
                     ? [
                         html`<div class="row">
@@ -2217,7 +2261,9 @@ export async function pipeline(root) {
             <div class="actions cmd-bar" style="margin:10px 0">
               ${raw(
                 commandBar([
-                  { id: 'bid-challenge', label: 'Attack the pack',
+                  { id: 'bid-checks', label: 'Check the pack — free, no AI',
+                    permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
+                  { id: 'bid-challenge', label: 'Attack the pack', tone: 'quiet',
                     permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
                   { id: 'bid-floor', label: 'Set the quality floor', tone: 'quiet',
                     permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
@@ -3148,6 +3194,42 @@ export async function pipeline(root) {
       ],
       transform: ({ packId: _packId }) => ({}),
     },
+    /*
+     * The review without the model. Issuing a pack needs a current review, and
+     * every review used to send the pack to a provider: with one cleared it
+     * charged, and with an empty wallet the quote blocked even the half that
+     * costs nothing. This is that half on its own — the same findings, cleared
+     * the same way, by a named person recording a decision on each high one.
+     */
+    'bid-checks': {
+      title: 'Check the pack — free, no AI',
+      intent:
+        'Reads the pack against the compliance matrix with no model: every requirement answered, word limits kept, ' +
+        'no note to the bid team left in, evidence that stands on the return date, and the quality floor. Nothing ' +
+        'leaves the platform and nothing is charged. A high finding blocks the issue until you record a decision on ' +
+        'it; then "Issue the pack" goes through. "Attack the pack" adds a model’s judgement on top, at a cost.',
+      path: (v) => `/v1/projects/${projectId}/bid-responses/${v.packId}/checks`,
+      submitLabel: 'Check it',
+      fields: [
+        { name: 'packId', label: 'Pack', type: 'select',
+          options: (bidPacks?.packs ?? [])
+            .filter((pack) => pack.status !== 'ISSUED')
+            .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.summary ?? ''}` })),
+          emptyHint: 'Every pack has been issued. A pack is checked before it is issued, not after.' },
+      ],
+      transform: ({ packId: _packId }) => ({}),
+      report: (result) => {
+        const review = result?.review ?? {};
+        const open = (review.findings ?? []).filter((f) => f.severity === 'CRITICAL' || (f.severity === 'HIGH' && !f.disposition));
+        return {
+          title: `${review.reference ?? 'Review'} — checks only`,
+          message: open.length === 0
+            ? 'Nothing blocks the issue. "Issue the pack" can go through.'
+            : `${open.length} finding(s) block the issue. Record a decision on each high one with "Record a decision on a finding"; a critical one has to be fixed.`,
+          tone: open.length === 0 ? 'ok' : 'warn',
+        };
+      },
+    },
     'finding-dispose': {
       title: 'Record a decision on a finding',
       intent:
@@ -3467,8 +3549,8 @@ export async function pipeline(root) {
         { name: 'portfolioId', label: 'Portfolio', type: 'select', options: portfolios },
         { name: 'assetType', label: 'Asset type', type: 'text',
           hint: 'What is being built or serviced — "Reservoir spillway", "Domestic EPC assessments".' },
-        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT },
-        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY,
+        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT, value: state.me?.activeCompany?.region ?? undefined },
+        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY, value: state.me?.activeCompany?.jurisdiction ?? undefined,
           hint: 'Where the works are. Stored as its ISO 3166-1 alpha-2 code.' },
         { name: 'city', label: 'City', type: 'text' },
         { name: 'currency', label: 'Currency', type: 'select',
@@ -4044,17 +4126,32 @@ export async function pipeline(root) {
       title: 'Build the tender programme',
       intent:
         'Back-planned from the return deadline across the working calendar, bank holidays included. Where the window ' +
-        'cannot hold the eight stages, the platform refuses and shows the arithmetic rather than compressing them silently.',
+        'cannot hold the eight stages it is refused with the arithmetic — never compressed silently — unless you tick ' +
+        '“Build it compressed” and say why.',
       path: (v) => `/v1/pipeline/tenders/${v.invitationId}/programme`,
       submitLabel: 'Build',
+      report: (built) => ({
+        title: built.compression ? 'Bid programme built — compressed' : 'Bid programme built',
+        message:
+          `${built.milestones.length} stages to ${built.submissionDay}` +
+          (built.compression
+            ? `, on ${built.availableBusinessDays} working days against the normal ${built.compression.normalMinimumDays}; ` +
+              `${built.milestones.filter((m) => m.belowMinimum).length} stages run short and are marked. It is under the tender on this screen.`
+            : '. It is under the tender on this screen.'),
+        tone: built.compression ? 'warn' : 'ok',
+      }),
       fields: [
         { name: 'invitationId', label: 'Invitation', type: 'select', options: scopedBiddableOptions,
           hint: 'Only tenders you have recorded a decision to bid on appear here — a programme is back-planned from that decision.',
           emptyHint: focused
             ? 'This tender has no recorded decision to bid yet, and a programme follows that decision (not the reading or the matrix — those do not decide the bid). On this screen: "Score an opportunity", then "Decide bid or no bid" and record the decision to bid. The programme then builds against it.'
             : 'No tender has a recorded decision to bid yet, and a programme follows that decision. On this screen: "Score an opportunity", then "Decide bid or no bid" for the tender you want a programme for, and record the decision to bid.' },
+        { name: 'compressed', label: 'Build it compressed', type: 'checkbox', required: false,
+          hint: 'Only where fewer than ten working days remain. Every stage gets less than its normal minimum, and each short one is marked. Left unticked, a short window is refused with the arithmetic.' },
+        { name: 'compressionReason', label: 'Why it has to be compressed', type: 'textarea', rows: 2, required: false,
+          hint: 'Required with the box ticked — e.g. "Found the tender late; pricing from our own rates, no enquiries out".' },
       ],
-      transform: () => ({}),
+      transform: (v) => (v.compressed ? { compression: { reason: String(v.compressionReason ?? '').trim() } } : {}),
     },
     'record-external-submission': {
       title: 'Record a submission made on the portal',
@@ -4239,8 +4336,26 @@ export async function pipeline(root) {
       return;
     }
 
+    /*
+     * The four file-row buttons that send a file to a model. Each posted the
+     * moment it was pressed, with no price on screen — the one place in the
+     * console the rule "no AI action runs without showing its estimated cost
+     * first" was not met. They go through the same confirmation the rest of the
+     * platform uses, against the route each one is about to call; a quote that
+     * cannot be obtained is a refusal, not a licence to spend.
+     */
+    const spends = (title, path, runLabel, hash) =>
+      confirmCost({
+        title,
+        path,
+        runLabel,
+        ...(hash ? { quoteWith: { hash } } : {}),
+        intent: 'Sends this file to an AI provider. The estimate is below; nothing is charged unless you press the button.',
+      });
+
     const takeOff = event.target.closest('[data-take-off]');
     if (takeOff) {
+      if (!(await spends('Measure the quantities on this drawing', `/v1/projects/${projectId}/perception/take-off`, 'Measure', takeOff.dataset.takeOff))) return;
       takeOff.disabled = true;
       takeOff.textContent = 'Measuring…';
       try {
@@ -4261,6 +4376,7 @@ export async function pipeline(root) {
 
     const readText = event.target.closest('[data-read-itt-text]');
     if (readText) {
+      if (!(await spends('Read this invitation', `/v1/projects/${projectId}/ingestion/${readText.dataset.readIttText}/itt`, 'Read it'))) return;
       readText.disabled = true;
       readText.textContent = 'Reading…';
       try {
@@ -4299,6 +4415,7 @@ export async function pipeline(root) {
 
     const readIt = event.target.closest('[data-read-itt]');
     if (readIt) {
+      if (!(await spends('Read this invitation with a model that can see', `/v1/projects/${projectId}/perception/itt`, 'Read it', readIt.dataset.readItt))) return;
       readIt.disabled = true;
       readIt.textContent = 'Reading…';
       try {
@@ -4325,6 +4442,7 @@ export async function pipeline(root) {
 
     const readBoq = event.target.closest('[data-read-boq]');
     if (readBoq) {
+      if (!(await spends('Read this file as a pricing schedule', `/v1/projects/${projectId}/perception/price-list-boq`, 'Read it', readBoq.dataset.readBoq))) return;
       readBoq.disabled = true;
       readBoq.textContent = 'Reading the schedule…';
       try {

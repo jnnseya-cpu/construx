@@ -862,7 +862,14 @@ export function carryForwardDispositions(
  */
 export async function challengeSubmission(
   ctx: EngineContext,
-  input: { packId: string },
+  /**
+   * `withModel: false` runs the deterministic lenses only, by choice, at no
+   * cost. The review was already partial-but-honest wherever no provider
+   * answered; a company that does have one cleared had no way to ask for the
+   * free half alone — every review sent the pack to a model and charged for
+   * it, and an empty wallet blocked even the checks that cost nothing.
+   */
+  input: { packId: string; withModel?: boolean },
 ): Promise<{ review: AssuranceReview; acuConsumed: number }> {
   authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3', lifecyclePhase: currentPhase(ctx) });
 
@@ -908,7 +915,18 @@ export async function challengeSubmission(
     undertakingRefs: new Set(confirmedUndertakingReferences(ctx, pack.analysisId)),
   });
 
-  const { challenge, added, acuConsumed } = await modelChallenge(ctx, pack, analysis.matrix);
+  const { challenge, added, acuConsumed } =
+    input.withModel === false
+      ? {
+          challenge: {
+            ran: false,
+            reason: 'Run as checks only, without a model — by choice, at no cost',
+            findings: 0,
+          } satisfies ModelChallenge,
+          added: [] as AssuranceFinding[],
+          acuConsumed: 0,
+        }
+      : await modelChallenge(ctx, pack, analysis.matrix);
   findings.push(...added);
 
   // Everything except a section with no prose on it. A requirement the platform

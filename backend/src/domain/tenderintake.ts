@@ -1197,6 +1197,11 @@ export type BidMilestone = {
   businessDays: number;
   /** True where the stage was held at its floor because the window was tight. */
   atMinimum: boolean;
+  /**
+   * True on a compressed programme where the stage has fewer days than its
+   * normal minimum — zero meaning it runs on the same day as the stage before.
+   */
+  belowMinimum?: boolean;
 };
 
 export type BidWorkPackage = {
@@ -1215,6 +1220,12 @@ export type BidProgramme = {
   milestones: BidMilestone[];
   workPackages: BidWorkPackage[];
   fixedDates: Array<{ label: string; date: string }>;
+  /**
+   * Present where the window was shorter than the spine's minimum and a person
+   * chose to build it anyway: who, when, why, and against what. Never set
+   * silently — the programme is refused unless somebody asks for this.
+   */
+  compression?: { reason: string; normalMinimumDays: number; acceptedBy: string; acceptedAt: string };
 };
 
 /**
@@ -1257,6 +1268,28 @@ function allocate(available: number): number[] {
 }
 
 /**
+ * The days of a window shorter than the spine's minimum, shared in proportion.
+ *
+ * Only reached when a person has asked for it, with a reason. Each stage gets
+ * its weight's share of the days that exist, rounded down, and what the
+ * rounding leaves goes to the stages that lost most to it. A stage with nothing
+ * left runs on the same day as the one before — which is what a five-day tender
+ * is, and the programme says so on the stage rather than pretending otherwise.
+ */
+function allocateCompressed(available: number): number[] {
+  const exact = BID_SPINE.map((stage) => stage.weight * available);
+  const days = exact.map((value) => Math.floor(value));
+  let remaining = available - days.reduce((sum, d) => sum + d, 0);
+  const byLoss = exact.map((value, index) => ({ index, loss: value - Math.floor(value) })).sort((a, b) => b.loss - a.loss);
+  for (const { index } of byLoss) {
+    if (remaining <= 0) break;
+    days[index]! += 1;
+    remaining -= 1;
+  }
+  return days;
+}
+
+/**
  * Build the tender programme and the bid work packages.
  *
  * Refused for anything not decided as a bid — `AC-T-WF-01-03` says a no-bid
@@ -1266,7 +1299,7 @@ function allocate(available: number): number[] {
 export function generateBidProgramme(
   ctx: EngineContext,
   invitationId: string,
-  options: { from?: string; calendar?: BusinessCalendar } = {},
+  options: { from?: string; calendar?: BusinessCalendar; compression?: { reason: string } } = {},
 ): BidProgramme {
   authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
 
@@ -1297,16 +1330,25 @@ export function generateBidProgramme(
   const from = (options.from ?? new Date().toISOString()).slice(0, 10);
 
   const available = businessDaysBetween(from, submissionDay, calendar);
-  if (available < BID_SPINE_MINIMUM_DAYS) {
+  const reason = options.compression?.reason?.trim() ?? '';
+  const compressed = available < BID_SPINE_MINIMUM_DAYS;
+  if (compressed && available < 1) {
+    throw new DomainError(
+      'TENDER_WINDOW_CLOSED',
+      `No working day remains before ${submissionDay}. There is nothing to programme — submit what is ready, or ask the buyer for an extension.`,
+    );
+  }
+  if (compressed && reason === '') {
     throw new DomainError(
       'TENDER_WINDOW_TOO_SHORT',
       `${available} business day${available === 1 ? '' : 's'} remain to ${submissionDay}, and the tender spine needs ${BID_SPINE_MINIMUM_DAYS}. ` +
-        'Ask the buyer for an extension, or work to the deadline without this programme — the bid itself (matrix, returns, response pack, pricing) ' +
-        'is not held up by it. The platform will not compress it silently into a timetable that reads as achievable and is not.',
+        'Ask the buyer for an extension, or build it compressed — tick "Build it compressed" and say why. Every stage then gets less than its ' +
+        'normal minimum and the programme says so on each one. The platform will not compress it silently into a timetable that reads as ' +
+        'achievable and is not; and the bid itself (matrix, returns, response pack, pricing) is not held up by it either way.',
     );
   }
 
-  const days = allocate(available);
+  const days = compressed ? allocateCompressed(available) : allocate(available);
   const milestones: BidMilestone[] = [];
   let cursor = from;
   for (let i = 0; i < BID_SPINE.length; i++) {
@@ -1319,6 +1361,7 @@ export function generateBidProgramme(
       finish,
       businessDays: days[i]!,
       atMinimum: days[i] === stageDef.minDays,
+      ...(compressed ? { belowMinimum: days[i]! < stageDef.minDays } : {}),
     });
     cursor = finish;
   }
@@ -1340,6 +1383,9 @@ export function generateBidProgramme(
     milestones,
     workPackages,
     fixedDates,
+    ...(compressed
+      ? { compression: { reason, normalMinimumDays: BID_SPINE_MINIMUM_DAYS, acceptedBy: ctx.auth.actorId, acceptedAt: new Date().toISOString() } }
+      : {}),
   };
 
   write(ctx, {
@@ -1472,6 +1518,12 @@ export type TenderPosition = {
   reReviewReasons: string[];
   clarifications: Clarification[];
   programmeId?: string;
+  /**
+   * The bid programme's stages, so the board can show them. Only its id was
+   * published, and no screen read the stages at all — a programme could be
+   * built and then never seen.
+   */
+  programme?: Pick<BidProgramme, 'submissionDay' | 'availableBusinessDays' | 'milestones' | 'compression'>;
 };
 
 export function tenderPosition(
@@ -1508,9 +1560,11 @@ function readPosition(
   const deliveryProjectId =
     (opportunity?.state.projectId as string | undefined) ?? (opportunity?.state.convertedProjectId as string | undefined);
 
+  // The latest: a programme built again replaces the earlier one on the board.
   const programme = ctx.ledger
     .list(record.projectId, 'BidProgramme')
-    .find((r) => r.state.invitationId === record.state.id);
+    .filter((r) => r.state.invitationId === record.state.id)
+    .at(-1);
 
   return {
     invitationId: String(record.state.id),
@@ -1538,6 +1592,16 @@ function readPosition(
     reReviewReasons: position.reReviewReasons,
     clarifications: (record.state.clarifications as Clarification[] | undefined) ?? [],
     programmeId: programme ? String(programme.state.programmeId) : undefined,
+    ...(programme
+      ? {
+          programme: {
+            submissionDay: String(programme.state.submissionDay),
+            availableBusinessDays: Number(programme.state.availableBusinessDays),
+            milestones: (programme.state.milestones as BidMilestone[] | undefined) ?? [],
+            ...(programme.state.compression ? { compression: programme.state.compression as NonNullable<BidProgramme['compression']> } : {}),
+          },
+        }
+      : {}),
   };
 }
 

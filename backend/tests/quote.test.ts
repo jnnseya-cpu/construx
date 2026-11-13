@@ -377,6 +377,29 @@ describe('the estimate says where it came from', () => {
     assert.ok(quote.balanceAfterMinor >= 0);
   });
 
+  it('sizes a first-run estimate from the file the run will send, not from an empty request', () => {
+    // Reading a sixty-page invitation was quoted as an empty request — a penny —
+    // when the charge after the run would have been pounds. Given the file's
+    // own text, the floor is priced by the same estimator the reservation uses.
+    const empty = orchestrator.quote({ capability: 'REASONING', engine: 'TENDER', taskType: 'itt_requirement_extraction_file_text', wallet: wallet() });
+    const invitation = 'The Contractor shall describe the proposed methodology. '.repeat(4_000);
+    const sized = orchestrator.quote({ capability: 'REASONING', engine: 'TENDER', taskType: 'itt_requirement_extraction_file_text', wallet: wallet(), inputText: invitation });
+    assert.equal(sized.basis, 'FLOOR');
+    assert.ok(sized.estimatedRawCostMinor > empty.estimatedRawCostMinor * 10, `${sized.estimatedRawCostMinor} vs ${empty.estimatedRawCostMinor}`);
+    assert.equal(sized.sizedFromTokens, Math.ceil(invitation.length / 4));
+    assert.equal(empty.sizedFromTokens, undefined, 'an estimate with nothing to size from does not claim to be sized');
+  });
+
+  it('says an exempt account pays nothing, and still shows what the provider is paid', () => {
+    const exempt = wallet();
+    exempt.setUnmetered({ reason: 'Granted free by the operator' });
+    const quote = orchestrator.quote({ capability: 'REASONING', engine: 'TENDER', taskType: 'itt_requirement_extraction_file_text', wallet: exempt, inputText: 'x'.repeat(40_000) });
+    assert.equal(quote.exempt, true);
+    assert.equal(quote.estimatedChargeMinor, 0, 'nothing leaves an exempt wallet');
+    assert.ok(quote.providerCostMinor > 0, 'the provider is paid whoever pays it');
+    assert.equal(orchestrator.quote({ capability: 'REASONING', engine: 'TENDER', taskType: 'x', wallet: wallet() }).exempt, false);
+  });
+
   it('charges perception more than reasoning for the same absence of history', () => {
     // Images and models are large inputs and the floor reflects it. A single
     // floor for both would understate every perception action.

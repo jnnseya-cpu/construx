@@ -34154,8 +34154,8 @@ the fault is server-side):
   the road; a win still waits for the award notice, where the standstill is
   counted (`tests/bidrun.test.ts`).
 
-**Found and recorded, not changed** (each is a decision for the owner or a
-larger piece of work):
+**Found and recorded at the time** — every one since fixed or answered in the
+section that follows, *The eleven open findings, closed*:
 
 - Direct Debit is shown as "Recommended" at activation and is not connected.
 - Portfolio country defaults to the first in the list (Afghanistan).
@@ -34176,3 +34176,75 @@ larger piece of work):
 invitation or pricing schedule into a matrix, writing/redrafting/shortening a
 section, the red-team attack, the assurance review, and drafting the
 construction programme from the bill.
+
+## The eleven open findings, closed
+
+The owner asked for every finding the deep test had left open to be fixed.
+Each was fixed at its root, tested, and checked again in a real browser against
+the same journal (screenshots `fix-f*.png` in the test run).
+
+- **Direct Debit "Recommended" while not connected.** `frontend/lib/activation.js`
+  reads `position.rails` (already published by `activationPosition`): only a
+  live rail is recommended or selected by default; one that is not connected
+  says "Not connected yet" and that the first month is by bank transfer.
+- **Country defaulted to Afghanistan.** `whoAmI` publishes the company's
+  `jurisdiction` and `region` on `activeCompany`; the portfolio, project and
+  convert-a-win forms default to them. The region table is now one
+  (`REGION_OF_JURISDICTION` in `domain/locale.ts`), replacing the two copies in
+  sign-up and collection (`tests/grouptenancy.test.ts`).
+- **Breadcrumb "no portfolio yet"; `/projects/null` on first load.** The crumb's
+  names are read from the record on every context load (the current project's
+  own portfolio), and while unknown on each redraw — not once at sign-in.
+  Enterprise & Portfolio no longer asks for a project's invitations and members
+  without a project; a sweep of 31 screens with a no-project account makes no
+  `null`/`undefined` request.
+- **"Generate" vs "Generate a revision".** The button now says what the guide,
+  the dialog and the toast say.
+- **The tender file table hidden without an AI provider.** Always shown; only
+  the buttons that send a file to a model depend on a provider. The notice says
+  the files are stored and read free and how to type the matrix in.
+- **File-row AI buttons ran without a price.** All four go through
+  `confirmCost`, quoted against the route they call; cancel spends nothing.
+- **The estimate read £0.00.** Two causes. On an exempt account the nil charge
+  is true — the quote now says so (`exempt`) and shows what the provider is paid
+  (`providerCostMinor`). And a first run was priced on an empty request — the
+  quote now prices a named file's extracted text with the adapter's own
+  estimator (`inputText`, `sizedFromTokens`; the quote route reads the file by
+  `ingestionId` in the path or `hash`) (`tests/quote.test.ts`).
+- **File classification.** A new kind, `INVITATION`, for the ITT and a scored
+  questionnaire (it was filed as CORRESPONDENCE for want of one); plurals in the
+  drawing rule; REPORT by name and by content (ground investigation,
+  pre-construction information); a word-limit signal; the scan widened from
+  32KB to 128KB. On the five real Conwy files: three were wrong, now all five
+  are right (`tests/ingestion.test.ts`). REPORT joins the kinds offered "Read
+  anyway" rather than "Read this invitation".
+- **A bid programme under ten working days.** Built when a person ticks "Build
+  it compressed" and gives a reason: days shared in proportion, each short stage
+  marked `belowMinimum`, the programme carrying `compression` (reason, who,
+  when). Refused without a reason, and refused outright with no working day
+  left. The tender position now carries its latest programme's stages and the
+  board shows them — a programme was previously built and shown nowhere
+  (`tests/tenderintake.test.ts`).
+- **"Issue the pack" needed an AI review.** Correction to the deep-test report:
+  "Attack the pack" already ran its deterministic lenses with no model and
+  recorded that the model did not run. What was missing was a way to *choose*
+  that half: every review went to a cleared provider and charged, and an empty
+  wallet blocked even the free checks. `POST …/bid-responses/:packId/checks`
+  (no `ai` descriptor) runs the same review without the model at no cost —
+  "Check the pack — free, no AI". Verified in the browser: checks, a named
+  decision on each high finding, BID-0001 issued (`tests/redteam.test.ts`).
+- **Tender AI needs `AI_PROVIDER_CLEARANCE`.** Not rebuilt as a console setting:
+  the section *The vendor clearance stays where it was* records that one was
+  built and removed at the owner's instruction, and it stays that way until he
+  confirms otherwise. Fixed within that decision: the refusal now names each
+  configured vendor and its clearance, gives the exact line to set, says a
+  restart reads it and that nothing was sent or charged, and names the free
+  routes; the cost box shows the vendor's clearance beside what the request
+  carries (`tests/sensitivityrouting.test.ts`). **Still open:** the quote cannot
+  predict a clearance refusal, because the sensitivity of a run comes from the
+  records the engine attaches at execution, which the quote route does not see.
+
+Found while verifying, and fixed: **"Show all tenders" did nothing.** It cleared
+the project and the redraw's context load picked the first project again, so a
+second tender on the board could never be acted on. A deliberate close is now
+remembered (`projectClosed`) and cleared when a project is chosen.

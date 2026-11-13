@@ -839,7 +839,7 @@ describe('typing a document from its ISO 19650 reference', () => {
         'The tender response deadline is 20 November 2026. Evaluation criteria: Quality 60%, Social Value 5%, ' +
         'Price 35%. Drawings R4780-010 rev P02 at scale 1:50 are provided for information.',
     });
-    assert.equal(itt.kind, 'CORRESPONDENCE', `an ITT was typed ${itt.kind} (${itt.signals.join('; ')})`);
+    assert.equal(itt.kind, 'INVITATION', `an ITT was typed ${itt.kind} (${itt.signals.join('; ')})`);
     // And it identifies even without the "ITT" in the filename, off the text alone.
     const byText = classify({
       actualType: docx,
@@ -847,7 +847,33 @@ describe('typing a document from its ISO 19650 reference', () => {
       text: 'Instructions to tenderers. The closing date for submissions is noon. Award criteria are set out below. ' +
         'Section drawings at scale 1:100 with revision markers are attached.',
     });
-    assert.equal(byText.kind, 'CORRESPONDENCE', `an ITT by text was typed ${byText.kind} (${byText.signals.join('; ')})`);
+    assert.equal(byText.kind, 'INVITATION', `an ITT by text was typed ${byText.kind} (${byText.signals.join('; ')})`);
+  });
+
+  it('types a real tender pack as the bidder would: invitation, questionnaire, drawings, reports', () => {
+    // The Conwy ERCF2509N 05 pack, by its own filenames and the phrases its
+    // text carries. Three of five were wrong: the ITT typed "correspondence",
+    // the drawings volume "unknown", the questionnaire holding Q1–Q7 typed
+    // "specification", and both reports "unknown" or "specification".
+    const pdf = 'application/pdf';
+    const docx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    const kind = (filename: string, text: string, actualType = pdf) => classify({ filename, actualType, text }).kind;
+    assert.equal(kind('ERCF2509N 05 Volume 3 - Drawings.pdf', 'Volume 3 - Drawings. Issue and Revision Record. Version V1.'), 'DRAWING');
+    assert.equal(
+      kind(
+        'ERCF2509N 05 Volume 2 - CDQQ.docx',
+        'Volume 2 Contract Data & Quality Questionnaire. The Contractor shall be responsible for workmanship. ' +
+          'Companies shall refer to Volume 1 - Instructions to Tenderers. No more than 1000 words are required per answer.',
+        docx,
+      ),
+      'INVITATION',
+    );
+    assert.equal(kind('Appendix B - E1155.GGI.R1 GGI Report.pdf', 'GEOTECHNICAL GROUND INVESTIGATION REPORT. Borehole record.'), 'REPORT');
+    assert.equal(kind('ERCF2509N 05 Volume 4 - PCI.pdf', 'Volume 4 - Pre-Construction Information. Works shall be carried out.'), 'REPORT');
+    // A phrase past the old 32KB cut still counts.
+    const long = `${'Specification clause. '.repeat(2_000)}Instructions to Tenderers. No more than 1,000 words per answer.`;
+    assert.ok(long.length > 32 * 1024);
+    assert.equal(kind('Volume 2.docx', long, docx), 'INVITATION');
   });
 
   it('still types a real drawing as a drawing, not an invitation', () => {

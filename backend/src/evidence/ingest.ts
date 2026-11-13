@@ -348,6 +348,13 @@ export const DOCUMENT_KIND = [
   'MODEL',
   'SCHEDULE',
   'CORRESPONDENCE',
+  /**
+   * The invitation to tender and the documents that state what the buyer
+   * scores — instructions to tenderers, a quality questionnaire. Its own kind
+   * because it was filed as CORRESPONDENCE for want of one, and the file table
+   * then told a bidder their ITT was "correspondence".
+   */
+  'INVITATION',
   'UNKNOWN',
 ] as const;
 export type DocumentKind = (typeof DOCUMENT_KIND)[number];
@@ -434,13 +441,25 @@ const KIND_SIGNALS: ReadonlyArray<{
     name: /[-_](RP|RI|SU)[-_]/,
   },
   {
+    kind: 'REPORT',
+    says: 'the filename says report, survey or investigation',
+    name: /(^|[-_\s.])(report|survey|investigation|pci)([-_\s.]|$)/i,
+  },
+  {
+    kind: 'REPORT',
+    says: 'the text is a site or ground investigation, a survey, or the pre-construction information',
+    content: /\b(ground investigation|site investigation|borehole|trial pits?|geotechnical|pre-construction information|condition survey|topographical survey)\b/i,
+  },
+  {
     kind: 'DRAWING',
     says: 'the filename is a drawing reference',
     // The boundary includes a space. Construction filenames are full of them —
     // "Wall Foundation Detail.pdf" has a space before the word that types it,
     // so requiring a dash or an underscore missed exactly the files this rule
     // was written for.
-    name: /(^|[-_\s])(dwg|drg|drawing|ga|plan|layout|section|elevation|detail)([-_\s]|\.|$)/i,
+    // Plurals too: a tender pack's drawing volume is "Volume 3 - Drawings.pdf",
+    // which the singular-only pattern read as nothing at all.
+    name: /(^|[-_\s])(dwgs?|drgs?|drawings?|ga|plans?|layouts?|sections?|elevations?|details?)([-_\s]|\.|$)/i,
   },
   {
     kind: 'CALCULATION',
@@ -540,30 +559,39 @@ const KIND_SIGNALS: ReadonlyArray<{
    *
    * Four specific signals, so a genuine ITT fires several and comfortably
    * out-scores the one stray drawing marker, while a real drawing (which carries
-   * none of these phrases) is untouched. Mapped to CORRESPONDENCE — the kind
-   * this set already treats as the invitation (the ISO 19650 `LT` letter above)
-   * and which is not in CANNOT_BE_AN_INVITATION, so the file is read as an
-   * invitation rather than measured.
+   * none of these phrases) is untouched. Mapped to INVITATION, which is not in
+   * CANNOT_BE_AN_INVITATION, so the file is read as an invitation rather than
+   * measured.
    */
   {
-    kind: 'CORRESPONDENCE',
+    kind: 'INVITATION',
     says: 'the filename names an invitation to tender',
     name: /(^|[-_\s])(itt|invitation[-_\s]?to[-_\s]?tender|tender[-_\s]?invitation)([-_\s]|\.|$)/i,
   },
   {
-    kind: 'CORRESPONDENCE',
+    kind: 'INVITATION',
     says: 'the text is an invitation to tender — the invitation, instructions to tenderers',
     content: /\b(invitation to tender|instructions? to tenderers?)\b/i,
   },
   {
-    kind: 'CORRESPONDENCE',
+    kind: 'INVITATION',
     says: 'the text sets a tender return — a submission deadline or closing date',
     content: /\b(return (?:your )?(?:tender|submission|response) by|tender (?:response )?deadline|closing date for (?:tenders|submissions)|deadline for (?:tender )?(?:returns|submissions))\b/i,
   },
   {
-    kind: 'CORRESPONDENCE',
+    kind: 'INVITATION',
     says: 'the text states how the tender is evaluated — award or evaluation criteria',
     content: /\b(evaluation (?:criteria|methodology)|award criteria|quality questionnaire|most economically advantageous)\b/i,
+  },
+  {
+    // Conwy's Volume 2 — "Contract Data & Quality Questionnaire", holding Q1 to
+    // Q7 — tied one signal each with "specification" and lost the tie, so the
+    // document the bid is scored on was offered as "this is a specification".
+    // A stated word limit per answer is what a scored questionnaire says and a
+    // specification does not.
+    kind: 'INVITATION',
+    says: 'the text sets a word limit for answers — a scored questionnaire',
+    content: /\b(?:no more than|maximum (?:of )?|not (?:to )?exceed(?:ing)?|up to)\s*[\d,]+\s*words\b|\bword (?:limit|count) of\b/i,
   },
 ];
 
@@ -587,7 +615,9 @@ export function classify(input: {
   };
 
   const name = input.filename ?? '';
-  const text = (input.text ?? '').slice(0, 32 * 1024);
+  // 128KB rather than 32: Conwy's questionnaire names its "Instructions to
+  // Tenderers" at 39KB, past the old cut. A regex over 128KB is microseconds.
+  const text = (input.text ?? '').slice(0, 128 * 1024);
 
   for (const rule of KIND_SIGNALS) {
     if (rule.types && input.actualType && rule.types.includes(input.actualType)) note(rule.kind, rule.says);

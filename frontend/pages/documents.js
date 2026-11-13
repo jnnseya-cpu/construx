@@ -1007,7 +1007,10 @@ async function issuerPanels(host) {
     if (doc.status === 'ISSUED') return html`${read} ${act('download', 'Download')} ${act('supersede', 'Supersede')}`;
     const pending = (lifecycle.issuances ?? []).find((issuance) => issuance.documentId === doc.id && issuance.status === 'PENDING');
     if (pending) return html`${read} ${act('issue', `Retry ${pending.number}`, '')} <button class="btn quiet sm" data-issuance-void="${pending.id}" data-number="${pending.number}">Void number</button>`;
-    if (doc.status === 'DRAFT') return html`${read} ${act('generate', doc.revision === 0 ? 'Generate' : 'Regenerate')}`;
+    // "Generate a revision" — the name the guide strip, the dialog and its toast
+    // all use. The button alone said "Generate", so the guide named a button
+    // that was not on the screen.
+    if (doc.status === 'DRAFT') return html`${read} ${act('generate', doc.revision === 0 ? 'Generate a revision' : 'Regenerate')}`;
     if (doc.status === 'GENERATED') return html`${read} ${act('generate', 'Regenerate')} ${act('submit', 'Submit')} ${act('approve', 'Approve')} ${act('issue', 'Issue', '')}`;
     if (doc.status === 'AWAITING_APPROVAL') return html`${read} ${act('approve', 'Approve', '')} ${act('reject', 'Send back')}`;
     if (doc.status === 'APPROVED') return html`${read} ${act('issue', 'Issue', '')} ${act('reject', 'Send back')} ${act('generate', 'Regenerate')}`;
