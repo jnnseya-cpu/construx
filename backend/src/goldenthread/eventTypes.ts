@@ -807,6 +807,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // either.
   def('BID_RESPONSE_PLANNED', 'BidResponsePack', 'CREATE', 'PROCUREMENT'),
   def('BID_RESPONSE_SECTION_WRITTEN', 'BidResponsePack', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  // The sections planned again — from the scored questions, or a newer reading
+  // of the tender. Decides what the business answers, so a person's act only.
+  def('BID_RESPONSE_REPLANNED', 'BidResponsePack', 'UPDATE', 'PROCUREMENT'),
   // The quality floor a pack's issue is held to. A human setting on the pack,
   // never an agent's: lowering the bar the submission is judged against is a
   // commercial decision, so `aiAllowed` stays false by the catalogue's default.

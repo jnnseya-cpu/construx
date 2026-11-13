@@ -1947,6 +1947,8 @@ export async function pipeline(root) {
                     commandBar([
                       { id: 'bid-plan', label: 'Plan a response pack', tone: '',
                         permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
+                      { id: 'bid-replan', label: 'Re-plan from the scored questions',
+                        permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
                       { id: 'bid-section', label: 'Write the next section',
                         permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
                       { id: 'bid-issue', label: 'Issue the pack',
@@ -1955,6 +1957,29 @@ export async function pipeline(root) {
                   )}
                 </div>
                 <p class="metric-sub">${(bidPacks.summary ?? '')}</p>
+                ${(() => {
+                  // A pack planned from every written requirement, not from the
+                  // questions the buyer marks. Shown so a pack of ninety-six
+                  // sections against a seven-question tender is caught before
+                  // it is paid for, not after.
+                  const unscored = (bidPacks.packs ?? []).filter(
+                    (pack) => pack.status !== 'ISSUED' && pack.basis !== 'SCORED_QUESTIONS',
+                  );
+                  if (unscored.length === 0) return '';
+                  return html`<div class="notice info" style="margin-top:11px"><div>
+                    <b>${unscored
+                      .map((pack) => {
+                        const total = pack.completeness?.total ?? 0;
+                        return `${pack.reference} (${total} section${total === 1 ? '' : 's'})`;
+                      })
+                      .join(', ')}
+                    ${unscored.length === 1 ? 'answers' : 'answer'} every written requirement, not only the scored questions.</b>
+                    That is right where the buyer marks no questionnaire. Where it does — “Quality Questionnaire”,
+                    “Q1 (30%)”, a word limit per answer — the evaluator marks only those answers. Read the questionnaire
+                    above and confirm the reading, then use <i>Re-plan from the scored questions</i> with the tender’s
+                    current matrix.
+                  </div></div>`;
+                })()}
                 ${table({
                   headers: ['Pack', 'Client', 'Return by', 'Written', 'Outstanding', 'Passes', 'State'],
                   rows: (bidPacks.packs ?? []).map((pack) => [
@@ -3018,6 +3043,27 @@ export async function pipeline(root) {
               'matrix and no response pack — price it on Tender & Procurement and send the quotation.',
         },
       ],
+    },
+    'bid-replan': {
+      title: 'Re-plan a pack from the scored questions',
+      intent:
+        'Plans the pack’s sections again under the current rule: where the buyer marks a questionnaire, the pack ' +
+        'answers those questions and nothing else, and the scope, hazards and drawing notes stay on the compliance ' +
+        'matrix as obligations the drafter writes from. Choose the tender’s current matrix — if you have since read ' +
+        'its questionnaire, that is the newer one. A section whose question is still asked word for word keeps what ' +
+        'was written; the dropped sections stay on the record. Nothing is charged.',
+      path: (v) => `/v1/projects/${projectId}/bid-responses/${v.packId}/replan`,
+      submitLabel: 'Re-plan',
+      fields: [
+        { name: 'packId', label: 'Pack', type: 'select',
+          options: (bidPacks?.packs ?? [])
+            .filter((pack) => pack.status !== 'ISSUED')
+            .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.total ?? 0} section(s)` })),
+          emptyHint: 'Only a pack that has not been issued can be re-planned. Issuing is final.' },
+        { name: 'analysisId', label: 'Compliance matrix', type: 'select',
+          options: shownAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
+      ],
+      transform: ({ packId: _packId, analysisId }) => ({ analysisId }),
     },
     'bid-section': {
       title: 'Write the next section',

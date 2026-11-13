@@ -113,6 +113,16 @@ export type BidDeadline = {
   on?: string;
 };
 
+/**
+ * What the pack's sections were planned from.
+ *
+ * `SCORED_QUESTIONS`: the buyer marks a questionnaire, so the pack answers those
+ * questions and nothing else. `WRITTEN_REQUIREMENTS`: no question carries a mark,
+ * so every requirement needing a written answer is one. Absent on a pack planned
+ * before the distinction existed, which planned the second way.
+ */
+export type PlanBasis = 'SCORED_QUESTIONS' | 'WRITTEN_REQUIREMENTS';
+
 export type BidResponsePack = {
   id: string;
   reference: string;
@@ -120,6 +130,10 @@ export type BidResponsePack = {
   analysisId: string;
   clientName: string;
   returnBy: string;
+  basis?: PlanBasis;
+  /** Set when the sections were planned again from a matrix; the earlier plan stays on the ledger. */
+  replannedAt?: string;
+  replannedBy?: string;
   sections: BidSection[];
   deadlines: BidDeadline[];
   status: 'DRAFTING' | 'ISSUED';
@@ -269,6 +283,103 @@ export function isDrawingNote(requirement: string): boolean {
   return DRAWING_NOTE.test(requirement.replace(/\\[nrt]/g, ' ').trim());
 }
 
+/**
+ * A line that states how the bid is marked rather than asking anything.
+ *
+ * "Selection will be on the basis of 30% quality and 70% price", "the lowest
+ * bid will score the maximum points". A reading can carry the split's
+ * percentage as the line's weighting, which made the marking scheme itself a
+ * "scored question" with an essay planned against it. Narrow on purpose: both a
+ * quality and a price percentage in one sentence, or the lowest price scoring
+ * the maximum.
+ */
+const EVALUATION_METHOD =
+  /(?=[\s\S]*\d+\s*%\s*(?:for\s+)?quality\b)(?=[\s\S]*\d+\s*%\s*(?:for\s+)?(?:price|cost)\b)|\blowest (?:bid|price|tender|cost)\b[\s\S]{0,40}\b(?:score|receive|awarded)/i;
+
+export function isEvaluationMethod(requirement: string): boolean {
+  return EVALUATION_METHOD.test(requirement.replace(/\\[nrt]/g, ' '));
+}
+
+/** A question the buyer marks from the written answer. */
+function isScoredQuestion(line: MatrixLine): boolean {
+  return (line.weightingPercent ?? 0) > 0 && needsProse(line);
+}
+
+/**
+ * Which matrix lines the pack answers, and on what basis.
+ *
+ * The Conwy fault, stated so it is not repeated: the buyer scored seven
+ * questions, 1,000 words each, and the pack planned ninety-six sections — one
+ * per scope clause, hazard line, evaluation rule and drawing note — because the
+ * rule was "every requirement in a narrative category". Sixty-nine pages of
+ * answers the evaluator never marks, paid for a section at a time, with the
+ * seven that are marked lost among them.
+ *
+ * So where the matrix holds any scored question, the pack is those questions —
+ * plus any line the buyer gave a word or page limit, which is a written answer
+ * however it is weighted. Everything else stays on the compliance matrix as an
+ * obligation to meet, and is handed to the drafter as `context` so the answers
+ * are about this job rather than generic. Only where no question carries a mark
+ * does every requirement needing prose become a section, as before.
+ *
+ * Neither basis drafts a note printed on a drawing, or a statement of how the
+ * bid is marked: neither is a question.
+ */
+export function planScope(
+  matrix: readonly MatrixLine[],
+  waived: ReadonlySet<string> = new Set(),
+): { lines: MatrixLine[]; basis: PlanBasis; context: MatrixLine[] } {
+  const candidates = matrix.filter(
+    (line) => !waived.has(line.reference) && !isDrawingNote(line.requirement) && !isEvaluationMethod(line.requirement),
+  );
+  const scored = candidates.filter(isScoredQuestion);
+  if (scored.length === 0) {
+    return { lines: candidates.filter(needsProse), basis: 'WRITTEN_REQUIREMENTS', context: [] };
+  }
+  const lines = candidates.filter(
+    (line) => needsProse(line) && (isScoredQuestion(line) || line.responseLimit?.words !== undefined || line.responseLimit?.pages !== undefined),
+  );
+  const answered = new Set(lines.map((line) => line.reference));
+  const context = candidates.filter(
+    (line) => !answered.has(line.reference) && NARRATIVE_CATEGORIES.has(line.category),
+  );
+  return { lines, basis: 'SCORED_QUESTIONS', context };
+}
+
+/**
+ * The tender's other requirements, as the drafter reads them on a scored pack.
+ * Bounded so a large scope cannot make every pass expensive: the first sixty,
+ * each cut to 280 characters, is the job's constraints without the full text.
+ */
+function contextFor(lines: readonly MatrixLine[]): string[] {
+  return lines.slice(0, 60).map((line) => {
+    const text = line.requirement.replace(/\\[nrt]/g, ' ').replace(/\s+/g, ' ').trim();
+    return `${line.reference}: ${text.length > 280 ? `${text.slice(0, 277)}…` : text}`;
+  });
+}
+
+function sectionFor(line: MatrixLine): BidSection {
+  return {
+    key: line.reference,
+    title: titleFor(line),
+    deliverable: line.requirement,
+    owner: String(line.owner),
+    mandatory: line.mandatory,
+    status: 'PLANNED',
+    ...(line.responseLimit ? { limit: line.responseLimit } : {}),
+  };
+}
+
+/** The dated schedule: every date the matrix states, and the return date always. */
+function deadlinesFor(analysis: StoredITTAnalysis): BidDeadline[] {
+  return [
+    ...analysis.matrix
+      .filter((line) => line.dueBy !== undefined)
+      .map((line) => ({ what: `${line.reference} — ${titleFor(line)}`, on: line.dueBy })),
+    { what: 'Return of the completed submission', on: analysis.returnBy },
+  ];
+}
+
 /** What the review needs to know beyond the pack: who the firm is, and the contract. */
 export type SubmissionReviewContext = { singleOwner?: boolean; people?: string[]; contractForm?: string };
 
@@ -354,17 +465,8 @@ export function planBidResponse(
   // sees what was left out on purpose rather than a checklist that quietly got
   // shorter.
   const waived = new Set(liveWaivers(ctx, input.analysisId).map((waiver) => waiver.reference));
-  const sections: BidSection[] = analysis.matrix
-    .filter((line) => needsProse(line) && !waived.has(line.reference))
-    .map((line) => ({
-      key: line.reference,
-      title: titleFor(line),
-      deliverable: line.requirement,
-      owner: String(line.owner),
-      mandatory: line.mandatory,
-      status: 'PLANNED' as const,
-      ...(line.responseLimit ? { limit: line.responseLimit } : {}),
-    }));
+  const scope = planScope(analysis.matrix, waived);
+  const sections: BidSection[] = scope.lines.map(sectionFor);
 
   if (sections.length === 0) {
     throw new DomainError(
@@ -382,12 +484,7 @@ export function planBidResponse(
   // The dated schedule. Each line's own date where the ITT stated one, and the
   // return date always, because a submission with no return date on its face is
   // the one that goes in the day after.
-  const deadlines: BidDeadline[] = [
-    ...analysis.matrix
-      .filter((line) => line.dueBy !== undefined)
-      .map((line) => ({ what: `${line.reference} — ${titleFor(line)}`, on: line.dueBy })),
-    { what: 'Return of the completed submission', on: analysis.returnBy },
-  ];
+  const deadlines = deadlinesFor(analysis);
 
   const sequence = ctx.ledger.list(ctx.projectId, 'BidResponsePack').length + 1;
   const pack: BidResponsePack = {
@@ -397,6 +494,7 @@ export function planBidResponse(
     analysisId: analysis.analysisId,
     clientName: analysis.clientName,
     returnBy: analysis.returnBy,
+    basis: scope.basis,
     sections,
     deadlines,
     status: 'DRAFTING',
@@ -413,6 +511,111 @@ export function planBidResponse(
   });
 
   return { pack, toWrite: sections.length };
+}
+
+/**
+ * Plan a drafting pack's sections again, from its matrix or the tender's newer one.
+ *
+ * The way out for a pack planned under the old rule — ninety-six sections where
+ * the buyer marks seven — and for a pack whose tender has since had its
+ * questionnaire read. Same rule as planning (`planScope`), so a re-plan and a
+ * fresh plan cannot disagree.
+ *
+ * Nothing written is thrown away twice over: a section whose requirement is
+ * still planned, word for word, keeps its prose, its authorship and its status;
+ * a section dropped from the plan stays on the ledger in the pack's earlier
+ * state, so the record of what was written remains. Refused on an issued pack,
+ * and refused where another pack already answers the target matrix — two packs
+ * answering one tender is two submissions.
+ */
+export function replanBidResponse(
+  ctx: EngineContext,
+  input: { packId: string; analysisId?: string },
+): { pack: BidResponsePack; kept: number; added: number; dropped: string[]; toWrite: number } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const pack = requirePack(ctx, input.packId);
+  if (pack.status === 'ISSUED') {
+    throw new DomainError(
+      'BID_RESPONSE_ISSUED',
+      `${pack.reference} has been issued. What was sent must stay what was sent — plan a new pack for a new submission.`,
+      409,
+    );
+  }
+  const analysisId = input.analysisId ?? pack.analysisId;
+  const analysis = complianceMatrix(ctx, analysisId);
+  if (analysisId !== pack.analysisId) {
+    const other = ctx.ledger
+      .list(ctx.projectId, 'BidResponsePack')
+      .map((row) => row.state as unknown as BidResponsePack)
+      .find((entry) => entry.id !== pack.id && entry.analysisId === analysisId);
+    if (other) {
+      throw new DomainError(
+        'BID_RESPONSE_EXISTS',
+        `${other.reference} already answers ${analysis.reference}. Re-plan that pack instead — two packs answering one ` +
+          'tender is two submissions.',
+        409,
+      );
+    }
+  }
+
+  const waived = new Set(liveWaivers(ctx, analysisId).map((waiver) => waiver.reference));
+  const scope = planScope(analysis.matrix, waived);
+  if (scope.lines.length === 0) {
+    throw new DomainError(
+      'NOTHING_TO_WRITE',
+      `Nothing on ${analysis.reference} needs a written answer — every requirement is evidenced from records, waived, ` +
+        `a drawing note or the marking scheme. ${pack.reference} is left as it was.`,
+      422,
+    );
+  }
+
+  const previous = new Map(pack.sections.map((section) => [section.key, section]));
+  let kept = 0;
+  const sections = scope.lines.map((line) => {
+    const fresh = sectionFor(line);
+    const before = previous.get(line.reference);
+    if (before && before.deliverable === line.requirement && (before.body ?? []).length > 0) {
+      kept += 1;
+      // The prose stays; the line's current owner, flag and limit replace the old.
+      const carried: BidSection = { ...before, title: fresh.title, owner: fresh.owner, mandatory: fresh.mandatory };
+      delete carried.limit;
+      if (fresh.limit) carried.limit = fresh.limit;
+      return carried;
+    }
+    return fresh;
+  });
+  const planned = new Set(sections.map((section) => section.key));
+  const dropped = pack.sections.filter((section) => !planned.has(section.key)).map((section) => section.key);
+
+  const next: BidResponsePack = {
+    ...pack,
+    analysisId,
+    clientName: analysis.clientName,
+    returnBy: analysis.returnBy,
+    basis: scope.basis,
+    sections,
+    deadlines: deadlinesFor(analysis),
+    replannedAt: new Date().toISOString(),
+    replannedBy: ctx.auth.actorId,
+  };
+
+  write(ctx, {
+    eventType: 'BID_RESPONSE_REPLANNED',
+    entity: { refType: 'BidResponsePack', refId: pack.id },
+    nextState: next as unknown as Record<string, unknown>,
+    reason:
+      `Re-planned from ${analysis.reference} on ${scope.basis === 'SCORED_QUESTIONS' ? 'its scored questions' : 'its written requirements'}: ` +
+      `${sections.length} section(s), ${kept} kept with their prose, ${dropped.length} dropped`,
+  });
+
+  return {
+    pack: next,
+    kept,
+    added: sections.length - kept,
+    dropped,
+    toWrite: sections.filter((section) => section.status === 'PLANNED').length,
+  };
 }
 
 function requirePack(ctx: EngineContext, packId: string): BidResponsePack {
@@ -538,6 +741,15 @@ async function draftSection(
 ): Promise<{ pack: BidResponsePack; written: BidSection | null; acuConsumed: number }> {
   const analysis = complianceMatrix(ctx, pack.analysisId);
   const line = analysis.matrix.find((entry) => entry.reference === next.key);
+  // On a scored pack the rest of the tender — scope, hazards, constraints — is
+  // not answered section by section, so the drafter is given it to make each
+  // scored answer about this job. Marked down as generic is the alternative.
+  const tenderContext =
+    pack.basis === 'SCORED_QUESTIONS'
+      ? contextFor(
+          planScope(analysis.matrix, new Set(liveWaivers(ctx, pack.analysisId).map((waiver) => waiver.reference))).context,
+        )
+      : [];
 
   const result = await runAI(ctx, {
     engine: 'TENDER',
@@ -562,6 +774,14 @@ async function draftSection(
         // for a one-person firm — a claim about staff an evaluator can test at
         // interview, made from nothing but the routing label below.
         firm: firmFacts(ctx),
+        ...(tenderContext.length > 0
+          ? {
+              tenderContext,
+              tenderContextUse:
+                'The buyer’s other requirements for these works. They are not questions to answer one by one; use ' +
+                'the ones this question touches so the answer is specific to this site and job.',
+            }
+          : {}),
         // Given to the writer rather than only checked afterwards. A pass that
         // produces 1,400 words against a 1,000-word limit is a pass somebody
         // pays for and then has to cut by hand, and the cut is where the
@@ -1311,6 +1531,7 @@ export type BidResponsePosition = {
       BidResponsePack,
       'id' | 'reference' | 'analysisId' | 'clientName' | 'returnBy' | 'status' | 'passes' | 'qualityFloorPercent'
     > & {
+      basis: PlanBasis;
       completeness: BidCompleteness;
     }
   >;
@@ -1334,6 +1555,7 @@ export function bidResponsePosition(ctx: EngineContext): BidResponsePosition {
       status: pack.status,
       passes: pack.passes,
       qualityFloorPercent: pack.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR_PERCENT,
+      basis: pack.basis ?? 'WRITTEN_REQUIREMENTS',
       completeness: bidCompleteness(
       pack,
       liveWaivers(ctx, pack.analysisId),

@@ -33939,3 +33939,61 @@ Found and **not** changed (unrelated, recorded per rule 11):
   hand-built programmes are still affected).
 - `pipeline.js` uses a badge tone `good` that the design system does not define
   ("issued · read-only" renders unstyled).
+
+## 2026-11 a bid pack answers the questions the buyer scores, not every line of the tender
+
+The Conwy pack (BID-0001, ERCF2509N 05) planned **96 sections / 69 pages** — scope
+clauses, PCI hazard lines, the marking scheme and eight drawing notes — while the
+Council scores seven questions (Volume 2 Appendix 1, Q1–Q7, ≤1,000 words each).
+The cause was the planning rule, "every requirement in a narrative category needs
+prose" (`needsProse`), applied whether or not the tender has a scored
+questionnaire. The reading was the second cause: it was told to list "every
+requirement", carried the quality/price split as a weighting, and captured only Q7
+of the seven questions. Every section was drafted, and charged, a pass at a time.
+
+Now (`domain/bidresponse.ts`):
+
+- **`planScope(matrix, waived)`** decides what a pack answers. Where any line is a
+  scored question (weighting > 0 and needing prose), the pack is those questions
+  plus any line the buyer gave a word or page limit — basis `SCORED_QUESTIONS`.
+  Only where nothing is scored does every prose requirement become a section —
+  `WRITTEN_REQUIREMENTS`, as before. Neither basis plans a drawing note
+  (`isDrawingNote`) or a statement of the marking scheme (`isEvaluationMethod`:
+  a quality % and a price % in one line, or "the lowest bid will score…").
+- **The rest of the tender is not lost.** On a scored pack, the unanswered
+  narrative lines (scope, hazards, constraints) are passed to the drafter as
+  `tenderContext` (first 60, 280 characters each) so each scored answer is
+  specific to the job rather than generic.
+- **Re-plan** (`replanBidResponse`, `POST …/bid-responses/:packId/replan`,
+  optional `analysisId`, no AI, no charge; event `BID_RESPONSE_REPLANNED`, human
+  only): plans a drafting pack's sections again under the same rule, against its
+  own matrix or the tender's newer one (after the questionnaire is read). A
+  section whose requirement is still planned word for word keeps its prose and
+  authorship; dropped sections stay on the ledger in the pack's earlier state.
+  Refused on an issued pack, and onto a matrix another pack already answers.
+- The pack records `basis`, `replannedAt`, `replannedBy`; the position reports
+  `basis` (absent on old packs reads `WRITTEN_REQUIREMENTS`).
+- **Reading** (`engines/perception.ts`, ITT prompt): each scored question is listed
+  as its own requirement — numbered reference, full text, its own weighting, its
+  word/page limit; the quality/price split and scoring rules carry no weighting;
+  notes printed on drawings are left out.
+- **Screen** (Pipeline & Bids): "Re-plan from the scored questions" command; an
+  info notice on any drafting pack planned from every written requirement.
+
+For BID-0001 the way through is: read Volume 2 (the questionnaire) onto the
+tender, confirm the reading, then re-plan BID-0001 onto the tender's current
+matrix.
+
+Verified: bidresponse.test.ts — scored tender plans Q1/Q3 only with the
+1,000-word limit carried, never the marking scheme or a drawing note; the drafter
+receives the tender context (scope lines in, drawing notes and marking scheme
+out); the unscored fallback; a re-plan from an old-basis pack onto a re-read
+matrix keeps a person's prose word for word, drops the rest, keeps both events on
+the ledger; re-plan refused onto a matrix another pack answers; the event is not
+agent-authorable; the route exists. Not verified here: a live model reading the
+Conwy questionnaire under the new prompt (no provider in this environment) — the
+reading is confirmed by a person, who sees each question listed.
+
+Not built: detecting that a reading **missed** questions of a questionnaire (e.g.
+Q1–Q6 absent while Q7 is present). The matrix shows what was read; a person
+confirms it.

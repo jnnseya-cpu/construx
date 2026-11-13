@@ -728,3 +728,196 @@ describe('the review a one-person firm needs before a bid goes out', () => {
     assert.equal(bidresponse.isDrawingNote('Note 4 — Any anomalies on this drawing should be brought to the attention'), true);
   });
 });
+
+/*
+ * The pack answers what the buyer marks.
+ *
+ * Conwy scored seven questions, 1,000 words each; the pack planned ninety-six
+ * sections — scope clauses, hazard lines, the marking scheme and the notes on
+ * the drawings — and the seven that were marked were lost among them.
+ */
+describe('a tender with a scored questionnaire is answered question by question', () => {
+  const SCOPE: Parameters<typeof itt.analyseITT>[1]['requirements'] = [
+    {
+      reference: '4.1 Pedestrians',
+      category: 'HEALTH_AND_SAFETY',
+      requirement: 'Pedestrian access to be maintained along Waterloo Hill',
+      mandatory: true,
+      evidenceRequired: 'Method',
+    },
+    {
+      reference: 'Scope - Testing',
+      category: 'TECHNICAL',
+      requirement: 'At commencement of site works, 3No suitability tests to 209 kN before production nails',
+      mandatory: true,
+      evidenceRequired: 'Test reports',
+    },
+    {
+      reference: 'Note 1',
+      category: 'TECHNICAL',
+      requirement: '1. All dimensions are in metres unless otherwise stated.',
+      mandatory: false,
+      evidenceRequired: '',
+    },
+    {
+      reference: '2.1 Selection',
+      category: 'QUALITY',
+      requirement: 'The selection of the Contractor will be on the basis of 30% Quality and 70% Price.',
+      mandatory: false,
+      weightingPercent: 30,
+      evidenceRequired: '',
+    },
+    {
+      reference: '2.4 Price',
+      category: 'COMMERCIAL',
+      requirement: 'The lowest bid will score the maximum points of 100.',
+      mandatory: false,
+      weightingPercent: 70,
+      evidenceRequired: '',
+    },
+  ];
+  const QUESTIONS: Parameters<typeof itt.analyseITT>[1]['requirements'] = [
+    {
+      reference: 'Q1',
+      category: 'TECHNICAL',
+      requirement: 'The Contractors proposed approach and methodology for the delivery of the proposed work.',
+      mandatory: true,
+      weightingPercent: 30,
+      evidenceRequired: 'Written answer',
+      responseLimit: { words: 1000, statedAs: 'No more than 1000 words are required per answer' },
+    },
+    {
+      reference: 'Q3',
+      category: 'HEALTH_AND_SAFETY',
+      requirement: 'The Contractor’s proposed approach to managing Health and Safety for the works.',
+      mandatory: true,
+      weightingPercent: 15,
+      evidenceRequired: 'Written answer',
+    },
+  ];
+
+  let own: Platform;
+  let mine: SeedResult;
+  const seen: Array<Record<string, unknown>> = [];
+  const asOwnQS = () => own.context(mine.users.qs!.auth, `${mine.tenantId}-governance`, { source: 'WEB' });
+  const analyse = (reference: string, requirements: typeof SCOPE) =>
+    itt.analyseITT(asOwnQS(), {
+      reference,
+      clientName: 'Conwy County Borough Council',
+      returnBy: '2026-11-19',
+      requirements,
+      terms: { contractForm: 'NEC4 Engineering and Construction Short Contract' },
+    }).analysisId;
+
+  before(async () => {
+    const adapter: AIProviderAdapter = {
+      name: 'OPENAI',
+      capability: 'REASONING',
+      multimodal: false,
+      transmits: false,
+      estimateCostMinor: () => 40,
+      healthy: () => true,
+      async execute(request: ProviderRequest): Promise<ProviderResponse> {
+        seen.push({ ...(request.payload as Record<string, unknown>) });
+        return {
+          provider: 'OPENAI',
+          modelClass: 'test',
+          output: { body: ['We maintain the Waterloo Hill footway behind barriers throughout.'] },
+          rawCostMinor: 40,
+          latencyMs: 5,
+        };
+      },
+    };
+    own = new Platform(new AIOrchestrator({ reasoning: adapter, perception: adapter }));
+    mine = await seedDemoProject(own);
+    own.wallet(mine.tenantId).topUp(1_000_000, 'Drafting top-up');
+  });
+
+  it('plans only the scored questions, and never the marking scheme or a drawing note', () => {
+    const analysisId = analyse('ERCF2509N 05', [...SCOPE, ...QUESTIONS]);
+    const { pack, toWrite } = bidresponse.planBidResponse(asOwnQS(), { analysisId });
+    assert.equal(pack.basis, 'SCORED_QUESTIONS');
+    assert.deepEqual(pack.sections.map((section) => section.key), ['Q1', 'Q3']);
+    assert.equal(toWrite, 2);
+    assert.equal(pack.sections[0]!.limit?.words, 1000, 'the per-answer limit is not carried to the section');
+  });
+
+  it('gives the drafter the rest of the tender, so a scored answer is about this job', async () => {
+    const summary = bidresponse.bidResponsePosition(asOwnQS()).packs.find((p) => p.basis === 'SCORED_QUESTIONS')!;
+    await bidresponse.writeNextSection(asOwnQS(), { packId: summary.id });
+    const context = seen.at(-1)!.tenderContext as string[];
+    assert.ok(Array.isArray(context), 'the drafter is not given the tender’s other requirements');
+    assert.ok(context.some((entry) => /Waterloo Hill/.test(entry)));
+    assert.ok(context.some((entry) => /209 kN/.test(entry)));
+    assert.ok(!context.some((entry) => /dimensions are in metres|lowest bid|30% Quality/.test(entry)));
+  });
+
+  it('plans every written requirement where nothing is scored — less the drawing notes', () => {
+    const scope = bidresponse.planScope(
+      SCOPE.filter((line) => line.weightingPercent === undefined).map((line) => ({
+        ...line,
+        owner: 'OWNER',
+        status: 'UNKNOWN',
+      })),
+    );
+    assert.equal(scope.basis, 'WRITTEN_REQUIREMENTS');
+    assert.deepEqual(scope.lines.map((line) => line.reference), ['4.1 Pedestrians', 'Scope - Testing']);
+    assert.deepEqual(scope.context, []);
+  });
+
+  it('re-plans a pack read the old way onto the questionnaire, keeping prose still asked for', () => {
+    // The Conwy position: a first reading with no scored questions planned every
+    // line, and the questionnaire was read afterwards.
+    const firstReading = analyse('ERCF2509N 05 A', SCOPE.filter((line) => line.weightingPercent === undefined));
+    const old = bidresponse.planBidResponse(asOwnQS(), { analysisId: firstReading }).pack;
+    assert.equal(old.basis, 'WRITTEN_REQUIREMENTS');
+    bidresponse.reviseSection(asOwnQS(), { packId: old.id, key: '4.1 Pedestrians', body: ['Footway kept open.'] });
+
+    const reread = analyse('ERCF2509N 05 A', [
+      // Still a word-limited written answer, and already written word for word.
+      { ...SCOPE[0]!, responseLimit: { words: 300, statedAs: '300 words' } },
+      ...SCOPE.slice(1),
+      ...QUESTIONS,
+    ]);
+    const result = bidresponse.replanBidResponse(asOwnQS(), { packId: old.id, analysisId: reread });
+    assert.equal(result.pack.basis, 'SCORED_QUESTIONS');
+    assert.equal(result.pack.analysisId, reread);
+    assert.deepEqual(result.pack.sections.map((section) => section.key), ['4.1 Pedestrians', 'Q1', 'Q3']);
+    assert.equal(result.kept, 1);
+    assert.deepEqual(result.pack.sections[0]!.body, ['Footway kept open.'], 'written prose was thrown away');
+    assert.equal(result.pack.sections[0]!.authorship, 'HUMAN');
+    assert.equal(result.pack.sections[0]!.limit?.words, 300);
+    assert.deepEqual(result.dropped, ['Scope - Testing']);
+    assert.equal(result.toWrite, 2);
+    assert.ok(result.pack.replannedAt);
+
+    // The earlier plan is still on the ledger, not overwritten out of existence.
+    const history = own.ledger.eventsForEntity({ refType: 'BidResponsePack', refId: old.id });
+    assert.ok(history.some((event) => event.eventType === 'BID_RESPONSE_PLANNED'));
+    assert.ok(history.some((event) => event.eventType === 'BID_RESPONSE_REPLANNED'));
+  });
+
+  it('refuses to re-plan onto a matrix another pack answers, or a pack already issued', () => {
+    const position = bidresponse.bidResponsePosition(asOwnQS()).packs;
+    const scored = position.find((p) => p.analysisId !== position[0]!.analysisId && p.basis === 'SCORED_QUESTIONS')!;
+    const other = position.find((p) => p.id !== scored.id)!;
+    throwsCode(
+      () => bidresponse.replanBidResponse(asOwnQS(), { packId: other.id, analysisId: scored.analysisId }),
+      'BID_RESPONSE_EXISTS',
+    );
+
+    const catalogue = new Map(EVENT_TYPES.map((entry) => [entry.code, entry]));
+    assert.ok(catalogue.has('BID_RESPONSE_REPLANNED'));
+    assert.notEqual(catalogue.get('BID_RESPONSE_REPLANNED')!.aiAllowed, true, 'an agent may not decide what is answered');
+    assert.ok(
+      ROUTES.some((r) => r.method === 'POST' && r.pattern === '/v1/projects/:projectId/bid-responses/:packId/replan'),
+    );
+  });
+
+  it('reads the marking scheme as a rule, not a question', () => {
+    assert.equal(bidresponse.isEvaluationMethod('Selection will be on the basis of 30% Quality and 70% Price'), true);
+    assert.equal(bidresponse.isEvaluationMethod('The lowest bid will score the maximum points'), true);
+    assert.equal(bidresponse.isEvaluationMethod('Q1 (30%) The Contractors proposed approach and methodology'), false);
+    assert.equal(bidresponse.isEvaluationMethod('Describe how you will control cost and price changes'), false);
+  });
+});

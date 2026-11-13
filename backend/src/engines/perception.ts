@@ -494,7 +494,13 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       'evidence demanded, and any date earlier than the return. Where the document states how long the answer ' +
       'may be — a word count, a page count, a number of sides of A4 — report it as `wordLimit` or `pageLimit` ' +
       'with the wording it is stated in, because anything past a stated limit is usually not read at all. ' +
-      'Report no limit where none is stated rather than a conventional one. Separately list every deliverable that must be ' +
+      'Report no limit where none is stated rather than a conventional one. Where the document has a quality ' +
+      'questionnaire or method-statement questions that the evaluator marks, list each question as its own ' +
+      'requirement: its reference as numbered (e.g. "Q1"), the full question text verbatim, its own weighting, and ' +
+      'its word or page limit — these are the answers the bid is scored on, so none may be missed or merged. A ' +
+      'weighting is the marks for that one question, never the overall quality/price split; the split and the ' +
+      'scoring rules are not questions and carry no weighting. Notes printed on drawings (dimensions in metres, ' +
+      'read in conjunction with…) are not requirements; leave them out. Separately list every deliverable that must be ' +
       'returned, with its format, page limit, whether a signature or bond is required, and the channel it goes ' +
       'back through. Report the commercial terms it states — contract form, liquidated damages, bond, ' +
       'retention, payment period, design liability. Quote the document rather than summarising it, and omit ' +

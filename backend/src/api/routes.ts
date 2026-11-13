@@ -5332,6 +5332,22 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/replan',
+    description:
+      'Plan a drafting pack’s sections again — from the questions the buyer scores where the matrix has them — against its own matrix or the tender’s newer one. Written prose is kept wherever its requirement is still planned word for word',
+    schema: {
+      type: 'object',
+      properties: { analysisId: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidresponse.replanBidResponse(projectContext(platform, ctx), {
+        packId: ctx.params.packId as string,
+        ...body<{ analysisId?: string }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/bid-responses/:packId/sections',
     description:
       'Write the next section that has none. Called until nothing remains, so no single call carries a whole submission; a pass that dies leaves its section unwritten and the next call writes exactly that one',
