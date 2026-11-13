@@ -1,4 +1,5 @@
 import { expertBriefing } from '../ai/expertise.ts';
+import { lexicalVector, similarity } from '../evidence/ingest.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, currentPhase, runAI, write, type EngineContext } from '../engines/context.ts';
@@ -82,6 +83,11 @@ export type BidSection = {
   deliverable: string;
   /** The role that owns it, carried from the compliance matrix. */
   owner: string;
+  /**
+   * Other matrix references this section also answers: the same question read
+   * from another document of the tender (see `foldDuplicates`).
+   */
+  alsoAnswers?: string[];
   mandatory: boolean;
   status: BidSectionStatus;
   /**
@@ -331,12 +337,65 @@ function isScoredQuestion(line: MatrixLine): boolean {
  * Neither basis drafts a note printed on a drawing, or a statement of how the
  * bid is marked: neither is a question.
  */
+/**
+ * How alike two requirements' wording must be to be one requirement.
+ *
+ * Measured on the real Conwy pack, not chosen: the same question read from two
+ * documents scored 1.00, the same hazard or note read twice 0.85–1.00, and the
+ * closest two *different* items ("all dimensions…" against "all chainages…")
+ * 0.75. Different scored questions of one questionnaire peaked at 0.64.
+ */
+const SAME_REQUIREMENT = 0.85;
+
+/**
+ * One line per requirement, however many documents stated it.
+ *
+ * A tender states a question in one document and its marks in another — Conwy's
+ * Q1–Q7 and their 1,000-word limit are in Volume 2, the 30/10/15/15/10/10/10
+ * weightings in Volume 1's Table 1 — and each document is read separately and
+ * merged by reference. The two readings give the same question two references,
+ * one carrying the weighting and the other the limit, and the pack planned it
+ * twice. Folded here by wording (`lexicalVector`, the platform's own
+ * near-duplicate measure): the first line in matrix order keeps its reference,
+ * takes the fuller wording, the highest weighting, the stated limit, the
+ * earliest date and the mandatory flag of any, and names the rest in
+ * `alsoAnswers`.
+ */
+export function foldDuplicates(lines: readonly MatrixLine[]): Array<MatrixLine & { alsoAnswers?: string[] }> {
+  const wording = (line: MatrixLine): string => line.requirement.replace(/\\[nrt]/g, ' ').replace(/\s+/g, ' ').trim();
+  const kept: Array<{ line: MatrixLine & { alsoAnswers?: string[] }; vector: number[] }> = [];
+  for (const line of lines) {
+    const vector = lexicalVector(wording(line));
+    const same = kept.find((entry) => similarity(entry.vector, vector) >= SAME_REQUIREMENT);
+    if (!same) {
+      kept.push({ line: { ...line }, vector });
+      continue;
+    }
+    const into = same.line;
+    const weights = [into.weightingPercent, line.weightingPercent].filter((w): w is number => w !== undefined);
+    const dates = [into.dueBy, line.dueBy].filter((d): d is string => d !== undefined).sort();
+    same.line = {
+      ...into,
+      requirement: wording(line).length > wording(into).length ? line.requirement : into.requirement,
+      mandatory: into.mandatory || line.mandatory,
+      ...(weights.length > 0 ? { weightingPercent: Math.max(...weights) } : {}),
+      ...(into.responseLimit ?? line.responseLimit ? { responseLimit: into.responseLimit ?? line.responseLimit } : {}),
+      ...(dates.length > 0 ? { dueBy: dates[0] } : {}),
+      ...(into.evidenceHeld || line.evidenceHeld ? { evidenceHeld: into.evidenceHeld || line.evidenceHeld } : {}),
+      alsoAnswers: [...(into.alsoAnswers ?? []), line.reference],
+    };
+  }
+  return kept.map((entry) => entry.line);
+}
+
 export function planScope(
   matrix: readonly MatrixLine[],
   waived: ReadonlySet<string> = new Set(),
-): { lines: MatrixLine[]; basis: PlanBasis; context: MatrixLine[] } {
-  const candidates = matrix.filter(
-    (line) => !waived.has(line.reference) && !isDrawingNote(line.requirement) && !isEvaluationMethod(line.requirement),
+): { lines: Array<MatrixLine & { alsoAnswers?: string[] }>; basis: PlanBasis; context: MatrixLine[] } {
+  const candidates = foldDuplicates(
+    matrix.filter(
+      (line) => !waived.has(line.reference) && !isDrawingNote(line.requirement) && !isEvaluationMethod(line.requirement),
+    ),
   );
   const scored = candidates.filter(isScoredQuestion);
   if (scored.length === 0) {
@@ -364,7 +423,7 @@ function contextFor(lines: readonly MatrixLine[]): string[] {
   });
 }
 
-function sectionFor(line: MatrixLine): BidSection {
+function sectionFor(line: MatrixLine & { alsoAnswers?: string[] }): BidSection {
   return {
     key: line.reference,
     title: titleFor(line),
@@ -373,6 +432,7 @@ function sectionFor(line: MatrixLine): BidSection {
     mandatory: line.mandatory,
     status: 'PLANNED',
     ...(line.responseLimit ? { limit: line.responseLimit } : {}),
+    ...(line.alsoAnswers?.length ? { alsoAnswers: line.alsoAnswers } : {}),
   };
 }
 
@@ -587,6 +647,8 @@ export function replanBidResponse(
       const carried: BidSection = { ...before, title: fresh.title, owner: fresh.owner, mandatory: fresh.mandatory };
       delete carried.limit;
       if (fresh.limit) carried.limit = fresh.limit;
+      delete carried.alsoAnswers;
+      if (fresh.alsoAnswers) carried.alsoAnswers = fresh.alsoAnswers;
       return carried;
     }
     return fresh;
@@ -1231,12 +1293,15 @@ export function bidCompleteness(
   const materialBy = new Map(impacts.filter((impact) => impact.material).map((impact) => [impact.reference, impact]));
   const staleSections = pack.sections
     .filter((section) => section.status === 'DRAFTED' && (section.body ?? []).length > 0)
-    .filter((section) => materialBy.has(section.key))
-    .map((section) => ({
+    // A section answering the same question from two documents is stale when
+    // an addendum changes either of them.
+    .map((section) => ({ section, impact: [section.key, ...(section.alsoAnswers ?? [])].map((ref) => materialBy.get(ref)).find(Boolean) }))
+    .filter((entry) => entry.impact !== undefined)
+    .map(({ section, impact }) => ({
       key: section.key,
       deliverable: section.deliverable,
-      addendum: materialBy.get(section.key)!.addendum,
-      detail: materialBy.get(section.key)!.detail,
+      addendum: impact!.addendum,
+      detail: impact!.detail,
     }));
 
   /*

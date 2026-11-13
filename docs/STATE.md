@@ -34041,3 +34041,28 @@ records what they found.
 **Not run (needs a model, none in this environment):** the reading of the real
 Conwy text into a matrix, the planned pack, the drafted answers and their cost.
 That requires the owner's provider key in this environment.
+
+### Cross-document split — the part provable without a model, fixed
+
+- **`foldDuplicates`** (`domain/bidresponse.ts`, used by `planScope`): requirements
+  whose wording matches (`lexicalVector` cosine ≥ 0.85, the platform's own
+  near-duplicate measure) are one requirement. The first in matrix order keeps
+  its reference, takes the fuller wording, the highest weighting, the stated
+  limit, the earliest date and mandatory-if-any, and lists the others in the
+  section's `alsoAnswers`. The threshold is measured on the real Conwy text: the
+  same question across Volumes 1 and 2 scores 1.00, the same hazard read twice
+  0.85–1.00, the closest two *different* items 0.75, different scored questions
+  ≤ 0.64. An addendum changing any folded reference marks the section stale.
+- **`mergeRequirements`** (`domain/itt.ts`): a later reading wins on what it
+  states and no longer erases a weighting, response limit or date it is silent on.
+
+Verified: the real Conwy wording as two separate readings (Table 1 rows with
+weightings, Q1–Q7 with the 1,000-word limit — fourteen lines) plans **seven**
+sections carrying 30/10/15/15/10/10/10 and 1,000 words each; a hazard read twice
+folds while "all dimensions…" and "all chainages…" stay apart; a folded section
+goes stale on an addendum to its other reference; the merge keeps a weighting a
+later reading omits and takes one it restates. Replaying BID-0001's actual 96
+requirements through the planner now gives 70 sections (drawing notes and the
+11 duplicate pairs gone) — not 7, because that reading never captured Q1–Q6 or
+any weighting. Whether a model now captures them under the corrected reading
+prompt is still **not verified**: no provider key in this environment.

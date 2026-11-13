@@ -1194,6 +1194,18 @@ describe('Merging readings into one matrix per tender', () => {
     assert.equal(merged.find((r) => r.reference === 'A2')!.requirement, 'second, re-read');
   });
 
+  it('keeps a weighting, limit or date a later reading is silent on — and takes one it states', () => {
+    // Conwy: the weighting was in Volume 1, the 1,000-word limit in Volume 2.
+    const prior = [requirement({ reference: 'Q1', weightingPercent: 30, dueBy: '2026-11-16' })];
+    const next = [requirement({ reference: 'Q1', responseLimit: { words: 1000, statedAs: 'No more than 1000 words' } })];
+    const merged = itt.mergeRequirements(prior, next)[0]!;
+    assert.equal(merged.weightingPercent, 30, 'the later reading wiped the weighting');
+    assert.equal(merged.responseLimit?.words, 1000);
+    assert.equal(merged.dueBy, '2026-11-16');
+    const restated = itt.mergeRequirements(prior, [requirement({ reference: 'Q1', weightingPercent: 25 })])[0]!;
+    assert.equal(restated.weightingPercent, 25, 'a weighting the newer reading states must win');
+  });
+
   it('recovers a readings requirements from its stored matrix', () => {
     const matrix = analyse({
       requirements: [requirement({ reference: 'R1', category: 'QUALITY', weightingPercent: 20, responseLimit: { words: 500, statedAs: '500 words' } })],

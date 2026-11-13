@@ -943,3 +943,81 @@ describe('a tender with a scored questionnaire is answered question by question'
     assert.equal(bidresponse.isEvaluationMethod('Describe how you will control cost and price changes'), false);
   });
 });
+
+/*
+ * The same question, read from two documents of one tender.
+ *
+ * Wording copied from the real Conwy documents (ERCF2509N 05): Table 1 of
+ * Volume 1 carries the weightings, Volume 2 Appendix 1 carries Q1–Q7 and the
+ * 1,000-word limit. Read separately, they arrive as fourteen lines under
+ * fourteen references. The pack must answer seven questions, each with its
+ * weighting and its limit.
+ */
+describe('one question stated in two documents is answered once', () => {
+  const TABLE_1: Array<[string, number]> = [
+    ['The Contractors proposed approach and methodology for the delivery of the proposed work.', 30],
+    ['The Contractor’s proposed approach to Project Management during execution of the works including key staff, duties and management and co-ordination of sub-contractors.', 10],
+    ['The Contractor’s proposed approach to managing Health and Safety for the works and protecting the environment.', 15],
+    ['The Contractor’s proposed approach to progress reporting and communication with Conwy County Borough Council during execution of the works, including the approach to reporting commercial issues.', 15],
+    ['The Contractor’s approach to managing the quality of output on site, checking and supervision of the works.', 10],
+    ['The Contractor’s perceived key risks in undertaking the works and the outline mitigation measures.', 10],
+    ['The Contractor’s outline programme for the works including details of:  Start date, access dates, key dates and completion date.  Order and sequencing of the works.  Provisions for risk allowance.  Details of each planned operation including any resourcing and sub-contractor requirements.', 10],
+  ];
+  const APPENDIX_1 = [
+    'The Contractors proposed approach and methodology for the delivery of the proposed work.',
+    'The Contractor’s proposed approach to Project Management during execution of the works including key staff, duties and management and co-ordination of sub-contractors.',
+    'The Contractor’s proposed approach to managing Health and Safety for the works and protecting the environment.',
+    'The Contractor’s proposed approach to progress reporting and communication with Conwy County Borough Council during execution of the works, including the approach to reporting commercial issues.',
+    'The Contractor’s approach to managing the quality of output on site, checking and supervision of the works.',
+    'The Contractor’s perceived key risks in undertaking the works and the outline mitigation measures.',
+    'The Contractor’s outline programme for the works including details of: Start date, access dates, key dates and completion date. Order and sequencing of the works. Provisions for risk allowance. Details of each planned operation including any resourcing and sub-contractor requirements.',
+  ];
+  const line = (over: Partial<import('../src/domain/itt.ts').MatrixLine>): import('../src/domain/itt.ts').MatrixLine => ({
+    reference: 'X',
+    category: 'QUALITY',
+    requirement: '',
+    mandatory: true,
+    owner: 'OWNER',
+    evidenceRequired: 'Written answer',
+    status: 'UNKNOWN',
+    ...over,
+  });
+  const LIMIT = { words: 1000, statedAs: 'No more than 1000 words are required per answer' };
+  const matrix = [
+    ...TABLE_1.map(([text, weight], i) => line({ reference: `2.3 Table 1 row ${i + 1}`, requirement: text, weightingPercent: weight })),
+    ...APPENDIX_1.map((text, i) => line({ reference: `Q${i + 1}`, requirement: text, responseLimit: LIMIT })),
+  ];
+
+  it('plans seven sections, each with its weighting and its word limit', () => {
+    const scope = bidresponse.planScope(matrix);
+    assert.equal(scope.basis, 'SCORED_QUESTIONS');
+    assert.equal(scope.lines.length, 7, `planned ${scope.lines.map((l) => l.reference).join(', ')}`);
+    assert.deepEqual(scope.lines.map((l) => l.weightingPercent), [30, 10, 15, 15, 10, 10, 10]);
+    assert.ok(scope.lines.every((l) => l.responseLimit?.words === 1000), 'a section lost the 1,000-word limit');
+    assert.deepEqual(scope.lines.map((l) => l.alsoAnswers), APPENDIX_1.map((_, i) => [`Q${i + 1}`]));
+  });
+
+  it('folds a hazard read twice, and keeps two different drawing conventions apart', () => {
+    const folded = bidresponse.foldDuplicates([
+      line({ reference: '4.1 Road traffic', category: 'HEALTH_AND_SAFETY', requirement: 'Road traffic – road closure signs and diversion to be provided – road closure to vehicles arranged from 18/01/2027' }),
+      line({ reference: '4.1 Hazards identified by the Client - road traffic', category: 'HEALTH_AND_SAFETY', requirement: 'Road traffic – road closure signs and diversion to be provided – road closure to vehicles arranged from 18/01/2027' }),
+      line({ reference: 'N1', category: 'TECHNICAL', requirement: 'All dimensions are in metres unless otherwise stated.' }),
+      line({ reference: 'N2', category: 'TECHNICAL', requirement: 'All chainages are in metres unless otherwise stated.' }),
+    ]);
+    assert.deepEqual(folded.map((l) => l.reference), ['4.1 Road traffic', 'N1', 'N2']);
+    assert.deepEqual(folded[0]!.alsoAnswers, ['4.1 Hazards identified by the Client - road traffic']);
+  });
+
+  it('marks a folded section stale when an addendum changes the other document’s line', () => {
+    const scope = bidresponse.planScope(matrix);
+    const pack = {
+      sections: [{ ...scope.lines[0]!, key: scope.lines[0]!.reference, title: 'Q1', deliverable: scope.lines[0]!.requirement, owner: 'OWNER', status: 'DRAFTED' as const, body: ['Answer.'], alsoAnswers: scope.lines[0]!.alsoAnswers }],
+      deadlines: [{ what: 'Return', on: '2026-11-19' }],
+      returnBy: '2026-11-19',
+    } as unknown as Parameters<typeof bidresponse.bidCompleteness>[0];
+    const stale = bidresponse.bidCompleteness(pack, [], [], [
+      { reference: 'Q1', material: true, addendum: 'ADD-01', detail: 'Word limit changed' } as unknown as import('../src/domain/addendum.ts').AddendumImpact,
+    ]).staleSections;
+    assert.deepEqual(stale.map((s) => s.key), ['2.3 Table 1 row 1']);
+  });
+});

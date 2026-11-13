@@ -901,7 +901,28 @@ export function requirementsFromMatrix(matrix: MatrixLine[]): ITTRequirement[] {
 export function mergeRequirements(prior: ITTRequirement[], next: ITTRequirement[]): ITTRequirement[] {
   const byReference = new Map<string, ITTRequirement>();
   for (const requirement of prior) byReference.set(requirement.reference, requirement);
-  for (const requirement of next) byReference.set(requirement.reference, requirement);
+  for (const requirement of next) {
+    const earlier = byReference.get(requirement.reference);
+    // The newer reading wins on what it states, and does not erase what it is
+    // silent on. A tender puts a question's weighting in one document and its
+    // word limit in another; the reading of the second used to replace the
+    // line wholesale and wipe the weighting the first had found.
+    byReference.set(
+      requirement.reference,
+      earlier
+        ? {
+            ...requirement,
+            ...(requirement.weightingPercent === undefined && earlier.weightingPercent !== undefined
+              ? { weightingPercent: earlier.weightingPercent }
+              : {}),
+            ...(requirement.responseLimit === undefined && earlier.responseLimit !== undefined
+              ? { responseLimit: earlier.responseLimit }
+              : {}),
+            ...(requirement.dueBy === undefined && earlier.dueBy !== undefined ? { dueBy: earlier.dueBy } : {}),
+          }
+        : requirement,
+    );
+  }
   return [...byReference.values()];
 }
 
