@@ -103,7 +103,7 @@ export function readinessOf(platform: Platform, tenantId: string): CompanyReadin
 
   const profile = issuerProfile(platform, tenantId);
   const legal = legalReadiness(profile);
-  const issuanceMissing = legal.missing.map((field) => `issuer ${field}`);
+  const issuanceMissing = legal.missingLabels.map((label) => `issuer ${label.toLowerCase()}`);
   if (Object.keys(profile.numberingRules).length === 0) issuanceMissing.push('at least one numbering rule');
 
   return {

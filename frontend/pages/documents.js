@@ -970,6 +970,24 @@ async function issuerPanels(host) {
   const profile = issuer.profile;
   const rules = Object.entries(profile?.numberingRules ?? {});
   const legal = readiness?.legal ?? lifecycle?.legal ?? null;
+  /*
+   * Everything that will refuse Issue, said before Issue is pressed. A test run
+   * reached Issue on an approved quotation and was refused three times running —
+   * company details, then "regenerate, the details changed", then no numbering
+   * rule — while this screen said "Legal documents can be issued under it".
+   * The document types waiting to go out are known; so is which have no rule.
+   */
+  const unruled = [
+    ...new Set(
+      (lifecycle.documents ?? [])
+        .filter((doc) => doc.status !== 'ISSUED' && !profile?.numberingRules?.[doc.documentType])
+        .map((doc) => doc.documentType),
+    ),
+  ];
+  const beforeIssue = [
+    ...(legal && !legal.complete ? [`enter ${(legal.missingLabels ?? legal.missing).join(', ')} under “Set the issuer details” — do this before you generate, because a revision carries the details it was generated with`] : []),
+    ...unruled.map((type) => `set a numbering rule for ${type} under “Set a numbering rule”`),
+  ];
   const statusTone = (status) => (status === 'ISSUED' ? 'ok' : status === 'APPROVED' ? 'ok' : status === 'AWAITING_APPROVAL' ? 'warn' : 'neutral');
   const documentActions = (doc) => {
     const act = (action, label, tone = 'quiet') => html`<button class="btn ${tone} sm" data-document-action="${action}" data-document="${doc.id}" data-title="${doc.title}" data-revision="${doc.revision}" data-hash="${doc.revisions[doc.revisions.length - 1]?.hash ?? ''}">${label}</button>`;
@@ -1009,7 +1027,7 @@ async function issuerPanels(host) {
             ${legal
               ? html`<div class="notice ${legal.complete ? '' : 'warn'}" style="margin-bottom:12px"><div>
                   <b>Registered issuer ${legal.complete ? 'complete' : 'incomplete'}</b> · ${humanise((profile.legal?.state ?? legal.verification ?? 'UNVERIFIED').toLowerCase())}${profile.legal?.verifiedAt ? html` on ${date(profile.legal.verifiedAt)}` : ''}.
-                  ${legal.complete ? 'Legal documents can be issued under it; the platform operator verifies the details against the register.' : html`Missing: ${legal.missing.join(', ')}. Nothing is issued until they are entered — no detail is guessed.`}
+                  ${legal.complete ? `The registered details are complete; the platform operator verifies them against the register.${unruled.length ? ` No numbering rule yet for ${unruled.join(', ')} — nothing of that type can be issued until one is set.` : ''}` : html`Missing: ${(legal.missingLabels ?? legal.missing).join(', ')}. Nothing is issued until they are entered — no detail is guessed.`}
                 </div></div>`
               : ''}
             <div class="grid g3" style="gap:14px">
@@ -1055,6 +1073,12 @@ async function issuerPanels(host) {
               hashed manifest; an approval names the hash it approved; issuing reserves the number first and finishes with the same
               number on a retry. An issued document never changes — a correction supersedes it.
             </div>
+            ${beforeIssue.length && (lifecycle.documents ?? []).some((doc) => doc.status !== 'ISSUED')
+              ? html`<div class="notice warn" style="margin:0 17px 10px" data-before-issue><div>
+                  <b>Before a document here can be issued</b>
+                  <ol style="margin:6px 0 0 18px">${beforeIssue.map((step) => html`<li>${step}</li>`)}</ol>
+                </div></div>`
+              : ''}
             ${table({
               headers: ['Type', 'Title', 'Status', 'Revision', 'Number', 'Updated', ''],
               rows: (lifecycle.documents ?? []).map((doc) => [
@@ -1566,18 +1590,18 @@ export async function editRegisteredDetails(issuer) {
     fields: [
       { name: 'registeredName', label: 'Registered name', value: a.registeredName },
       { name: 'tradingName', label: 'Trading name', value: a.tradingName, required: false },
-      { name: 'registrationNo', label: 'Company number', value: a.registrationNo, required: false, hint: 'Companies House, RCCM or equivalent' },
+      { name: 'registrationNo', label: 'Company number', value: a.registrationNo, required: false, hint: 'Companies House, RCCM or equivalent. Needed before a quotation, invoice or contract can be issued.' },
       { name: 'vatNumber', label: 'VAT number', value: a.vatNumber, required: false },
-      { name: 'line1', label: 'Registered address', value: a.registeredAddress.line1, required: false },
+      { name: 'line1', label: 'Registered address', value: a.registeredAddress.line1, required: false, hint: 'Needed before a quotation, invoice or contract can be issued.' },
       // The second line had no input at all. It was in the model, read out of
       // the existing profile and written straight back on every save, so the
       // only way a company could ever have one was for something other than
       // this form to have put it there — and nothing else writes it. A field
       // that cannot be filled in is a field that does not exist.
       { name: 'line2', label: 'Address line 2', value: a.registeredAddress.line2 ?? '', required: false },
-      { name: 'city', label: 'City', value: a.registeredAddress.city, required: false },
+      { name: 'city', label: 'City', value: a.registeredAddress.city, required: false, hint: 'Needed before a quotation, invoice or contract can be issued.' },
       { name: 'postcode', label: 'Postcode', value: a.registeredAddress.postcode, required: false },
-      { name: 'country', label: 'Country code', value: a.registeredAddress.country, required: false, hint: 'GB, CD, FR…' },
+      { name: 'country', label: 'Country code', value: a.registeredAddress.country, required: false, hint: 'GB, CD, FR… Needed before a quotation, invoice or contract can be issued.' },
       { name: 'phone', label: 'Phone', value: a.contact.phone, required: false },
       { name: 'email', label: 'Email', value: a.contact.email, required: false },
       { name: 'web', label: 'Web', value: a.contact.web, required: false },

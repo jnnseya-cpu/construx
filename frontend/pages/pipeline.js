@@ -4,7 +4,7 @@ import { badge, date, html, humanise, money, notice, pct, positionReport, raw, r
 import { donutChart } from '../lib/charts.js';
 import { flowPanel, loadFlow } from '../lib/flow.js';
 import { insightPanel } from '../lib/insight.js';
-import { CONTINENT, COUNTRY, REQUIREMENT_CATEGORY, SECTOR_GROUPED, today } from '../lib/enums.js';
+import { CONTINENT, COUNTRY, METHOD_OF_MEASUREMENT, REQUIREMENT_CATEGORY, SECTOR_GROUPED, today } from '../lib/enums.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, closeProject, draw, goTo, openProject, phaseGates, state } from '../app.js';
 
@@ -2177,7 +2177,19 @@ export async function pipeline(root) {
                                           : html`<button class="btn quiet sm" data-revise="${pack.id}::${section.key}">Edit this answer</button>`}
                                         <button class="btn quiet sm" data-copy-section="${pack.id}::${section.key}">Copy</button>
                                       </div>`
-                                  : html`<div class="metric-sub" style="margin-top:6px">Not written yet — use “Write the next section” above.</div>`}
+                                  : // A section nobody has written yet can be written by a
+                                    // person. The only way in used to be the drafter, so an
+                                    // answer written elsewhere — or a deployment with no model —
+                                    // had nowhere to go. Same door as an edit: recorded as
+                                    // yours, and no provider is called.
+                                    html`<div class="metric-sub" style="margin-top:6px">
+                                      Not written yet — write it yourself, or use “Write the next section” above to have the drafter write it.
+                                    </div>
+                                    ${pack.status === 'ISSUED'
+                                      ? ''
+                                      : html`<div style="margin-top:8px">
+                                          <button class="btn quiet sm" data-revise="${pack.id}::${section.key}">Write it yourself</button>
+                                        </div>`}`}
                               </div>`,
                             )}
                           </div>`,
@@ -4351,14 +4363,7 @@ export async function pipeline(root) {
       // tagged as such rather than mislabelled NRM2. The reader quotes what the
       // document states — pre-selected below — and the person confirms or
       // changes it. The backend normalises whatever is sent to a short tag.
-      const METHODS = [
-        { value: 'NRM2', label: 'NRM2 — building work (RICS)' },
-        { value: 'MMHW', label: 'MMHW — Method of Measurement for Highway Works (civils)' },
-        { value: 'CESMM4', label: 'CESMM4 — civil engineering' },
-        { value: 'CESMM3', label: 'CESMM3 — civil engineering' },
-        { value: 'SMM7', label: 'SMM7 — building work (superseded)' },
-        { value: 'POM(I)', label: 'POM(I) — Principles of Measurement (International)' },
-      ];
+      const METHODS = METHOD_OF_MEASUREMENT;
       const stated = (confirmTakeoff.dataset.method || '').trim();
       const matched = METHODS.find((m) => m.value.toLowerCase() === stated.toLowerCase());
       const methodOptions = [...METHODS];
@@ -5196,6 +5201,35 @@ export async function pipeline(root) {
           value: !!held?.singleOwnerBids,
           hint: 'Tick it and the compliance matrix stops suggesting a role per category (QS, EPC, Safety…) that reads as work going to people who do not exist — every owner defaults to the owner instead.' },
       ],
+      /*
+       * A line the parser below cannot read is refused, naming it — never
+       * dropped. "Public liability, 5000000" (a comma, not a bar) used to vanish
+       * while the screen said "Recorded", and the matrix then showed the
+       * insurance as a gap the business had in fact filled in.
+       */
+      validate: (v) => {
+        const unread = (text, ok) =>
+          String(text || '')
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .find((line) => !ok(line.split('|').map((part) => part.trim())));
+        const insurance = unread(v.insurances, (parts) => parts[0] && parts[1] && !Number.isNaN(Number(parts[1])));
+        if (insurance) {
+          return {
+            field: 'insurances',
+            message: `"${insurance}" could not be read. Write it as cover | limit in £ | renews on (optional), with a vertical bar between each part — e.g. "Public liability | 5000000 | 2027-10-25".`,
+          };
+        }
+        const reference = unread(v.references, (parts) => parts[0] && parts[1]);
+        if (reference) {
+          return {
+            field: 'references',
+            message: `"${reference}" could not be read. Write it as client | project | sector | value in £ | year completed, with a vertical bar between each part.`,
+          };
+        }
+        return null;
+      },
       transform: (v) => {
         const money = (x) => Math.round(Number(x || 0) * 100);
         const list = (x) => String(x || '').split(',').map((part) => part.trim()).filter(Boolean);

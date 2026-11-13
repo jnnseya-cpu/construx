@@ -929,6 +929,64 @@ describe('where the job is, and the one thing to do next', () => {
     assert.equal(measured.screen, 'procurement');
   });
 
+  it('counts the matrix bound to this job’s invitation, though it was typed in on Pipeline & Bids', () => {
+    /*
+     * Found in a browser run with the real Conwy tender: a compliance matrix
+     * typed in on Pipeline & Bids (no model) is written on the governance chain
+     * beside the invitation it is bound to. The flow read only the project's
+     * chain, so the matrix step said "not done" with a 100%-weighted matrix on
+     * file. The analysis the invitation names counts; one in another tenancy
+     * never does.
+     */
+    const admin = seed.users.admin!.auth;
+    const governance = `${seed.tenantId}-governance`;
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const job = structure.createProject(platform.context(admin, governance), {
+      portfolioId,
+      name: 'Waterloo Cottage retaining wall',
+      sectorType: 'TRANSPORT',
+      assetType: 'Retaining wall',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Conwy' },
+      contractValueMinor: 51_542_354,
+      currency: 'GBP',
+      plannedStart: '2027-01-11',
+      plannedCompletion: '2027-04-30',
+    }).projectId;
+    const ctx = platform.context(seed.users.qs!.auth, job, { source: 'WEB' });
+    const commit = (projectId: string, eventType: string, refType: string, refId: string, nextState: Record<string, unknown>) =>
+      ctx.ledger.commit({
+        tenantId: ctx.tenantId,
+        projectId,
+        actor: { refType: 'User', refId: ctx.auth.actorId },
+        source: 'WEB',
+        correlationId: ctx.correlationId,
+        eventType,
+        entity: { refType, refId },
+        nextState: { id: refId, ...nextState },
+      } as Parameters<typeof ctx.ledger.commit>[0]);
+
+    const analysisId = `analysis-typed-${job.slice(-6)}`;
+    commit(governance, 'ITT_ANALYSED', 'ITTAnalysis', analysisId, {
+      reference: 'ERCF2509N 05',
+      clientName: 'Conwy County Borough Council',
+      matrix: [{ reference: 'Q1', category: 'Quality', requirement: 'Methodology', mandatory: false, weightingPercent: 10, status: 'UNKNOWN' }],
+      mandatoryGaps: [],
+      weightings: { stated: 100, complete: true },
+      analysedAt: new Date().toISOString(),
+      analysedBy: ctx.auth.actorId,
+    });
+    const matrixBefore = bidFlow(platform, ctx).steps.find((step) => step.id === 'MATRIX')!.state;
+    assert.notEqual(matrixBefore, 'DONE', 'no invitation names the analysis yet, so it is not this job’s');
+
+    commit(job, 'TENDER_RECEIVED', 'TenderInvitation', `itt-${job.slice(-6)}`, {
+      reference: 'ERCF2509N 05',
+      clientName: 'Conwy County Borough Council',
+      projectId: job,
+      analysisId,
+    });
+    assert.equal(bidFlow(platform, ctx).steps.find((step) => step.id === 'MATRIX')!.state, 'DONE');
+  });
+
   it('treats a tender with a compliance matrix as a submission, even before the return register is filed', () => {
     /*
      * Reported on SHDC 000189, a 60/5/35 tender: the panel classed it as a

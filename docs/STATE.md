@@ -34082,3 +34082,91 @@ Cytundeb:⏎Outline / of Contract \ Requirements:" reaches the server intact
 (the refusal is now "no reasoning provider", this environment having none —
 not "no section"); bidresponse.test.ts scans every page for a `/sections/${…}`
 path that is not encoded, and fails on the old code.
+
+## 2026-11 Deep browser test, sign-up to issued quotation — what it found and fixed
+
+A real browser (Playwright, persistent profile) against a fresh server and an
+empty journal, driven click by click through the screens a new customer uses:
+sign up → confirm → sign in → company facts → brand → portfolio → project at
+Tender → opportunity → ITT → upload the five real Conwy ERCF2509N 05 files →
+compliance matrix typed in (no model) → returns cleared → pack planned from the
+scored questions (7 sections) → answers pasted → submission PDF (13 pages) →
+71 measured quantities by hand → bill priced by hand (£515,423.54, matched to
+the penny against the owner's own price list) → pricing schedule PDF → quotation
+drawn up, generated, approved, **issued as JNN-Q-2026-00001** and downloaded (5
+pages, total £515,423.54) → scored → decided to bid → bid programme → portal
+submission recorded → outcome recorded (£515,423.54 stored as 51,542,354p).
+The server ran with dummy provider keys so the AI controls render; every AI
+call fails before any cost. Nothing in this run used a model.
+
+**Fixed in this change** (each with a test that fails on the old code where
+the fault is server-side):
+
+- *Tender files sat unread on upload* (P1). With no perception provider the
+  "Look at the file first" button is not shown, so five uploaded files stayed
+  unread and the matrix/returns/plan said "read the invitation first".
+  `POST /v1/evidence/:hash` now runs the free, deterministic `ingestFile` on
+  arrival for a `TENDER_DOCUMENT` (whole and chunked uploads, chunked only once
+  complete); a refusal to read comes back as `readingRefused` beside a stored
+  upload, never in place of it (`tests/tenderupload.test.ts`).
+- *A typed compliance matrix was invisible to the bid flow* (P1). A matrix made
+  on Pipeline & Bids is written on the governance chain; `bidFlow` read only the
+  project's. The analysis named by this job's invitation now counts, same
+  tenant only (`tests/bidrun.test.ts`).
+- *Issue refused four times running on an approved quotation* (P1).
+  (1) company details incomplete — the form labelled the three fields it needs
+  "optional" and the refusal named them `registrationNo`,
+  `registeredAddress.line1`; (2) after entering them, `ISSUER_PROFILE_CHANGED`
+  (correct — the approved copy must carry the details); (3) no numbering rule;
+  (4) after setting the rule, `ISSUER_PROFILE_CHANGED` again, though nothing
+  printed on the approved revision had changed. Root cause of (4): issue
+  compared the *profile version*, which also moves for numbering rules,
+  signatories and policy. It now compares the frozen **issuer block** with the
+  current one (`canonicalize`) — what the document prints — and the AT-14
+  refusal on a real change of registered details still holds
+  (`tests/enterprisegroup.test.ts`). `legalReadiness` returns `missingLabels`
+  (the form's own names) used in every refusal and readiness line; the three
+  fields carry "Needed before a quotation, invoice or contract can be issued";
+  Site Documents shows a "Before a document here can be issued" list (details
+  missing, types with no numbering rule) above the table, and no longer says
+  "Legal documents can be issued under it" while a numbering rule is missing.
+- *Bid programme refusal offered a way out that does not exist* (P2).
+  `TENDER_WINDOW_TOO_SHORT` said "record the decision to bid on a compressed
+  programme knowingly"; there is no such decision anywhere. It now says ask for
+  an extension or work to the deadline without the programme, which holds
+  nothing else up (`tests/tenderintake.test.ts`).
+- *Insurance and reference lines in company facts dropped silently* (P2): the
+  form now refuses a line it cannot read and shows the format.
+- *No way to write a pack section yourself without a model* (P1): an unwritten
+  section offers "Write it yourself".
+- *Download refused for want of a brand the journey never asked for* (P2): the
+  guided journey has a BRANDING stage between company facts and first job
+  (`tests/journey.test.ts`).
+- *NRM2 forced on a hand-entered civils bill* (P2): "Enter measured quantities"
+  takes a method of measurement (NRM2, MMHW, CESMM4, CESMM3, SMM7, POM(I)) from
+  `shared/vocabulary.js`.
+- *Quotation defaulted to an incomplete estimate* (P2): estimates are listed
+  complete first, newest first, with "incomplete — cannot be quoted" on the label.
+
+**Found and recorded, not changed** (each is a decision for the owner or a
+larger piece of work):
+
+- Direct Debit is shown as "Recommended" at activation and is not connected.
+- Portfolio country defaults to the first in the list (Afghanistan).
+- Breadcrumb reads "no portfolio yet" after one exists; `/projects/null` 404s in
+  the console on first load.
+- AI buttons on a file row spend without first quoting a cost; the file table is
+  hidden entirely without a perception provider.
+- Tender AI on COMMERCIAL_L3 data needs `AI_PROVIDER_CLEARANCE` before it runs.
+- Issuing a response pack is hard-blocked until an AI assurance review exists —
+  there is no human-review path to issue.
+- Rules classification read the ITT as "correspondence" and drawings as "unknown".
+- Site Documents labels its first-revision button "Generate" where the toast and
+  docs say "Generate a revision".
+- A compressed bid programme (fewer than ten working days) is not built; the
+  platform refuses rather than compress.
+
+**Not tested (needs a model; none in this environment):** reading an
+invitation or pricing schedule into a matrix, writing/redrafting/shortening a
+section, the red-team attack, the assurance review, and drafting the
+construction programme from the bill.

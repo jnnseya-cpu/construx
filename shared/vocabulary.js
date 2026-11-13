@@ -501,6 +501,22 @@ export const CONTRACT_FORM = opts([
  * two submissions on different bases without saying so is the classic way an
  * award gets challenged.
  */
+/**
+ * The rules a bill of quantities is measured to.
+ *
+ * One list for every screen that asks. A civils bill measured to the Highway
+ * Works method was tagged NRM2 — a building standard — because the hand-entry
+ * form never asked and the reader confirm kept its own copy of the list.
+ */
+export const METHOD_OF_MEASUREMENT = opts([
+  ['NRM2', 'NRM2 — building work (RICS)'],
+  ['MMHW', 'MMHW — Method of Measurement for Highway Works (civils)'],
+  ['CESMM4', 'CESMM4 — civil engineering'],
+  ['CESMM3', 'CESMM3 — civil engineering'],
+  ['SMM7', 'SMM7 — building work (superseded)'],
+  ['POM(I)', 'POM(I) — Principles of Measurement (International)'],
+]);
+
 export const PRICING_BASIS = opts([
   ['LUMP_SUM', 'Lump sum'],
   ['REMEASURABLE', 'Remeasurable'],

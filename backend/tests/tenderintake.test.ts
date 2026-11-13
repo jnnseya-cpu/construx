@@ -849,6 +849,11 @@ describe('tender intake · the tender programme, back-planned', () => {
     assert.match(String(error.message), /business days? remain/);
     assert.match(String(error.message), new RegExp(String(tenderintake.BID_SPINE_MINIMUM_DAYS)));
     assert.match(String(error.message), /will not compress it silently/);
+    // It offered "record the decision to bid on a compressed programme
+    // knowingly", and there is no such decision anywhere on the platform: a way
+    // forward that leads nowhere. It now names only what can actually be done.
+    assert.doesNotMatch(String(error.message), /compressed programme knowingly/);
+    assert.match(String(error.message), /not held up by it/);
   });
 
   it('builds work packages from the deliverables, each with its earliest date', () => {

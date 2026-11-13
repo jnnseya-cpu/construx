@@ -177,7 +177,27 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
           })
           .at(-1)
       : undefined);
-  const analyses = ctx.ledger.list(ctx.projectId, 'ITTAnalysis');
+  /*
+   * The matrix, wherever it was produced.
+   *
+   * A reading confirmed on the project writes it on the project's chain. A
+   * matrix produced on Pipeline & Bids — "Read the invitation into a matrix",
+   * typed in with no model at all — is written on the governance chain beside
+   * the invitation it is bound to, exactly as the invitation itself is. Reading
+   * only the project's chain told a bidder with a 100%-weighted matrix on file
+   * "No matrix has been produced" and left the submission road waiting on it.
+   * The one bound to this job's invitation counts too.
+   */
+  const boundAnalysisId = invitation?.analysisId ? String(invitation.analysisId) : undefined;
+  const boundAnalysis = boundAnalysisId
+    ? ctx.ledger.get({ refType: 'ITTAnalysis', refId: boundAnalysisId })
+    : undefined;
+  const analyses = [
+    ...ctx.ledger.list(ctx.projectId, 'ITTAnalysis'),
+    ...(boundAnalysis && boundAnalysis.tenantId === ctx.tenantId && boundAnalysis.projectId !== ctx.projectId
+      ? [boundAnalysis]
+      : []),
+  ];
   const packs = ctx.ledger.list(ctx.projectId, 'BidResponsePack').map((record) => record.state);
   // A pack is "planned" the moment it exists, but planned is not written: its
   // sections are drafted one at a time and a section is written once it carries

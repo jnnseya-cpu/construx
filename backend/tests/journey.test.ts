@@ -272,3 +272,25 @@ describe('the guided journey', () => {
     assert.match(journey.summary, /nothing is outstanding/i);
   });
 });
+
+describe('the journey asks for document branding before a download needs it', () => {
+  it('shows the branding step after the facts while it is missing, and clears it once set', () => {
+    const w = workspace();
+    setCompanyProfile(w.governance, PROFILE);
+    const missing = guidedJourney(w.governance, { projectFlow: null, projectId: null, brandingConfigured: false });
+    assert.deepEqual(missing.stages.map((s) => s.id), ['COMPANY_FACTS', 'BRANDING', 'FIRST_JOB']);
+    assert.equal(missing.nowDo?.id, 'BRANDING', 'a new subscriber met the export refusal on the return date');
+    assert.equal(missing.nowDo?.door, 'Company brand');
+    assert.equal(missing.nowDo?.screen, 'enterprise');
+
+    const set = guidedJourney(w.governance, { projectFlow: null, projectId: null, brandingConfigured: true });
+    assert.equal(set.stages.find((s) => s.id === 'BRANDING')?.state, 'DONE');
+    assert.equal(set.nowDo?.id, 'FIRST_JOB');
+  });
+
+  it('leaves the step out where the caller cannot tell', () => {
+    const w = workspace();
+    const journey = guidedJourney(w.governance, { projectFlow: null, projectId: null });
+    assert.ok(!journey.stages.some((s) => s.id === 'BRANDING'));
+  });
+});

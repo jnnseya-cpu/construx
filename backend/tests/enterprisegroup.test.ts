@@ -350,6 +350,9 @@ describe('§8 — documents: lifecycle, approval by hash, atomic issuance (AT-10
     const incomplete = await send('POST', `/v1/documents/lifecycle/${documentId}/issue`, tokenFor(etablix.admin), { idempotencyKey: 'issue-early-0002' });
     assert.equal(incomplete.body.title, 'LEGAL_PROFILE_INCOMPLETE');
     assert.equal(incomplete.status, 422);
+    // Named as the form names them, so the person can find the field.
+    assert.match(String(incomplete.body.detail), /Company number/);
+    assert.doesNotMatch(String(incomplete.body.detail), /registeredAddress\.line1|registrationNo/);
   });
 
   it('AT-15: changing the content invalidates the approval; the approval names the hash it approved', async () => {
@@ -462,6 +465,28 @@ describe('§8 — documents: lifecycle, approval by hash, atomic issuance (AT-10
     assert.equal(new Set(numbers).size, 6, JSON.stringify(issued.map((r) => r.body)));
     assert.ok(numbers.every((number) => number.startsWith('JNC-REP-')));
     assert.ok(issued.every((r) => r.status === 201), 'a report needs no approval under the published policy');
+  });
+
+  it('a numbering rule set after approval does not void the approval — it is not on the approved revision', async () => {
+    // Found in a browser run: an approved quotation was refused for want of a
+    // numbering rule; once the rule was set it was refused again with
+    // ISSUER_PROFILE_CHANGED, because setting the rule moved the profile
+    // version. Nothing the approver saw had changed.
+    const draft = await send('POST', '/v1/documents/lifecycle', tokenFor(etablix.admin), { documentType: 'invoice', title: 'Application 1', body: { Client: 'Riverside Depot Ltd', Total: 1200 } });
+    const generated = await send('POST', `/v1/documents/lifecycle/${draft.body.id}/generate`, tokenFor(etablix.admin), {});
+    const revision = (generated.body.revisions as Array<Record<string, unknown>>)[0]!;
+    const approved = await send('POST', `/v1/documents/lifecycle/${draft.body.id}/approve`, tokenFor(etablix.admin), { revision: 1, hash: revision.hash });
+    assert.equal(approved.status, 201, JSON.stringify(approved.body));
+
+    const noRule = await send('POST', `/v1/documents/lifecycle/${draft.body.id}/issue`, tokenFor(etablix.admin), { idempotencyKey: 'issue-invoice-0001' });
+    assert.equal(noRule.body.title, 'NUMBERING_RULE_MISSING');
+    const rule = await send('PUT', '/v1/company/issuer', tokenFor(etablix.admin), { numberingRules: { invoice: { prefix: 'ETB-INV-', pattern: '{YYYY}-{seq:6}', seqScope: 'year' } } });
+    assert.equal(rule.status, 200, JSON.stringify(rule.body));
+    assert.notEqual((rule.body as Record<string, unknown>).version, (revision.manifest as Record<string, unknown>).issuerProfileVersion, 'the profile version did move');
+
+    const issued = await send('POST', `/v1/documents/lifecycle/${draft.body.id}/issue`, tokenFor(etablix.admin), { idempotencyKey: 'issue-invoice-0002' });
+    assert.equal(issued.status, 201, JSON.stringify(issued.body));
+    assert.match(String((issued.body.issuance as Record<string, unknown>).number), /^ETB-INV-/);
   });
 
   it('the operator verifies the declared issuer; a later change re-declares it', async () => {

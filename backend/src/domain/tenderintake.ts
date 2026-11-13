@@ -1301,7 +1301,8 @@ export function generateBidProgramme(
     throw new DomainError(
       'TENDER_WINDOW_TOO_SHORT',
       `${available} business day${available === 1 ? '' : 's'} remain to ${submissionDay}, and the tender spine needs ${BID_SPINE_MINIMUM_DAYS}. ` +
-        'Ask the buyer for an extension, or record the decision to bid on a compressed programme knowingly — the platform will not compress it silently.',
+        'Ask the buyer for an extension, or work to the deadline without this programme — the bid itself (matrix, returns, response pack, pricing) ' +
+        'is not held up by it. The platform will not compress it silently into a timetable that reads as achievable and is not.',
     );
   }
 

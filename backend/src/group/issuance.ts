@@ -1,4 +1,4 @@
-import { hashEvidence } from '../core/canonical.ts';
+import { canonicalize, hashEvidence } from '../core/canonical.ts';
 import { DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { AuthContext } from '../identity/auth.ts';
@@ -572,20 +572,28 @@ export function issueDocument(
     if (document.status === 'APPROVED' && current.approval?.hash !== current.hash) {
       throw new DomainError('DOCUMENT_NOT_APPROVED', 'The current revision carries no approval of its own hash', 409);
     }
-    // What goes out is the frozen manifest, issuer block included. A profile
-    // changed since generation — new registered details, a new brand — means
-    // the frozen issuer is no longer the company's; regenerate and re-approve
-    // so what was approved is exactly what is issued.
-    if (current.manifest.issuerProfileVersion !== profile.version) {
+    // What goes out is the frozen manifest, issuer block included. Registered
+    // details changed since generation mean the frozen issuer is no longer the
+    // company's; regenerate and re-approve so what was approved is exactly
+    // what is issued.
+    //
+    // The comparison is of the issuer block the document prints, not of the
+    // profile's version number. The version also moves when a numbering rule,
+    // a signatory or the approval policy is set — none of which is on the
+    // approved revision — and comparing versions refused an approved quotation
+    // for "the issuer changed" because the company had just been told (by the
+    // previous refusal) to add a numbering rule. Signatories are checked on
+    // their own below; the number is allocated at issue under the current rule.
+    if (canonicalize(current.manifest.issuer) !== canonicalize(profile.issuer)) {
       throw new DomainError(
         'ISSUER_PROFILE_CHANGED',
-        `The issuer profile is at version ${profile.version} but this revision was generated under version ${current.manifest.issuerProfileVersion}. Generate a new revision so the document carries the current issuer, then approve it.`,
+        `The registered company details have changed since revision ${current.revision} was generated (under issuer profile version ${current.manifest.issuerProfileVersion}; it is now at ${profile.version}). Generate a new revision so the document carries the current details, then approve it.`,
         409,
       );
     }
     const readiness = legalReadiness(profile);
     if (!readiness.complete) {
-      throw new DomainError('LEGAL_PROFILE_INCOMPLETE', `The registered issuer details are incomplete (${readiness.missing.join(', ')}). Set them on the company profile before issuing.`, 422);
+      throw new DomainError('LEGAL_PROFILE_INCOMPLETE', `The registered company details are incomplete — ${readiness.missingLabels.join(', ')} not entered. Enter them under Site Documents → Set the issuer details before issuing.`, 422);
     }
     // A signatory named on the approval who has since been removed from the
     // profile invalidates it (§8.2): the approval was theirs to give.

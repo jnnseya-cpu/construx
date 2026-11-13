@@ -1,7 +1,7 @@
 import { api, entityBundle, isWithheld } from '../lib/api.js';
 import { barChart, boxPlot, funnelChart, ganttChart, radarChart, scatterPlot } from '../lib/charts.js';
 import { command, commandBar } from '../lib/command.js';
-import { CONTRACT_FORM, PRICING_BASIS, today } from '../lib/enums.js';
+import { CONTRACT_FORM, METHOD_OF_MEASUREMENT, PRICING_BASIS, today } from '../lib/enums.js';
 import { badge, date, days, drillable, exact, html, humanise, money, pct, positionReport, raw, render, resolveHtml, statusTone, table, toast } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { flowPanel, loadFlow } from '../lib/flow.js';
@@ -2696,6 +2696,15 @@ export async function procurement(root) {
             'Rake out and repoint in lime mortar | m2 | 86\nRebuild collapsed section in reclaimed stone | m2 | 12\nReplace coping, bed and point | m | 34',
           hint: 'description | unit | quantity — and optionally a fourth field naming a different sheet for that line.',
         },
+        {
+          // Asked, not assumed. Without it every hand-entered line was tagged
+          // NRM2 — a building standard — on a highways bill measured to MMHW.
+          name: 'measurementRule',
+          label: 'Method of measurement',
+          type: 'select',
+          options: METHOD_OF_MEASUREMENT,
+          hint: 'The rule the buyer’s bill is drawn to — the preamble usually says. NRM2 is building work; a highways or civils bill is usually MMHW or CESMM.',
+        },
       ],
       transform: (v) => {
         // A measurement taken off your own sheets may have no drawing number at
@@ -2719,6 +2728,7 @@ export async function procurement(root) {
               unit: parts[1],
               quantity: Number(parts[2]),
               sourceSheet: parts[3] || sheet,
+              ...(v.measurementRule ? { measurementRule: v.measurementRule } : {}),
             })),
         };
       },
@@ -3419,10 +3429,21 @@ export async function procurement(root) {
           name: 'estimateId',
           label: 'Estimate',
           type: 'select',
-          options: b.Estimate.map((e) => ({
-            value: e._refId,
-            label: `${e.packageId ?? e._refId} · ${e.status ?? ''}`.trim(),
-          })),
+          // The newest quotable estimate first, so it is the one already
+          // selected. Listed oldest-first, the default was the first incomplete
+          // draft of the job — which the platform refuses to quote — with the
+          // finished one fourth in a list of identically named lines. An id is
+          // a ULID, so it orders by when the estimate was made.
+          options: [...b.Estimate]
+            .sort((a, z) =>
+              (a.status === 'INCOMPLETE') - (z.status === 'INCOMPLETE') || String(z._refId).localeCompare(String(a._refId)),
+            )
+            .map((e) => ({
+              value: e._refId,
+              label:
+                `${e.packageId ?? e._refId} · ${money(e.totalMinor ?? 0)} · ` +
+                (e.status === 'INCOMPLETE' ? 'incomplete — cannot be quoted' : String(e.status ?? '').toLowerCase()),
+            })),
         },
         { name: 'clientName', label: 'Quoted to', type: 'text', hint: 'The client this offer is made to. An estimate has no addressee; this is it.' },
         { name: 'validUntil', label: 'Valid until', type: 'date', min: today(), hint: 'A quotation without a lapse date is a standing offer.' },

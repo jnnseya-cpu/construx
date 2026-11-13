@@ -64,7 +64,21 @@ export type GuidedJourney = {
  */
 export function guidedJourney(
   ctx: EngineContext,
-  { projectFlow, projectId }: { projectFlow: BidFlow | null; projectId: string | null },
+  {
+    projectFlow,
+    projectId,
+    brandingConfigured,
+  }: {
+    projectFlow: BidFlow | null;
+    projectId: string | null;
+    /**
+     * Whether the company's document identity is set. Every export refuses
+     * without it ("Client branding must be configured"), so a new subscriber
+     * met that refusal on the return date, downloading their submission. Left
+     * undefined by a caller that cannot tell, and the stage is then not shown.
+     */
+    brandingConfigured?: boolean;
+  },
 ): GuidedJourney {
   authorise(ctx, 'PROJECT_SETUP', 'R');
 
@@ -97,6 +111,31 @@ export function guidedJourney(
           group: 'SETUP',
         },
   );
+
+  if (brandingConfigured !== undefined) {
+    stages.push(
+      brandingConfigured
+        ? {
+            id: 'BRANDING',
+            title: 'Set how your documents are branded',
+            state: 'DONE',
+            detail: 'Your company name and legal detail are on file, so quotations and submissions can be downloaded.',
+            screen: 'enterprise',
+            group: 'SETUP',
+          }
+        : {
+            id: 'BRANDING',
+            title: 'Set how your documents are branded',
+            state: 'READY',
+            detail:
+              'No document identity is set, so no quotation, submission or programme can be downloaded yet — the export refuses until it is.',
+            next: 'Your company name, address and registration number go on every document you send a buyer. This is done once.',
+            door: 'Company brand',
+            screen: 'enterprise',
+            group: 'SETUP',
+          },
+    );
+  }
 
   stages.push(
     hasProject

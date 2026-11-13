@@ -857,6 +857,35 @@ function evidenceUploadTarget(
 }
 
 /**
+ * A tender document is read the moment its file has arrived.
+ *
+ * Reading (`ingestFile`) is free and deterministic — what the bytes are, whether
+ * their text can be read, whether they should be quarantined — and nothing
+ * downstream counts a file until it has been read. It used to need a separate
+ * "Look at the file first" press per file, and until then the guide kept
+ * saying "File the pack — nothing is filed", to somebody who had just filed
+ * five documents. Only tender documents, and never at the cost of the upload: a
+ * reading that is refused is reported beside the stored file, with its reason,
+ * and the per-file button still offers it.
+ */
+async function readTenderDocumentOnArrival(
+  platform: Platform,
+  engineCtx: ReturnType<Platform['context']>,
+  record: NonNullable<ReturnType<typeof evidence.findByHash>>,
+  hash: string,
+): Promise<Record<string, unknown>> {
+  const state = record.state as { type?: string; description?: string };
+  if (state.type !== 'TENDER_DOCUMENT') return {};
+  const filename = String(state.description ?? '').replace(/^Tender document:\s*/, '') || undefined;
+  try {
+    return { reading: await ingestion.ingestFile(engineCtx, platform.evidence, { hash, ...(filename ? { filename } : {}) }) };
+  } catch (error) {
+    const failure = error as { code?: string; message?: string };
+    return { readingRefused: { code: failure.code ?? 'NOT_READ', message: failure.message ?? 'The file was stored but not read.' } };
+  }
+}
+
+/**
  * Every capability area, read from the permission matrix rather than restated.
  *
  * A signature request names the area its document belongs to, and that choice
@@ -14176,7 +14205,12 @@ export const ROUTES: Route[] = [
           projectFlow = null;
         }
       }
-      return guidedJourney(tenantContext(platform, ctx), { projectFlow, projectId });
+      const tenant = tenantContext(platform, ctx);
+      return guidedJourney(tenant, {
+        projectFlow,
+        projectId,
+        brandingConfigured: platform.exports.brandingIfConfigured(tenant.tenantId) !== undefined,
+      });
     },
   },
   {
@@ -28383,7 +28417,12 @@ export const ROUTES: Route[] = [
             mediaType(ctx.contentType),
             partHash === undefined ? {} : { partHash },
           );
-          return { ...state, evidenceId: record.refId, projectId: record.projectId };
+          return {
+            ...state,
+            evidenceId: record.refId,
+            projectId: record.projectId,
+            ...(state.complete ? await readTenderDocumentOnArrival(platform, engineCtx, record, ctx.params.hash as string) : {}),
+          };
         }
         // The part's own checksum, where the device sends one — §15.2. Optional
         // because every existing client omits it, and load-bearing when present:
@@ -28401,7 +28440,12 @@ export const ROUTES: Route[] = [
           mediaType(ctx.contentType),
           partHash === undefined ? {} : { partHash },
         );
-        return { ...state, evidenceId: record.refId, projectId: record.projectId };
+        return {
+          ...state,
+          evidenceId: record.refId,
+          projectId: record.projectId,
+          ...(state.complete ? await readTenderDocumentOnArrival(platform, engineCtx, record, ctx.params.hash as string) : {}),
+        };
       }
 
       // The whole file, streamed. `putStream` hashes the plaintext as it
@@ -28424,7 +28468,12 @@ export const ROUTES: Route[] = [
       // the evidence; bytes that hash to it add no assertion, and bytes that do
       // not are refused above. There is no new fact to record, and inventing an
       // event type to record a non-fact would widen a closed catalogue.
-      return { ...stored, evidenceId: record.refId, projectId: record.projectId };
+      return {
+        ...stored,
+        evidenceId: record.refId,
+        projectId: record.projectId,
+        ...(await readTenderDocumentOnArrival(platform, engineCtx, record, ctx.params.hash as string)),
+      };
     },
   },
   {
