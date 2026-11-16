@@ -1,6 +1,7 @@
 import { authorise, type EngineContext } from '../engines/context.ts';
 import { bidResponsePosition } from './bidresponse.ts';
 import { bidReview, type Recommendation } from './bidreview.ts';
+import { signOffPosition, type SignOffArea } from './bidsignoff.ts';
 import { contractReviewForProject } from './contractreview.ts';
 import { matrixPosition } from './matrixreview.ts';
 import { priceCheck } from './pricecheck.ts';
@@ -18,7 +19,10 @@ import { scopeReview } from './tenderscope.ts';
  * Nothing here is new information. Each label is read from the record that
  * output already is — the register, the matrix, the scope, the contract and
  * risks, the questions, the price, the answers, the returns — so the brief
- * cannot say one thing while the screen below it says another. A bid is called
+ * cannot say one thing while the screen below it says another. The approvals
+ * and each file's place on the buyer's portal are read from the one sign-off
+ * record; an approval of something that has since changed counts as pending.
+ * A bid is called
  * Ready for Authorised Submission only when every output is ready, every
  * approval is recorded, and the recommendation is to bid.
  */
@@ -33,7 +37,7 @@ export type DeliverableStatus = {
   items: string[];
 };
 
-export type Approval = { id: string; what: string; status: 'RECORDED' | 'PENDING'; detail: string };
+export type Approval = { id: string; what: string; status: 'RECORDED' | 'PENDING'; detail: string; area?: SignOffArea; stale?: boolean };
 
 export type ManifestRow = {
   id: string;
@@ -43,8 +47,11 @@ export type ManifestRow = {
   producedBy: string;
   version?: string;
   owner?: string;
-  /** The buyer's portal location is not something the platform can see. */
+  /** Where it goes on the buyer's portal, as a person recorded it — the platform cannot see the portal. */
   portalLocation: string;
+  fileName?: string;
+  /** A person confirmed it was uploaded and checked on the portal. */
+  uploaded?: { by: string; at: string; note: string };
   status: 'VERIFIED' | 'PENDING';
   detail: string;
 };
@@ -187,6 +194,8 @@ export function tenderBrief(ctx: EngineContext): TenderBrief {
       return source ? source.refId === ctx.projectId || estimateIds.has(String(source.refId)) : false;
     });
   const approvedQuotation = quotations.find((state) => state.status === 'APPROVED' || state.status === 'ISSUED');
+  const signOff = signOffPosition(ctx);
+  const approved = (area: SignOffArea): boolean => signOff.approvals.some((entry) => entry.area === area && entry.status === 'CURRENT');
   const approvals: Approval[] = [
     {
       id: 'A1',
@@ -194,48 +203,30 @@ export function tenderBrief(ctx: EngineContext): TenderBrief {
       status: decision ? 'RECORDED' : 'PENDING',
       detail: decision ? `${decision.bid ? 'Bid' : 'No bid'}, recorded ${String(decision.decidedAt ?? '').slice(0, 10)}.` : 'Not yet decided on the opportunity.',
     },
-    {
-      id: 'A2',
-      what: 'Commercial approval of the price',
-      status: approvedQuotation ? 'RECORDED' : 'PENDING',
-      detail: approvedQuotation ? `The quotation is ${String(approvedQuotation.status).toLowerCase()}.` : 'No quotation for this job has been approved.',
-    },
-    {
-      id: 'A3',
-      what: 'Programme approval',
-      status: programme ? 'RECORDED' : 'PENDING',
-      detail: programme ? `Tender programme confirmed, starting ${String(programme.startDate ?? '').slice(0, 10)}.` : 'No tender programme has been confirmed.',
-    },
-    {
-      id: 'A4',
-      what: 'Contract sign-off',
-      status: obligations.length > 0 && unsigned.length === 0 ? 'RECORDED' : 'PENDING',
-      detail:
-        obligations.length === 0
-          ? 'No clause is on the tender review.'
-          : unsigned.length === 0
-            ? `${obligations.length} clause(s) signed off.`
-            : `${unsigned.length} of ${obligations.length} clause(s) awaiting sign-off.`,
-    },
-    {
-      id: 'A5',
-      what: 'Signatory approval of the submission',
-      status: pack?.status === 'ISSUED' ? 'RECORDED' : 'PENDING',
-      detail: pack?.status === 'ISSUED' ? `${pack.reference} issued under its approval authority.` : 'The response pack has not been issued.',
-    },
+    ...(
+      [
+        ['A2', 'Commercial approval of the price', 'COMMERCIAL'],
+        ['A3', 'Programme approval', 'PROGRAMME'],
+        ['A4', 'Contract sign-off', 'CONTRACT'],
+        ['A5', 'Signatory approval of the submission', 'SIGNATORY'],
+      ] as const
+    ).map(([id, what, area]): Approval => {
+      const entry = signOff.approvals.find((approval) => approval.area === area)!;
+      return { id, what, area, status: entry.status === 'CURRENT' ? 'RECORDED' : 'PENDING', ...(entry.status === 'STALE' ? { stale: true } : {}), detail: entry.detail };
+    }),
   ];
 
   // --- The manifest: every return, what produces it, and whether it is ready ----
   const returns = (invitation.deliverables as TenderDeliverable[] | undefined) ?? [];
-  const portalRule = register.submission?.namingConvention ? `Name: ${register.submission.namingConvention}` : 'Portal location not verified — the platform cannot see the buyer’s portal';
-  const manifest: ManifestRow[] = returns.map((entry): ManifestRow => {
+  const naming = register.submission?.namingConvention ? ` Name it: ${register.submission.namingConvention}.` : '';
+  // What produces each return and whether that is ready — before the portal.
+  const produced = returns.map((entry): Omit<ManifestRow, 'portalLocation'> => {
     const title = entry.title;
     const base = {
       id: entry.reference,
       file: title,
       purpose: entry.mandatory ? 'Mandatory return' : 'Optional return',
       ...(entry.owner ? { owner: entry.owner } : {}),
-      portalLocation: portalRule,
     };
     if (/quality|questionnaire|method|response|submission/i.test(title)) {
       return {
@@ -250,8 +241,8 @@ export function tenderBrief(ctx: EngineContext): TenderBrief {
       return {
         ...base,
         producedBy: 'Pricing schedule from the priced estimate',
-        status: price.status === 'READY_FOR_APPROVAL' && approvedQuotation ? 'VERIFIED' : 'PENDING',
-        detail: !price.priced ? 'Not priced.' : price.status === 'PROVISIONAL' ? 'The price is provisional.' : approvedQuotation ? 'Price approved.' : 'Awaiting commercial approval.',
+        status: price.status === 'READY_FOR_APPROVAL' && approved('COMMERCIAL') ? 'VERIFIED' : 'PENDING',
+        detail: !price.priced ? 'Not priced.' : price.status === 'PROVISIONAL' ? 'The price is provisional.' : approved('COMMERCIAL') ? 'Price approved.' : 'Awaiting commercial approval.',
       };
     }
     if (/programme/i.test(title)) {
@@ -273,11 +264,26 @@ export function tenderBrief(ctx: EngineContext): TenderBrief {
     return {
       ...base,
       producedBy: 'Prepared outside the platform and uploaded to the portal',
-      status: 'PENDING',
+      // Nothing on the platform produces it; the portal confirmation below is the check.
+      status: 'VERIFIED',
       detail:
         `${entry.signatureRequired ? 'Signature required. ' : ''}${entry.format ? `Format ${entry.format}. ` : ''}` +
         'The platform cannot see this file; check it before upload.',
     };
+  });
+  // Then the portal: verified only when the file is ready AND a person confirmed it is there.
+  const manifest: ManifestRow[] = produced.map((row): ManifestRow => {
+    const file = signOff.files[row.id];
+    const portal = {
+      portalLocation: file ? file.portalLocation : `Not recorded — the platform cannot see the buyer’s portal.${naming}`,
+      ...(file?.fileName ? { fileName: file.fileName } : {}),
+      ...(file?.uploaded ? { uploaded: file.uploaded } : {}),
+      ...(file?.version && !row.version ? { version: file.version } : {}),
+    };
+    if (row.status !== 'VERIFIED') return { ...row, ...portal };
+    if (!file) return { ...row, ...portal, status: 'PENDING', detail: `${row.detail} Record where it goes on the portal.` };
+    if (!file.uploaded) return { ...row, ...portal, status: 'PENDING', detail: `${row.detail} Not yet confirmed as uploaded and checked on the portal.` };
+    return { ...row, ...portal, detail: `${row.detail} Uploaded and checked on the portal ${file.uploaded.at.slice(0, 10)}.` };
   });
 
   {
@@ -286,7 +292,6 @@ export function tenderBrief(ctx: EngineContext): TenderBrief {
       ...approvals.filter((approval) => approval.status === 'PENDING').map((approval) => `${approval.id} ${approval.what}: pending`),
       ...manifest.filter((row) => row.status === 'PENDING').map((row) => `${row.id} ${row.file}: ${row.detail}`),
       ...deliverables.filter((entry) => entry.label !== 'READY_FOR_REVIEW').map((entry) => `${entry.id} ${entry.title}: ${entry.label === 'BLOCKED' ? 'blocked' : 'in draft'}`),
-      'Portal-only checks (upload, naming, the portal’s own confirmation) are pending until done on the portal.',
     ];
     deliverables.push({ id: 'D9', title: 'Final QA, submission manifest and approvals', label: label(blocked, draft), items: [...blocked, ...draft] });
   }

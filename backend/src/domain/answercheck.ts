@@ -2,6 +2,7 @@ import { DomainError } from '../core/errors.ts';
 import { authorise, type EngineContext } from '../engines/context.ts';
 import type { BidSection } from './bidresponse.ts';
 import type { MatrixLine } from './itt.ts';
+import { cleanScale, type ScaleBand, type TenderParticulars } from './tenderparticulars.ts';
 import { projectTender } from './tenderregister.ts';
 
 /**
@@ -24,6 +25,32 @@ import { projectTender } from './tenderregister.ts';
 
 export type SubQuestionCoverage = { text: string; addressed: boolean };
 
+/**
+ * Where an answer would sit on the buyer's own published scale, by rule.
+ *
+ * Not the buyer's mark, and said so wherever it is shown. It is the answer
+ * placed on the published scale from what can be counted in it: how many of
+ * the question's sub-questions it addresses (half the weight), how much of the
+ * buyer's scoring criteria it speaks to (a fifth), whether it carries concrete
+ * evidence — figures or dates, and named roles (a fifth), and whether it keeps
+ * to the limit (a tenth). Components the question gives nothing to measure
+ * against are left out and the rest re-weighted. The quality found is placed
+ * on the scale's bands evenly from lowest to highest.
+ */
+export type IndicativeScore = {
+  score: number;
+  of: number;
+  descriptor: string;
+  /** The answer's indicative share of the question's weighting, where it has one. */
+  marks?: number;
+  /** What each counted component came to. */
+  basis: string[];
+  /** What would move it into the next band. */
+  toRaise?: string;
+  /** Below the minimum score the buyer states, where it states one as a number. */
+  belowMinimum: boolean;
+};
+
 export type SectionCheck = {
   key: string;
   title: string;
@@ -36,6 +63,7 @@ export type SectionCheck = {
   /** n of m sub-questions evidently addressed, where the question has them. */
   coverage?: string;
   improve: string[];
+  indicative?: IndicativeScore;
 };
 
 export type CommitmentKind = 'START' | 'COMPLETION' | 'DURATION' | 'SOCIAL_VALUE';
@@ -54,6 +82,10 @@ export type Commitment = {
 
 export type AnswerCheck = {
   packId: string;
+  /** The published scale used, and where it came from; absent where none is published or recorded. */
+  scale?: { bands: ScaleBand[]; from: 'READ_FROM_THE_PACK' | 'RECORDED_BY_HAND' };
+  /** The indicative quality marks across every weighted answer, out of the weightings' total. */
+  indicativeMarks?: { marks: number; of: number };
   sections: SectionCheck[];
   commitments: Commitment[];
   disagreements: number;
@@ -96,6 +128,82 @@ function datesIn(sentence: string): string[] {
   return found;
 }
 
+const ROLE_WORDS = /\b(manager|director|engineer|supervisor|foreman|agent|coordinator|co-ordinator|officer|adviser|advisor|surveyor|planner|lead)\b/i;
+const FIGURE = /\b\d+(?:[.,]\d+)?\s*(?:%|per ?cent|days?|weeks?|months?|hours?|no\.?|m2|m3|m|tonnes?)\b|£\s?\d|\b\d{1,2}\/\d{1,2}\/\d{4}\b/i;
+
+/**
+ * The minimum mark per answer as a number, where the pack states one that way
+ * ("a score of 2 on every question", "minimum of 3"). A percentage ("60%
+ * overall") is a threshold on the whole quality score, not on one answer's
+ * band, and is not read as one.
+ */
+export function minimumScoreOf(stated: string | undefined): number | undefined {
+  const match = stated?.match(
+    /\b(?:score|mark)s?\s+(?:of\s+)?(?:at least\s+)?(\d+(?:\.\d+)?)(?!\s*(?:%|per ?cent|\d))|\bminimum(?:\s+score)?\s+(?:of\s+)?(\d+(?:\.\d+)?)(?!\s*(?:%|per ?cent|\d))/i,
+  );
+  const value = match ? Number(match[1] ?? match[2]) : NaN;
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function indicativeScore(
+  scale: ScaleBand[],
+  input: { drafted: boolean; body: string; subQuestions: SubQuestionCoverage[]; criteria?: string; overLimit: boolean; hasLimit: boolean; weighting?: number; minimum?: number },
+): IndicativeScore {
+  const top = scale[scale.length - 1]!;
+  if (!input.drafted || input.body.trim() === '') {
+    const lowest = scale[0]!;
+    return {
+      score: lowest.score,
+      of: top.score,
+      descriptor: lowest.descriptor,
+      ...(input.weighting !== undefined ? { marks: 0 } : {}),
+      basis: ['Not drafted.'],
+      toRaise: 'Draft the answer.',
+      belowMinimum: input.minimum !== undefined && lowest.score < input.minimum,
+    };
+  }
+  const parts: Array<{ name: string; weight: number; value: number; note: string }> = [];
+  if (input.subQuestions.length > 0) {
+    const addressed = input.subQuestions.filter((entry) => entry.addressed).length;
+    parts.push({ name: 'sub-questions', weight: 0.5, value: addressed / input.subQuestions.length, note: `${addressed} of ${input.subQuestions.length} sub-questions addressed` });
+  }
+  const wanted = [...new Set(words(input.criteria ?? ''))];
+  if (wanted.length > 0) {
+    const have = new Set(words(input.body));
+    const met = wanted.filter((word) => have.has(word)).length;
+    parts.push({ name: 'criteria', weight: 0.2, value: met / wanted.length, note: `${met} of ${wanted.length} of the scoring criteria's terms used` });
+  }
+  const figures = FIGURE.test(input.body);
+  const roles = ROLE_WORDS.test(input.body);
+  parts.push({
+    name: 'evidence',
+    weight: 0.2,
+    value: (Number(figures) + Number(roles)) / 2,
+    note: `${figures ? 'figures or dates given' : 'no figure or date'}; ${roles ? 'named roles' : 'no named role'}`,
+  });
+  if (input.hasLimit) parts.push({ name: 'limit', weight: 0.1, value: input.overLimit ? 0 : 1, note: input.overLimit ? 'over the limit' : 'within the limit' });
+  const totalWeight = parts.reduce((sum, part) => sum + part.weight, 0);
+  const quality = parts.reduce((sum, part) => sum + part.weight * part.value, 0) / totalWeight;
+  const index = Math.round(quality * (scale.length - 1));
+  const band = scale[index]!;
+  const weakest = [...parts].sort((a, b) => a.value * a.weight - b.value * b.weight || b.weight - a.weight).find((part) => part.value < 1);
+  const raise: Record<string, string> = {
+    'sub-questions': 'Answer each remaining sub-question explicitly.',
+    criteria: 'Speak to the buyer’s scoring criteria in their own terms.',
+    evidence: `Add ${figures ? '' : 'measurable commitments (figures, dates)'}${!figures && !roles ? ' and ' : ''}${roles ? '' : 'the named roles who deliver it'}.`,
+    limit: 'Cut it to the limit: past it is usually not read.',
+  };
+  return {
+    score: band.score,
+    of: top.score,
+    descriptor: band.descriptor,
+    ...(input.weighting !== undefined ? { marks: Math.round((band.score / top.score) * input.weighting * 100) / 100 } : {}),
+    basis: parts.map((part) => part.note),
+    ...(index < scale.length - 1 && weakest ? { toRaise: raise[weakest.name] } : {}),
+    belowMinimum: input.minimum !== undefined && band.score < input.minimum,
+  };
+}
+
 const sentences = (paragraphs: string[]): string[] => paragraphs.flatMap((paragraph) => paragraph.split(/(?<=[.;!?])\s+/)).filter((entry) => entry.trim() !== '');
 
 export function answerCheck(ctx: EngineContext, packId: string): AnswerCheck {
@@ -105,6 +213,12 @@ export function answerCheck(ctx: EngineContext, packId: string): AnswerCheck {
   const pack = record.state as { analysisId?: string; sections?: BidSection[] };
   const analysis = pack.analysisId ? ctx.ledger.get({ refType: 'ITTAnalysis', refId: pack.analysisId }) : undefined;
   const lines = new Map(((analysis?.state.matrix as MatrixLine[] | undefined) ?? []).map((line) => [line.reference, line]));
+  // The buyer's scale: recorded by a person, which wins, or read from the pack.
+  const evaluation = (analysis?.state.particulars as TenderParticulars | undefined)?.evaluation;
+  const recorded = cleanScale(analysis?.state.scoringScale);
+  const read = evaluation?.scoringScale;
+  const scale = recorded ? { bands: recorded, from: 'RECORDED_BY_HAND' as const } : read ? { bands: read, from: 'READ_FROM_THE_PACK' as const } : undefined;
+  const minimum = minimumScoreOf(evaluation?.minimumQualityScore);
 
   const sections = (pack.sections ?? []).map((section): SectionCheck => {
     const line = lines.get(section.key);
@@ -119,11 +233,28 @@ export function answerCheck(ctx: EngineContext, packId: string): AnswerCheck {
       for (const entry of missing) improve.push(`Answer explicitly: “${entry.text}”.`);
       if (limit !== undefined && count > limit) improve.push(`Cut ${count - limit} words: past ${limit} is usually not read.`);
     }
+    const scored = line !== undefined && !line.mandatory;
+    const indicative =
+      scale && scored
+        ? indicativeScore(scale.bands, {
+            drafted: section.status === 'DRAFTED',
+            body,
+            subQuestions,
+            ...(line?.scoringCriteria ? { criteria: line.scoringCriteria } : {}),
+            overLimit: limit !== undefined && count > limit,
+            hasLimit: limit !== undefined,
+            ...(line?.weightingPercent !== undefined ? { weighting: line.weightingPercent } : {}),
+            ...(minimum !== undefined ? { minimum } : {}),
+          })
+        : undefined;
+    if (indicative?.toRaise && !improve.includes(indicative.toRaise)) improve.push(indicative.toRaise);
+    if (indicative?.belowMinimum) improve.unshift(`Indicatively below the buyer’s minimum score of ${minimum}: the bid may be rejected on this answer.`);
     return {
       key: section.key,
       title: section.title,
       status: section.status,
       words: count,
+      ...(indicative ? { indicative } : {}),
       ...(limit !== undefined ? { limit } : {}),
       overLimit: limit !== undefined && count > limit,
       ...(line?.scoringCriteria ? { scoringCriteria: line.scoringCriteria } : {}),
@@ -206,10 +337,20 @@ export function answerCheck(ctx: EngineContext, packId: string): AnswerCheck {
   }
 
   const disagreements = commitments.filter((entry) => entry.agrees === false).length;
+  const weighted = sections.filter((section) => section.indicative?.marks !== undefined);
+  const indicativeMarks =
+    weighted.length > 0
+      ? {
+          marks: Math.round(weighted.reduce((sum, section) => sum + section.indicative!.marks!, 0) * 100) / 100,
+          of: weighted.reduce((sum, section) => sum + (lines.get(section.key)?.weightingPercent ?? 0), 0),
+        }
+      : undefined;
   const drafted = sections.filter((section) => section.status === 'DRAFTED').length;
   const gaps = sections.reduce((sum, section) => sum + section.subQuestions.filter((entry) => !entry.addressed).length, 0);
   return {
     packId,
+    ...(scale ? { scale } : {}),
+    ...(indicativeMarks ? { indicativeMarks } : {}),
     sections,
     commitments,
     disagreements,
@@ -217,6 +358,9 @@ export function answerCheck(ctx: EngineContext, packId: string): AnswerCheck {
       `${drafted} of ${sections.length} answer(s) drafted; ${gaps} sub-question(s) not evidently addressed; ` +
       `${sections.filter((section) => section.overLimit).length} over the limit. ` +
       `${commitments.length} commitment(s) found: ${disagreements} disagree with the rest of the bid` +
-      (commitments.some((entry) => entry.kind === 'SOCIAL_VALUE') ? '; social-value commitments listed for confirmation.' : '.'),
+      (commitments.some((entry) => entry.kind === 'SOCIAL_VALUE') ? '; social-value commitments listed for confirmation.' : '.') +
+      (indicativeMarks
+        ? ` Indicatively ${indicativeMarks.marks} of ${indicativeMarks.of} quality marks on the buyer’s published scale — an estimate by rule, not the buyer’s mark.`
+        : ' No scoring scale is published or recorded, so no indicative score is given.'),
   };
 }

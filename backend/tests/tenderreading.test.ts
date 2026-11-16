@@ -16,11 +16,14 @@ import * as contractreview from '../src/domain/contractreview.ts';
 import * as tenderscope from '../src/domain/tenderscope.ts';
 import * as answercheck from '../src/domain/answercheck.ts';
 import * as tenderbrief from '../src/domain/tenderbrief.ts';
+import * as bidsignoff from '../src/domain/bidsignoff.ts';
+import { setIssuerProfile } from '../src/group/profile.ts';
 import * as bidreview from '../src/domain/bidreview.ts';
 import * as buyerquestions from '../src/domain/buyerquestions.ts';
 import * as matrixreview from '../src/domain/matrixreview.ts';
 import * as tenderintel from '../src/domain/tenderintel.ts';
 import * as safety from '../src/engines/safety.ts';
+import { write } from '../src/engines/context.ts';
 import { checkPriceListReading, checkTenderReading, confirmReading, packText, readTenderPack, type InvitationFromReading } from '../src/domain/tenderreading.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import * as perception from '../src/engines/perception.ts';
@@ -136,6 +139,15 @@ const RETURNS: Array<[string, string]> = [
   ['R5', 'Signed Freedom of Information Declaration'],
   ['R6', 'Quality submission'],
 ];
+
+/** For one reading, Q6 reads differently — as a re-read of an amended questionnaire would. */
+function reading_with_changed_q6(): { restore: () => void } {
+  const requirements = reading.requirements as Array<Record<string, unknown>>;
+  const q6 = requirements.find((line) => line.reference === 'Q6')!;
+  const before = q6.requirement;
+  q6.requirement = `${String(before)} (as amended)`;
+  return { restore: () => void (q6.requirement = before) };
+}
 
 /** What a correct reading of the two documents above returns. */
 function conwyReading(): Record<string, unknown> {
@@ -719,13 +731,54 @@ describe('confirming the reading records the invitation, the matrix and the retu
   });
 
   it('files a second reading against the invitation already recorded, never a second one', async () => {
+    // Decisions taken on the first matrix: a waiver and an undertaking on Q7,
+    // recorded straight onto the ledger so the test does not depend on today's
+    // date against the fixture's return date; and one on a line whose wording
+    // the second reading changes.
+    const invitation = () =>
+      platform.ledger.listByTenant(seed.tenantId, 'TenderInvitation').find((record) => record.state.reference === 'ERCF2509N')!.state;
+    const firstId = String(invitation().analysisId);
+    const first = platform.ledger.require({ refType: 'ITTAnalysis', refId: firstId });
+    const q7 = (first.state.matrix as Array<{ reference: string; requirement: string }>).find((line) => line.reference === 'Q7')!;
+    write(governance('owner')(), {
+      eventType: 'REQUIREMENT_WAIVED',
+      entity: { refType: 'ITTAnalysis', refId: firstId },
+      projectId: first.projectId,
+      nextState: {
+        ...first.state,
+        waivers: [
+          { reference: 'Q7', requirement: q7.requirement, mandatory: false, reason: 'Answered in Q1 in full; repeating it costs words.', expiresOn: '2026-11-18', grantedBy: 'x', grantedAt: '2026-11-01T00:00:00Z' },
+          { reference: 'Q6', requirement: 'old wording', mandatory: false, reason: 'Waived against wording the second reading changes.', expiresOn: '2026-11-18', grantedBy: 'x', grantedAt: '2026-11-01T00:00:00Z' },
+        ],
+        undertakings: [{ reference: 'Q7', requirement: q7.requirement, statement: 'We confirm.', confirmedBy: 'x', confirmedAt: '2026-11-01T00:00:00Z' }],
+      },
+    });
+    const reading = reading_with_changed_q6();
     const second = (await readTenderPack(ctx('qs'), { today: '2026-10-25' })).draftId;
+    reading.restore();
     const confirmed = await confirmReading(ctx('qs'), governance('qs'), { draftId: second, invitation: INVITATION });
     assert.equal(confirmed.result.invitationRecorded, false);
     const invitations = platform.ledger
       .listByTenant(seed.tenantId, 'TenderInvitation')
       .filter((record) => record.state.reference === 'ERCF2509N');
     assert.equal(invitations.length, 1);
+
+    const next = platform.ledger.require({ refType: 'ITTAnalysis', refId: String(invitation().analysisId) }).state;
+    assert.notEqual(String(invitation().analysisId), firstId, 'a new matrix');
+    assert.deepEqual((next.waivers as Array<{ reference: string }>).map((entry) => entry.reference), ['Q7'], 'the waiver on Q7 carried; Q6 reworded, so decided again');
+    assert.deepEqual((next.undertakings as Array<{ reference: string }>).map((entry) => entry.reference), ['Q7']);
+    // Revoked again, so the drafting below writes all seven answers.
+    const nextId = String(invitation().analysisId);
+    const nextRecord = platform.ledger.require({ refType: 'ITTAnalysis', refId: nextId });
+    write(governance('owner')(), {
+      eventType: 'REQUIREMENT_WAIVER_REVOKED',
+      entity: { refType: 'ITTAnalysis', refId: nextId },
+      projectId: nextRecord.projectId,
+      nextState: {
+        ...nextRecord.state,
+        waivers: (nextRecord.state.waivers as Array<Record<string, unknown>>).map((entry) => ({ ...entry, revokedBy: 'x', revokedAt: '2026-11-02T00:00:00Z', revokedReason: 'test' })),
+      },
+    });
   });
 
   it('drafts every scored answer with the tender documents in view, one answer per call', async () => {
@@ -793,6 +846,39 @@ describe('confirming the reading records the invitation, the matrix and the retu
     assert.equal(completion.agrees, false, '2 April against 9 April in the pack');
     assert.equal(completion.against?.value, '2027-04-09');
     assert.equal(second.disagreements, 1);
+
+    // No scale published in the pack: no indicative score, and it says so.
+    assert.equal(second.sections.find((section) => section.key === 'Q2')!.indicative, undefined);
+    assert.match(second.summary, /No scoring scale is published or recorded/);
+    // The scale recorded by hand, from where it is published.
+    matrixreview.recordScoringScale(governance('qs')(), analysisId, {
+      source: 'Volume 2, 2.3 Table 2',
+      bands: [
+        { score: 0, descriptor: 'No response' },
+        { score: 1, descriptor: 'Poor' },
+        { score: 2, descriptor: 'Limited' },
+        { score: 3, descriptor: 'Satisfactory' },
+        { score: 4, descriptor: 'Good' },
+        { score: 5, descriptor: 'Excellent' },
+      ],
+    });
+    const scored = answercheck.answerCheck(ctx('qs'), pack.id);
+    assert.equal(scored.scale?.from, 'RECORDED_BY_HAND');
+    // Q2: 1 of 2 sub-questions (0.5 x 0.5), figures and named roles (1 x 0.2),
+    // within the limit (1 x 0.1), out of 0.8 → 0.69 → band 3 of 0–5.
+    const q2Score = scored.sections.find((section) => section.key === 'Q2')!.indicative!;
+    assert.equal(q2Score.score, 3);
+    assert.equal(q2Score.descriptor, 'Satisfactory');
+    assert.match(q2Score.toRaise ?? '', /remaining sub-question/);
+    // Q1: no sub-questions or criteria recorded; no figure or role (0 x 0.2),
+    // within the limit (1 x 0.1), out of 0.3 → 0.33 → band 2.
+    const q1Score = scored.sections.find((section) => section.key === 'Q1')!.indicative!;
+    assert.equal(q1Score.score, 2);
+    assert.match(q1Score.toRaise ?? '', /measurable commitments/);
+    const weightQ1 = QUESTIONS.find(([reference]) => reference === 'Q1')![1];
+    assert.equal(q1Score.marks, Math.round((2 / 5) * weightQ1 * 100) / 100);
+    assert.equal(scored.indicativeMarks?.of, 100);
+    assert.match(scored.summary, /an estimate by rule, not the buyer’s mark/);
   });
 
   it('briefs the bid on one page: nine outputs labelled, approvals, and a manifest of every return', () => {
@@ -805,7 +891,7 @@ describe('confirming the reading records the invitation, the matrix and the retu
     assert.equal(byId.get('D4')!.label, 'BLOCKED', 'no tender programme confirmed');
     assert.equal(byId.get('D7')!.label, 'BLOCKED', 'not priced');
     assert.equal(byId.get('D9')!.label, 'IN_DRAFT');
-    assert.ok(byId.get('D9')!.items.some((item) => /Portal-only checks/.test(item)));
+    assert.ok(byId.get('D9')!.items.some((item) => /R4 .*Record where it goes on the portal/.test(item)), 'a file made outside the platform still needs its portal place');
     assert.deepEqual(brief.approvals.map((approval) => [approval.id, approval.status]), [
       ['A1', 'PENDING'],
       ['A2', 'PENDING'],
@@ -820,9 +906,86 @@ describe('confirming the reading records the invitation, the matrix and the retu
     assert.equal(producedBy.get('R4'), 'Prepared outside the platform and uploaded to the portal');
     assert.equal(producedBy.get('R6'), 'Bid response pack');
     assert.ok(brief.manifest.every((row) => row.status === 'PENDING'));
+    assert.ok(brief.manifest.every((row) => /^Not recorded — the platform cannot see the buyer’s portal/.test(row.portalLocation)));
     assert.ok(brief.deadlines.some((row) => row.label === 'Tender return'));
     assert.equal(brief.readyForAuthorisedSubmission, false);
     assert.match(brief.summary, /Not yet ready for authorised submission/);
+  });
+
+  it('takes the approvals on one sign-off record, by the people with the authority, and shows one stale when what it approved changes', () => {
+    const refused = (fn: () => unknown, code: string) => assert.throws(fn, (error: { code?: string }) => error.code === code, code);
+    refused(() => bidsignoff.approve(ctx('qs'), { area: 'COMMERCIAL', note: 'Checked the rates' }), 'NOTHING_TO_APPROVE');
+    refused(() => bidsignoff.approve(ctx('qs'), { area: 'CONTRACT', note: 'Read the clauses' }), 'ACCESS_DENIED');
+    refused(() => bidsignoff.approve(ctx('planner'), { area: 'COMMERCIAL', note: 'Checked the rates' }), 'ACCESS_DENIED');
+    refused(() => bidsignoff.approve(ctx('qs'), { area: 'SIGNATORY', note: 'ok' }), 'SIGN_OFF_NOTE_REQUIRED');
+    refused(() => bidsignoff.approve(ctx('qs'), { area: 'SIGNATORY', note: 'Read every answer' }), 'NOT_A_SIGNATORY');
+
+    // A signatory for reports only does not sign a tender; one for quotations does.
+    setIssuerProfile(platform, seed.users.owner!.auth, { signatories: [{ userId: seed.users.qs!.id, title: 'Commercial Director', documents: ['report'] }] });
+    refused(() => bidsignoff.approve(ctx('qs'), { area: 'SIGNATORY', note: 'Read every answer' }), 'NOT_A_SIGNATORY');
+    setIssuerProfile(platform, seed.users.owner!.auth, { signatories: [{ userId: seed.users.qs!.id, title: 'Commercial Director', documents: ['quotation'] }] });
+    const entry = bidsignoff.approve(ctx('qs'), { area: 'SIGNATORY', note: 'Read every answer against the questions' });
+    assert.equal(entry.title, 'Commercial Director');
+    let brief = tenderbrief.tenderBrief(ctx('qs'));
+    const a5 = () => brief.approvals.find((approval) => approval.id === 'A5')!;
+    assert.equal(a5().status, 'RECORDED');
+    assert.match(a5().detail, /by the Commercial Director/);
+
+    // An answer rewritten after the signature: the approval stays on the record, and is asked for again.
+    const pack = bidresponse.bidResponsePack(ctx('qs'), bidresponse.bidResponsePosition(ctx('qs')).packs.at(-1)!.id);
+    const section = pack.sections.find((candidate) => candidate.body && candidate.body.length > 0)!;
+    bidresponse.reviseSection(ctx('qs'), { packId: pack.id, key: section.key, body: [...section.body!, 'A further sentence added after sign-off.'] });
+    brief = tenderbrief.tenderBrief(ctx('qs'));
+    assert.equal(a5().status, 'PENDING');
+    assert.equal(a5().stale, true);
+    assert.match(a5().detail, /has changed since/);
+    const position = bidsignoff.signOffPosition(ctx('qs'));
+    assert.equal(position.approvals.find((approval) => approval.area === 'SIGNATORY')!.status, 'STALE');
+    assert.equal(position.approvals.find((approval) => approval.area === 'SIGNATORY')!.latest?.approvedBy, seed.users.qs!.id);
+    bidsignoff.approve(ctx('qs'), { area: 'SIGNATORY', note: 'Read the revised answer' });
+    brief = tenderbrief.tenderBrief(ctx('qs'));
+    assert.equal(a5().status, 'RECORDED');
+  });
+
+  it('records where each return goes on the portal, and verifies it only when a person confirms it is there', () => {
+    const refused = (fn: () => unknown, code: string) => assert.throws(fn, (error: { code?: string }) => error.code === code, code);
+    refused(() => bidsignoff.recordPortalFile(ctx('qs'), { reference: 'R99', portalLocation: 'Envelope 1' }), 'RETURN_NOT_FOUND');
+    refused(() => bidsignoff.confirmPortalUpload(ctx('qs'), { reference: 'R4', note: 'Opened it on the portal' }), 'PORTAL_LOCATION_FIRST');
+    refused(() => bidsignoff.recordPortalFile(ctx('qs'), { reference: 'R4', portalLocation: ' ' }), 'PORTAL_LOCATION_REQUIRED');
+    refused(() => bidsignoff.recordPortalFile(ctx('pm'), { reference: 'R4', portalLocation: 'Envelope 1' }), 'ACCESS_DENIED');
+
+    bidsignoff.recordPortalFile(ctx('qs'), { reference: 'R4', portalLocation: 'Envelope 1 — Qualification, slot 4', fileName: 'R4-insurance.pdf', version: 'v2' });
+    let row = tenderbrief.tenderBrief(ctx('qs')).manifest.find((entry) => entry.id === 'R4')!;
+    assert.equal(row.portalLocation, 'Envelope 1 — Qualification, slot 4');
+    assert.equal(row.fileName, 'R4-insurance.pdf');
+    assert.equal(row.version, 'v2');
+    assert.equal(row.status, 'PENDING');
+    assert.match(row.detail, /Not yet confirmed as uploaded/);
+
+    refused(() => bidsignoff.confirmPortalUpload(ctx('qs'), { reference: 'R4', note: 'ok' }), 'UPLOAD_NOTE_REQUIRED');
+    bidsignoff.confirmPortalUpload(ctx('qs'), { reference: 'R4', note: 'Uploaded, opened, name accepted by the portal' });
+    row = tenderbrief.tenderBrief(ctx('qs')).manifest.find((entry) => entry.id === 'R4')!;
+    assert.equal(row.status, 'VERIFIED');
+    assert.equal(row.uploaded?.by, seed.users.qs!.id);
+
+    // A different file recorded against it needs confirming on the portal in turn.
+    bidsignoff.recordPortalFile(ctx('qs'), { reference: 'R4', portalLocation: 'Envelope 1 — Qualification, slot 4', fileName: 'R4-insurance.pdf', version: 'v3' });
+    row = tenderbrief.tenderBrief(ctx('qs')).manifest.find((entry) => entry.id === 'R4')!;
+    assert.equal(row.status, 'PENDING');
+    assert.equal(row.uploaded, undefined);
+    bidsignoff.confirmPortalUpload(ctx('qs'), { reference: 'R4', note: 'Version 3 uploaded and opened' });
+
+    // A file the platform produces is not verified by a portal confirmation alone: it must be ready too.
+    bidsignoff.recordPortalFile(ctx('qs'), { reference: 'R1', portalLocation: 'Envelope 3 — Commercial' });
+    bidsignoff.confirmPortalUpload(ctx('qs'), { reference: 'R1', note: 'Uploaded and opened on the portal' });
+    row = tenderbrief.tenderBrief(ctx('qs')).manifest.find((entry) => entry.id === 'R1')!;
+    assert.equal(row.status, 'PENDING', 'the job is not priced');
+    assert.equal(row.portalLocation, 'Envelope 3 — Commercial');
+
+    const routes = new Set(ROUTES.map((route) => `${route.method} ${route.pattern}`));
+    for (const path of ['GET /v1/projects/:projectId/tender/signoff', 'POST /v1/projects/:projectId/tender/signoff/approve', 'POST /v1/projects/:projectId/tender/signoff/file', 'POST /v1/projects/:projectId/tender/signoff/file/confirm']) {
+      assert.ok(routes.has(path), path);
+    }
   });
 
   it('quotes each answer from the documents it sends', () => {

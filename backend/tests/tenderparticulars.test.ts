@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { mergeParticulars, particularsFromReading } from '../src/domain/tenderparticulars.ts';
+import { cleanScale, mergeParticulars, particularsFromReading } from '../src/domain/tenderparticulars.ts';
+import { minimumScoreOf } from '../src/domain/answercheck.ts';
 import { checkTenderReading } from '../src/domain/tenderreading.ts';
 
 /**
@@ -97,5 +98,23 @@ describe('the checks on what the tender says about itself', () => {
 
   it('notes that qualified bids are not permitted', () => {
     assert.ok(ids({ ...base, evaluation: { qualificationsPermitted: false } }).includes('NO_QUALIFICATIONS'));
+  });
+});
+
+describe('the scale and the minimum, as published', () => {
+  it('keeps a scale of distinct marks with their words, lowest first, and nothing less than two', () => {
+    assert.deepEqual(cleanScale([{ score: 3, descriptor: 'Good' }, { score: 0, descriptor: 'None' }, { score: 3, descriptor: 'dup' }, { score: 1, descriptor: '' }]), [
+      { score: 0, descriptor: 'None' },
+      { score: 3, descriptor: 'Good' },
+    ]);
+    assert.equal(cleanScale([{ score: 5, descriptor: 'Excellent' }]), undefined);
+  });
+
+  it('reads a minimum mark per answer, and not a percentage threshold on the whole', () => {
+    assert.equal(minimumScoreOf('a score of 2 on every quality question'), 2);
+    assert.equal(minimumScoreOf('minimum of 3 on each question'), 3);
+    assert.equal(minimumScoreOf('a minimum score of 60% overall'), undefined);
+    assert.equal(minimumScoreOf('minimum 60 per cent'), undefined);
+    assert.equal(minimumScoreOf(undefined), undefined);
   });
 });

@@ -736,8 +736,14 @@ export function analyseITT(
     targetMarginPercent?: number;
     /** What the tender says about itself — documents, precedence, evaluation, dates — where it was read. */
     particulars?: TenderParticulars;
-    /** People's reviews of lines on the matrix this one replaces, carried so a re-read does not lose them. */
+    /**
+     * Decisions people took on the matrix this one replaces — reviews, waivers,
+     * confirmed undertakings — carried so a re-read does not lose them. The
+     * caller passes only those whose line reads the same.
+     */
     reviews?: Array<{ reference: string }>;
+    waivers?: Array<{ reference: string }>;
+    undertakings?: Array<{ reference: string }>;
   },
 ): ITTAnalysis {
   authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
@@ -859,9 +865,11 @@ export function analyseITT(
       clarifications,
       readyToPrice,
       ...(input.particulars ? { particulars: input.particulars } : {}),
-      ...(input.reviews && input.reviews.length > 0
-        ? { reviews: input.reviews.filter((review) => matrix.some((line) => line.reference === review.reference)) }
-        : {}),
+      ...Object.fromEntries(
+        (['reviews', 'waivers', 'undertakings'] as const)
+          .map((key) => [key, (input[key] ?? []).filter((entry) => matrix.some((line) => line.reference === entry.reference))] as const)
+          .filter(([, entries]) => entries.length > 0),
+      ),
       analysedAt: new Date().toISOString(),
       analysedBy: ctx.auth.actorId,
     },

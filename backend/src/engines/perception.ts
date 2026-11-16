@@ -1749,7 +1749,12 @@ export async function confirm(
     let mergedRequirements = requirements;
     let mergedTerms = commercial;
     let mergedParticulars = particularsFromReading(extraction, sourceDocs);
+    // The decisions people took on the matrix this one replaces — reviews,
+    // waivers, confirmed undertakings — carried across where the line they were
+    // taken on reads the same; a line whose wording changed is decided again.
     let carriedReviews: Array<{ reference: string }> = [];
+    let carriedWaivers: Array<{ reference: string }> = [];
+    let carriedUndertakings: Array<{ reference: string }> = [];
     // The tender's own identity — the reference, client and return date it is
     // known by. On a first reading these come from the document (or the
     // invitation when the document did not state one). On a re-read they are
@@ -1768,7 +1773,16 @@ export async function confirm(
         mergedRequirements = mergeRequirements(requirementsFromMatrix(priorMatrix), requirements);
         mergedTerms = mergeCommercialTerms(prior.state.commercialTerms as CommercialTerms | undefined, commercial);
         mergedParticulars = mergeParticulars(prior.state.particulars as TenderParticulars | undefined, mergedParticulars);
-        carriedReviews = (prior.state.reviews as Array<{ reference: string }> | undefined) ?? [];
+        const unchanged = new Set(
+          priorMatrix
+            .filter((line) => mergedRequirements.some((next) => next.reference === line.reference && next.requirement === line.requirement))
+            .map((line) => line.reference),
+        );
+        const keep = <T extends { reference: string }>(entries: unknown): T[] =>
+          ((entries as T[] | undefined) ?? []).filter((entry) => unchanged.has(entry.reference));
+        carriedReviews = keep(prior.state.reviews);
+        carriedWaivers = keep(prior.state.waivers);
+        carriedUndertakings = keep(prior.state.undertakings);
         const priorReference = String(prior.state.reference ?? '').trim();
         const priorClient = String(prior.state.clientName ?? '').trim();
         const priorReturnBy = String(prior.state.returnBy ?? '').trim();
@@ -1788,6 +1802,8 @@ export async function confirm(
       terms: mergedTerms,
       particulars: mergedParticulars,
       ...(carriedReviews.length > 0 ? { reviews: carriedReviews } : {}),
+      ...(carriedWaivers.length > 0 ? { waivers: carriedWaivers } : {}),
+      ...(carriedUndertakings.length > 0 ? { undertakings: carriedUndertakings } : {}),
       ...(input.targetMarginPercent !== undefined ? { targetMarginPercent: input.targetMarginPercent } : {}),
     });
 

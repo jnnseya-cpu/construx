@@ -34738,7 +34738,8 @@ have, so their badges rendered without colour; they use `ok`.
 
 **Recorded, not changed:** a waiver or a confirmed undertaking on a matrix is
 not carried when the pack is read again — the new matrix starts without them
-(reviews now are carried). `frontend/pages/bidon.js` uses the same missing
+(reviews now are carried). *Fixed in "the tender follow-ups" below.*
+`frontend/pages/bidon.js` uses the same missing
 `good` badge tone for a won bid.
 
 ## 2026-11 the tender process, group B: contract, risk, recommendation, buyer questions
@@ -34872,7 +34873,8 @@ only — **impact, urgency, owner and how it is priced meanwhile**, shown in a
 **Recorded, not changed:** the risk screen's category list
 (`shared/vocabulary.js` `RISK_CATEGORY`) offers `GROUND` and `LABOUR`, which the
 engine's `RiskCategory` type does not name (it has `GROUND_CONDITIONS`), and its
-register form sends a fixed 400-day project duration to the scoring.
+register form sends a fixed 400-day project duration to the scoring. *Fixed in
+"the tender follow-ups" below.*
 
 ## 2026-11 the tender process, group C: scope, answers, price, the brief, batches
 
@@ -34954,19 +34956,18 @@ answers" on each response pack. The reading now takes, per scored question, its
 top of the tender on Pipeline & Bids.
 
 - **The brief**: the recommendation, the binding deadlines (with their zones),
-  what decides it, and five approvals with their state — the bid decision, the
-  commercial approval of the price (an approved or issued quotation on this job's
-  estimate), the programme (a confirmed tender programme), the contract sign-off
-  (every clause on the tender review signed), and the signatory (the response
-  pack issued).
+  what decides it, and five approvals with their state. *A2 to A5 now read from
+  the one sign-off record — see "the tender follow-ups" below; as first built they
+  were read from the quotation, the programme, the tender review and the pack's
+  issue.*
 - **The nine outputs**, D1 to D9, each **Ready for Review, In Draft or Blocked**
   with exactly what stands in the way — read from the record each output already
   is, so the brief cannot disagree with the screen beneath it.
 - **The submission manifest**: every return the invitation lists, what produces it
   on the platform (the response pack, the pricing schedule, the tender programme,
   the quotation — or prepared outside and uploaded), its version, owner, status,
-  and the portal location — which the platform cannot see, so it is always shown as
-  not verified, and portal-only checks are listed as pending.
+  and the portal location. *The location is now recorded per return by a person,
+  with a confirmation that it is on the portal — see "the tender follow-ups".*
 - **Ready for Authorised Submission** only when the recommendation is to bid,
   every output is ready, every approval is recorded and every return is verified.
 
@@ -35033,4 +35034,113 @@ tone.
 platform reports coverage instead, and the red team's findability); the buyer's
 portal location for each file (not visible to the platform); a single
 "sign-off set" record for commercial, programme and signatory approval (the brief
-reads each from the record it already lives on).
+reads each from the record it already lives on). *All three built in "the tender
+follow-ups" below.*
+
+## 2026-11 the tender follow-ups: the scale, the sign-off record, the portal, re-reads, the risk screen
+
+The five items the group A–C work left as not built or recorded-not-changed, each
+now built, tested and walked in the browser on the local stand-in.
+
+### An indicative score on the buyer's own scale
+
+`domain/answercheck.ts` (`indicativeScore`, `minimumScoreOf`),
+`domain/tenderparticulars.ts` (`EvaluationRules.scoringScale`, `cleanScale`),
+`domain/matrixreview.ts` (`recordScoringScale`),
+`POST /v1/pipeline/analyses/:analysisId/scoring-scale`, event
+`SCORING_SCALE_RECORDED`; the "Check the answers" modal and its "Record the
+buyer's scale" button on Pipeline & Bids.
+
+- The reading now looks for the published **scoring scale** — each mark and the
+  words that earn it. Where the reading did not find it, a person records it by
+  hand with where it is published; the recorded scale wins over the read one.
+- Each drafted answer is placed on that scale **by rule, in code**: coverage of
+  its sub-questions (half the weight), of its scoring criteria (a fifth), concrete
+  evidence — figures, dates and named roles (a fifth) — and being within the limit
+  (a tenth). A component the question does not have is dropped and the rest
+  re-weighted. The quality is placed on the nearest band; an undrafted answer
+  takes the lowest. With the question's weighting, it gives indicative marks, and
+  the total of those.
+- A published **minimum mark per question** ("a score of 2 on every question") is
+  read and an answer below it is flagged. A percentage threshold on the whole is
+  not mistaken for a per-question mark.
+- It is labelled throughout as **an estimate by rule, not the buyer's mark**, with
+  what would raise each answer. With no scale published or recorded, no score is
+  given and the screen says so.
+
+### One sign-off record for the bid
+
+`domain/bidsignoff.ts`, entity `BidSignOff` (`ESTIMATE_TENDER`, `COMMERCIAL_L3`),
+events `BID_SIGN_OFF_RECORDED` and `SUBMISSION_FILE_RECORDED` (human acts),
+`GET /v1/projects/:projectId/tender/signoff`, `POST …/tender/signoff/approve`;
+the Approve buttons on the brief's approvals.
+
+- Four approvals on **one record per tender**, each by someone with the
+  authority for it: the **price** (`ESTIMATE_TENDER` approve), the **programme**
+  (`WORKPACKAGES_TASKS` approve), the **contract** (`CONTRACTS_CLAIMS` approve,
+  refused while any clause on the tender review is unsigned) and the
+  **signatory** (a person named in the company's issuer details as a signatory
+  for quotations or contracts — a tender is an offer to contract). Each needs a
+  note of what was checked, and is refused where there is nothing yet to approve.
+- Each approval holds a **snapshot of exactly what was approved** — the estimate
+  and its total; the confirmed programme and its dates; the clause count; the
+  pack and a hash of every answer. When that changes afterwards, the approval is
+  shown **stale**: kept on the record, and asked for again.
+- The brief's A2 to A5 now read from this record, so a stale approval counts as
+  pending. A1, the bid decision, still reads from the opportunity.
+
+### Where each return goes on the buyer's portal
+
+`POST …/tender/signoff/file` and `…/tender/signoff/file/confirm`; the "Record
+location", "Change" and "Confirm uploaded" buttons in the manifest's Portal column.
+
+- The platform still cannot see the buyer's portal, and does not claim to. The
+  person who knows it records, per return, **where it goes** (envelope, section or
+  upload slot), the file name and the version; then **confirms it was uploaded and
+  checked**, saying what was checked. Recording a different file clears the
+  confirmation.
+- A manifest row is **verified only when the file is ready and its upload is
+  confirmed**. A file made outside the platform is verified by the confirmation;
+  one the platform produces must also be ready (a pricing schedule priced and
+  commercially approved, for example). The general "portal-only checks pending"
+  line is gone from D9; each unconfirmed return is listed there instead.
+
+### Re-reading keeps the decisions on unchanged lines
+
+`engines/perception.ts` (the ITT confirm branch), `domain/itt.ts`.
+
+- Reading the pack again now carries forward **waivers and confirmed
+  undertakings**, as it already carried line reviews — but **only for a line
+  whose wording is unchanged**. A line the new reading words differently starts
+  without them, because what was waived or undertaken was the old wording.
+
+### The risk screen
+
+`engines/maths/risk.ts` (`RISK_CATEGORIES`), `shared/vocabulary.js`,
+`frontend/pages/risk.js`, `frontend/pages/pipeline.js`, the risk route.
+
+- The screen's category list is now **exactly the engine's** (ten categories;
+  supply chain is labelled "Supply chain, labour and materials"), and the risk
+  route refuses any other category by its schema. A test holds the three lists
+  equal.
+- The project length used for scoring is now **the project's own**, from its
+  planned start and completion, shown prefilled and editable on the register and
+  rescore forms and on the tender-risk form; the fixed 400 days and the 1-day
+  fallback are gone.
+
+**Verified:** `npm test` 8,623 pass, typecheck clean. New tests:
+`tenderreading.test.ts` (carry-over only on unchanged wording; the indicative
+score on a recorded scale; the sign-off refusals, authority, signatory scope,
+staleness after an answer is rewritten and re-approval; the portal location, the
+confirmation, re-recording clearing it, and a produced file needing to be ready),
+`tenderparticulars.test.ts` (`cleanScale`, `minimumScoreOf`),
+`riskcategories.test.ts`. Walked in a real browser on the local stand-in: approval
+refused with the platform's reason when nothing is priced and when the approver
+is not a signatory; a portal location recorded and confirmed and shown in the
+manifest with the row still pending for its unapproved quotation; the scale
+recorded by hand and each answer scored on it with what would raise it; the risk
+form showing the ten categories and 149 days from the project's dates. No page
+errors.
+
+**Not proved here:** whether a real model finds the published scale in a real
+pack — the stand-in returns a fixed reading, and no provider is called.

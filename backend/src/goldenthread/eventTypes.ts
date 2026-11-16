@@ -801,6 +801,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // A person's review of one matrix line: confirmed, assumed, conflicting,
   // missing, or a decision with an owner and a date. Human judgement, never an agent's.
   def('REQUIREMENT_REVIEWED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
+  // The buyer's scoring scale, entered by a person where the reading did not find it.
+  def('SCORING_SCALE_RECORDED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
+  // One sign-off record per tender: the price, the programme, the contract and
+  // the signatory, each approved by a person with the authority for it; and
+  // where each return goes on the buyer's portal, with a person's confirmation
+  // that it is there. Human acts, never an agent's.
+  def('BID_SIGN_OFF_RECORDED', 'BidSignOff', 'APPROVE', 'PROCUREMENT', { creates: true }),
+  def('SUBMISSION_FILE_RECORDED', 'BidSignOff', 'UPDATE', 'PROCUREMENT', { creates: true }),
   // A compliance undertaking confirmed: the agent drafts the statement, a person
   // confirms it is true, so the confirmation is a human act, not aiAllowed.
   def('REQUIREMENT_UNDERTAKEN', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),

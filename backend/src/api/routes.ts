@@ -180,6 +180,8 @@ import * as bidreview from '../domain/bidreview.ts';
 import * as buyerquestions from '../domain/buyerquestions.ts';
 import * as answercheck from '../domain/answercheck.ts';
 import * as pricecheck from '../domain/pricecheck.ts';
+import { RISK_CATEGORIES } from '../engines/maths/risk.ts';
+import * as bidsignoff from '../domain/bidsignoff.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -5361,6 +5363,36 @@ export const ROUTES: Route[] = [
         tenantContext(platform, ctx),
         ctx.params.analysisId as string,
         body<Parameters<typeof matrixreview.reviewRequirement>[2]>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/analyses/:analysisId/scoring-scale',
+    description: 'Record the buyer’s scoring scale — each mark and the words that earn it — where the reading did not find it, with where it is published',
+    schema: {
+      type: 'object',
+      required: ['bands', 'source'],
+      properties: {
+        bands: {
+          type: 'array',
+          minItems: 2,
+          maxItems: 21,
+          items: {
+            type: 'object',
+            required: ['score', 'descriptor'],
+            properties: { score: { type: 'number', minimum: 0 }, descriptor: { type: 'string', minLength: 1, maxLength: 1000 } },
+            additionalProperties: false,
+          },
+        },
+        source: { type: 'string', minLength: 1, maxLength: 300 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      matrixreview.recordScoringScale(
+        tenantContext(platform, ctx),
+        ctx.params.analysisId as string,
+        body<{ bands: Array<{ score: number; descriptor: string }>; source: string }>(ctx),
       ),
   },
   {
@@ -21968,7 +22000,7 @@ export const ROUTES: Route[] = [
         // so a browser form need not invent an id.
         id: stringField,
         title: stringField,
-        category: stringField,
+        category: { type: 'string', enum: [...RISK_CATEGORIES] },
         // cause → event → impact as one record, and who carries it.
         cause: stringField,
         allocation: { type: 'string', enum: ['CLIENT', 'CONTRACTOR', 'SHARED'] },
@@ -28450,6 +28482,55 @@ export const ROUTES: Route[] = [
     description:
       'The executive brief: the recommendation, the binding deadlines, the decision drivers and the approvals; the nine outputs of the bid review, each Ready for Review, In Draft or Blocked with what stands in the way; and the submission manifest',
     handler: (platform, ctx) => tenderbrief.tenderBrief(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/signoff',
+    readOnly: true,
+    description:
+      'The one sign-off record for the bid: the commercial, programme, contract and signatory approvals, each current or stale against what it approved; and where each return goes on the buyer’s portal, with whether a person confirmed it is there',
+    handler: (platform, ctx) => bidsignoff.signOffPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/signoff/approve',
+    description: 'Approve one area of the bid — the price, the programme, the contract or, as an authorised signatory, the submission — recording exactly what was approved',
+    schema: {
+      type: 'object',
+      required: ['area', 'note'],
+      properties: { area: { type: 'string', enum: ['COMMERCIAL', 'PROGRAMME', 'CONTRACT', 'SIGNATORY'] }, note: { type: 'string', minLength: 1, maxLength: 2000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => bidsignoff.approve(projectContext(platform, ctx), body<Parameters<typeof bidsignoff.approve>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/signoff/file',
+    description: 'Record where a return goes on the buyer’s portal — the section or upload slot, the file name and the version',
+    schema: {
+      type: 'object',
+      required: ['reference', 'portalLocation'],
+      properties: {
+        reference: { type: 'string', minLength: 1, maxLength: 100 },
+        portalLocation: { type: 'string', minLength: 1, maxLength: 300 },
+        fileName: { type: 'string', maxLength: 300 },
+        version: { type: 'string', maxLength: 100 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => bidsignoff.recordPortalFile(projectContext(platform, ctx), body<Parameters<typeof bidsignoff.recordPortalFile>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/signoff/file/confirm',
+    description: 'Confirm a return was uploaded and checked on the buyer’s portal, saying what was checked',
+    schema: {
+      type: 'object',
+      required: ['reference', 'note'],
+      properties: { reference: { type: 'string', minLength: 1, maxLength: 100 }, note: { type: 'string', minLength: 1, maxLength: 2000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => bidsignoff.confirmPortalUpload(projectContext(platform, ctx), body<Parameters<typeof bidsignoff.confirmPortalUpload>[1]>(ctx)),
   },
   {
     method: 'GET',

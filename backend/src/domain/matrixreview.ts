@@ -2,6 +2,7 @@ import { DomainError } from '../core/errors.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
 import { ALL_ROLES, type Role } from '../identity/roles.ts';
 import { complianceMatrix, liveWaivers, type MatrixLine } from './itt.ts';
+import { cleanScale, type ScaleBand } from './tenderparticulars.ts';
 import { describeQuoteSource, type QuoteSource } from './tendersource.ts';
 
 /**
@@ -302,4 +303,42 @@ export function reviewRequirement(
     reason: `${input.reference}: ${input.status.toLowerCase().replace('_', ' ')} — ${basis}`,
   });
   return matrixPosition(ctx, analysisId).lines.find((entry) => entry.reference === input.reference)!;
+}
+
+/**
+ * The buyer's scoring scale, recorded by a person where the reading did not
+ * find it (or found it wrong). It wins over the one read, and the record says
+ * where it was taken from.
+ */
+export function recordScoringScale(
+  ctx: EngineContext,
+  analysisId: string,
+  input: { bands: Array<{ score: number; descriptor: string }>; source: string },
+): { bands: ScaleBand[] } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+  const bands = cleanScale(input.bands);
+  if (!bands) {
+    throw new DomainError(
+      'SCALE_INVALID',
+      'A scale is at least two marks, each a number of zero or more with the words the buyer publishes for it, and no mark twice.',
+      422,
+      [{ field: 'bands', message: 'two or more marks, each with its descriptor' }],
+    );
+  }
+  const source = input.source.trim();
+  if (source.length < 5) {
+    throw new DomainError('SCALE_SOURCE_REQUIRED', 'Say where the scale is published — the document and clause — so it can be checked.', 422, [
+      { field: 'source', message: 'the document and clause' },
+    ]);
+  }
+  const record = ctx.ledger.require({ refType: 'ITTAnalysis', refId: analysisId });
+  if (record.tenantId !== ctx.tenantId) throw new DomainError('ITT_ANALYSIS_NOT_FOUND', `No compliance matrix ${analysisId}`, 404);
+  write(ctx, {
+    eventType: 'SCORING_SCALE_RECORDED',
+    entity: { refType: 'ITTAnalysis', refId: analysisId },
+    projectId: record.projectId,
+    nextState: { ...(record.state as Record<string, unknown>), scoringScale: bands, scoringScaleSource: source },
+    reason: `Scoring scale recorded from ${source}`,
+  });
+  return { bands };
 }

@@ -335,6 +335,24 @@ export async function risk(root) {
     }
   });
 
+  // The project's planned length, which every score is normalised against — a
+  // fixed figure scored a three-month job as if it ran for over a year.
+  const plannedDays = (() => {
+    const start = Date.parse(state.project?.plannedStart ?? '');
+    const end = Date.parse(state.project?.plannedCompletion ?? '');
+    return Number.isFinite(start) && Number.isFinite(end) && end > start ? Math.round((end - start) / 86_400_000) : '';
+  })();
+  const durationField = {
+    name: 'projectDurationDays',
+    label: 'Project duration (days)',
+    type: 'number',
+    min: 1,
+    value: plannedDays,
+    hint: plannedDays
+      ? 'From the project’s planned start and completion. Delay is scored against it.'
+      : 'The project has no planned start and completion, so give its length — delay is scored against it.',
+  };
+
   const COMMANDS = {
     risk: {
       title: 'Register risk',
@@ -351,6 +369,7 @@ export async function risk(root) {
         { name: 'daysOptimistic', label: 'Delay — best case (days)', type: 'number' },
         { name: 'daysMostLikely', label: 'Delay — most likely (days)', type: 'number' },
         { name: 'daysPessimistic', label: 'Delay — worst case (days)', type: 'number' },
+        durationField,
       ],
       transform: (v) => ({
         id: '',
@@ -360,7 +379,7 @@ export async function risk(root) {
         costImpact: { optimistic: v.costOptimistic, mostLikely: v.costMostLikely, pessimistic: v.costPessimistic },
         scheduleImpactDays: { optimistic: v.daysOptimistic, mostLikely: v.daysMostLikely, pessimistic: v.daysPessimistic },
         projectValueMinor: Number(state.project?.contractValueMinor ?? 0),
-        projectDurationDays: 400,
+        projectDurationDays: Number(v.projectDurationDays),
       }),
     },
     rescore: {
@@ -368,12 +387,12 @@ export async function risk(root) {
       intent:
         'The P80 contingency in every tender and cost report is computed from these scores. A register frozen at the day it was written prices the job against risks as they were understood before anybody had been on site.',
       path: (collected) => `/v1/projects/${projectId}/risk/${collected.riskId}/rescore`,
-      transform: ({ riskId, costOptimistic, costMostLikely, costPessimistic, daysOptimistic, daysMostLikely, daysPessimistic, ...rest }) => ({
+      transform: ({ riskId, costOptimistic, costMostLikely, costPessimistic, daysOptimistic, daysMostLikely, daysPessimistic, projectDurationDays, ...rest }) => ({
         ...rest,
         costImpact: { optimistic: costOptimistic, mostLikely: costMostLikely, pessimistic: costPessimistic },
         scheduleImpactDays: { optimistic: daysOptimistic, mostLikely: daysMostLikely, pessimistic: daysPessimistic },
         projectValueMinor: Number(state.project?.contractValueMinor ?? 0),
-        projectDurationDays: 400,
+        projectDurationDays: Number(projectDurationDays),
       }),
       submitLabel: 'Rescore',
       fields: [
@@ -389,6 +408,7 @@ export async function risk(root) {
         { name: 'daysPessimistic', label: 'Delay — worst case (days)', type: 'number' },
         { name: 'reason', label: 'What changed', type: 'textarea',
           hint: 'A score that moves without a reason is an opinion. This is the answer to "why did the exposure halve the month before the tender went in".' },
+        durationField,
       ],
     },
     observation: {

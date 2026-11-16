@@ -473,7 +473,11 @@ function briefCard(brief) {
       <div>
         <h3>Approvals</h3>
         <ul style="margin:6px 0 0 18px;font-size:13px">${brief.approvals.map(
-          (approval) => html`<li>${approval.id} ${approval.what}: ${badge(approval.status.toLowerCase(), approval.status === 'RECORDED' ? 'ok' : 'warn')} <span style="color:var(--text-3)">${approval.detail}</span></li>`,
+          (approval) => html`<li>${approval.id} ${approval.what}: ${badge(approval.stale ? 'stale' : approval.status.toLowerCase(), approval.status === 'RECORDED' ? 'ok' : 'warn')} <span style="color:var(--text-3)">${approval.detail}</span>${
+            approval.area && approval.status !== 'RECORDED'
+              ? html` <button class="btn quiet sm" data-command="signoff-approve" data-area="${approval.area}" data-what="${approval.what}">${approval.stale ? 'Approve again' : 'Approve'}</button>`
+              : ''
+          }</li>`,
         )}</ul>
       </div>
     </div>
@@ -505,7 +509,15 @@ function briefCard(brief) {
                 html`<span style="font-size:12px">${row.producedBy}</span>`,
                 row.version ?? '—',
                 row.owner ? humanise(row.owner) : '—',
-                html`<span style="font-size:11.5px;color:var(--text-3)">${row.portalLocation}</span>`,
+                html`<span style="font-size:11.5px;color:var(--text-3)">${row.portalLocation}${row.fileName ? html`<br>${row.fileName}` : ''}${
+                  row.uploaded ? html`<br>Confirmed on the portal ${row.uploaded.at.slice(0, 10)}` : ''
+                }</span><br><button class="btn quiet sm" data-command="signoff-file" data-ref="${row.id}" data-file="${row.file}">${
+                  row.portalLocation.startsWith('Not recorded') ? 'Record location' : 'Change'
+                }</button>${
+                  !row.portalLocation.startsWith('Not recorded') && !row.uploaded
+                    ? html` <button class="btn quiet sm" data-command="signoff-confirm" data-ref="${row.id}" data-file="${row.file}">Confirm uploaded</button>`
+                    : ''
+                }`,
                 html`${badge(row.status === 'VERIFIED' ? 'verified' : 'pending', row.status === 'VERIFIED' ? 'ok' : 'warn')}<br><span style="font-size:11.5px">${row.detail}</span>`,
               ]),
             })}`
@@ -2908,6 +2920,8 @@ export async function pipeline(root) {
                                   ? html`<span style="flex:none;display:flex;gap:7px;flex-wrap:wrap">
                                       <button class="btn sm" data-download-pack="${pack.id}">Download submission (PDF)</button>
                                       <button class="btn quiet sm" data-copy-pack="${pack.id}">Copy all answers</button>
+                                      <button class="btn quiet sm" data-command="record-scale" data-analysis="${pack.analysisId}"
+                                        title="Record the buyer’s scoring scale — each mark and the words that earn it — where the reading did not find it.">Record the buyer’s scale</button>
                                       <button class="btn quiet sm" data-answer-check="${pack.id}" title="Each answer against the sub-questions and scoring criteria of its question, and every date, duration and social-value commitment against the programme, the estimate and the contract dates.">Check the answers</button>
                                     </span>`
                                   : ''
@@ -6008,8 +6022,16 @@ export async function pipeline(root) {
           'not that it is answered well. Commitments are checked against the confirmed programme, the priced estimate and the contract dates.',
         content: html`<div data-answer-check-result>
           <p class="metric-sub">${check.summary}</p>
+          ${
+            check.scale
+              ? html`<p style="font-size:12.5px">Scale ${check.scale.from === 'RECORDED_BY_HAND' ? 'recorded by hand' : 'read from the pack'}:
+                  ${check.scale.bands.map((band) => `${band.score} ${band.descriptor}`).join(' · ')}.
+                  The indicative score is an estimate by rule — coverage of the sub-questions and the criteria, concrete evidence, and the limit —
+                  placed on the buyer’s scale. It is not the buyer’s mark.</p>`
+              : ''
+          }
           ${table({
-            headers: ['Question', 'Words', 'Sub-questions', 'Scoring criteria', 'What would improve it'],
+            headers: ['Question', 'Words', 'Sub-questions', 'Scoring criteria', 'Indicative score', 'What would improve it'],
             rows: check.sections.map((section) => [
               html`<b>${section.key}</b><br><span style="font-size:12px">${section.title}</span>`,
               html`${section.words}${section.limit ? ` / ${section.limit}` : ''}${section.overLimit ? html` ${badge('over', 'bad')}` : ''}`,
@@ -6019,6 +6041,11 @@ export async function pipeline(root) {
                   )}</ul>`
                 : html`<span style="font-size:12px;color:var(--text-3)">none recorded</span>`,
               html`<span style="font-size:12px">${section.scoringCriteria ?? '—'}</span>`,
+              section.indicative
+                ? html`<b>${section.indicative.score} of ${section.indicative.of}</b> ${section.indicative.belowMinimum ? badge('below the minimum', 'bad') : ''}<br>
+                    <span style="font-size:11.5px">${section.indicative.descriptor}${section.indicative.marks !== undefined ? ` · ${section.indicative.marks} marks` : ''}</span><br>
+                    <span style="font-size:11px;color:var(--text-3)">${section.indicative.basis.join('; ')}</span>`
+                : html`<span style="font-size:12px;color:var(--text-3)">${check.scale ? 'not scored' : 'no published scale'}</span>`,
               section.improve.length > 0 ? html`<ul style="margin:0 0 0 14px;font-size:12px">${section.improve.map((line) => html`<li>${line}</li>`)}</ul>` : '—',
             ]),
           })}
@@ -6774,9 +6801,97 @@ export async function pipeline(root) {
   // on the project in focus; each refusal is shown as the platform states it.
   root.addEventListener('click', async (event) => {
     const button = event.target.closest(
-      '[data-command="draft-contract-review"], [data-command="register-tender-risk"], [data-command="send-scope-to-review"], [data-command="raise-discrepancy"], [data-command="model-cash"]',
+      '[data-command="draft-contract-review"], [data-command="register-tender-risk"], [data-command="send-scope-to-review"], [data-command="raise-discrepancy"], [data-command="model-cash"], [data-command="record-scale"], [data-command="signoff-approve"], [data-command="signoff-file"], [data-command="signoff-confirm"]',
     );
     if (!button || !projectId) return;
+    if (button.dataset.command === 'signoff-approve') {
+      const area = button.dataset.area;
+      const done = await command({
+        title: `Approve: ${button.dataset.what}`,
+        intent:
+          {
+            COMMERCIAL: 'You approve the price as it stands in the latest estimate. If the estimate changes afterwards, this approval is shown as stale and asked for again.',
+            PROGRAMME: 'You approve the confirmed tender programme and its dates. A different programme confirmed later makes this approval stale.',
+            CONTRACT: 'You approve the contract position: every clause on the tender review signed off. A clause added or changed later makes this approval stale.',
+            SIGNATORY: 'As a named signatory for the company’s quotations or contracts, you approve the submission as the answers stand now. Any answer changed afterwards makes this approval stale.',
+          }[area] ?? '',
+        path: `/v1/projects/${projectId}/tender/signoff/approve`,
+        submitLabel: 'Approve',
+        fields: [{ name: 'note', label: 'What you checked', type: 'textarea', rows: 3, hint: 'Kept on the record with the approval.' }],
+        transform: (v) => ({ area, note: v.note }),
+        report: () => ({ title: 'Approved', message: `${button.dataset.what} is recorded on the sign-off record.`, tone: 'ok' }),
+      });
+      if (done) await draw();
+      return;
+    }
+    if (button.dataset.command === 'signoff-file') {
+      const position = await api.read(`/v1/projects/${projectId}/tender/signoff`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null);
+      const recorded = position?.files?.[button.dataset.ref] ?? {};
+      const done = await command({
+        title: `Where ${button.dataset.ref} goes on the portal`,
+        intent:
+          `${button.dataset.file}. The platform cannot see the buyer’s portal, so the place it goes — the envelope, section or upload slot — ` +
+          'is recorded here by whoever knows the portal, with the file name and version uploaded. Recording it again clears the upload confirmation, so the new file is confirmed on the portal in turn.',
+        path: `/v1/projects/${projectId}/tender/signoff/file`,
+        submitLabel: 'Record',
+        fields: [
+          { name: 'portalLocation', label: 'Where it goes on the portal', type: 'text', value: recorded.portalLocation ?? '', placeholder: 'Envelope 1 — Qualification, upload slot 4' },
+          { name: 'fileName', label: 'File name', type: 'text', required: false, value: recorded.fileName ?? '' },
+          { name: 'version', label: 'Version', type: 'text', required: false, value: recorded.version ?? '' },
+        ],
+        transform: (v) => ({
+          reference: button.dataset.ref,
+          portalLocation: v.portalLocation,
+          ...(v.fileName ? { fileName: v.fileName } : {}),
+          ...(v.version ? { version: v.version } : {}),
+        }),
+        report: (res) => ({ title: 'Recorded', message: `${res.reference} goes to ${res.portalLocation}.`, tone: 'ok' }),
+      });
+      if (done) await draw();
+      return;
+    }
+    if (button.dataset.command === 'signoff-confirm') {
+      const done = await command({
+        title: `Confirm ${button.dataset.ref} is on the portal`,
+        intent: `${button.dataset.file}. Confirm it was uploaded and checked on the buyer’s portal — this is the one check only a person can make.`,
+        path: `/v1/projects/${projectId}/tender/signoff/file/confirm`,
+        submitLabel: 'Confirm',
+        fields: [{ name: 'note', label: 'What you checked on the portal', type: 'textarea', rows: 3, placeholder: 'Uploaded, opened from the portal, name and size accepted' }],
+        transform: (v) => ({ reference: button.dataset.ref, note: v.note }),
+        report: () => ({ title: 'Confirmed', message: `${button.dataset.ref} is recorded as uploaded and checked.`, tone: 'ok' }),
+      });
+      if (done) await draw();
+      return;
+    }
+    if (button.dataset.command === 'record-scale') {
+      const done = await command({
+        title: 'Record the buyer’s scoring scale',
+        intent:
+          'Each mark an answer can be given and the words the buyer publishes for it, one per line, lowest first — exactly as ' +
+          'published. It is used to place each answer on the buyer’s own scale, as an estimate, and it replaces any scale read from the pack.',
+        path: `/v1/pipeline/analyses/${button.dataset.analysis}/scoring-scale`,
+        submitLabel: 'Record',
+        fields: [
+          { name: 'bands', label: 'The scale', type: 'textarea', rows: 7, placeholder: '0 | No response\n1 | Poor\n2 | Limited\n3 | Satisfactory\n4 | Good\n5 | Excellent',
+            hint: 'One mark per line: the mark, a bar, the words.' },
+          { name: 'source', label: 'Where it is published', type: 'text', placeholder: 'Volume 1, 2.3 Table 2' },
+        ],
+        transform: (v) => ({
+          source: v.source,
+          bands: String(v.bands ?? '')
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .map((line) => {
+              const [score, ...words] = line.split('|');
+              return { score: Number(String(score).trim()), descriptor: words.join('|').trim() };
+            }),
+        }),
+        report: (res) => ({ title: 'Scale recorded', message: `${res.bands.length} marks, from ${res.bands[0].score} to ${res.bands.at(-1).score}.`, tone: 'ok' }),
+      });
+      if (done) await draw();
+      return;
+    }
     if (button.dataset.command === 'model-cash') {
       const check = await api.read(`/v1/projects/${projectId}/tender/price-check`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null);
       if (!check?.estimateId) return;
@@ -6950,6 +7065,13 @@ export async function pipeline(root) {
         { name: 'daysMostLikely', label: 'Delay — most likely (days)', type: 'number' },
         { name: 'daysPessimistic', label: 'Delay — worst case (days)', type: 'number' },
         { name: 'decisionDue', label: 'Decide by', type: 'date', value: risk.decisionDue ?? '' },
+        { name: 'projectDurationDays', label: 'Project duration (days)', type: 'number', min: 1,
+          value: (() => {
+            const start = Date.parse(state.project?.plannedStart ?? '');
+            const end = Date.parse(state.project?.plannedCompletion ?? '');
+            return Number.isFinite(start) && Number.isFinite(end) && end > start ? Math.round((end - start) / 86_400_000) : '';
+          })(),
+          hint: 'From the project’s planned dates where it has them. Delay is scored against it.' },
       ],
       transform: (v) => ({
         title: v.title,
@@ -6960,7 +7082,7 @@ export async function pipeline(root) {
         costImpact: { optimistic: v.costOptimistic, mostLikely: v.costMostLikely, pessimistic: v.costPessimistic },
         scheduleImpactDays: { optimistic: v.daysOptimistic, mostLikely: v.daysMostLikely, pessimistic: v.daysPessimistic },
         projectValueMinor: Number(state.project?.contractValueMinor ?? 0),
-        projectDurationDays: Math.max(1, Math.round((Date.parse(state.project?.plannedCompletion ?? '') - Date.parse(state.project?.plannedStart ?? '')) / 86_400_000) || 1),
+        projectDurationDays: Number(v.projectDurationDays),
         source: risk.source,
         ...(v.decisionDue ? { decisionDue: v.decisionDue } : {}),
       }),

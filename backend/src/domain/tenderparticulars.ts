@@ -27,8 +27,26 @@ export type EvaluationRules = {
   equivalentEvidence?: string;
   qualificationsPermitted?: boolean;
   variantsPermitted?: boolean;
+  /** The marks an answer can be given, lowest first, each with what earns it, as the pack publishes them. */
+  scoringScale?: ScaleBand[];
   source?: QuoteSource;
 };
+
+export type ScaleBand = { score: number; descriptor: string };
+
+/** A scale as read or entered: whole bands, each with a descriptor, distinct scores, lowest first. */
+export function cleanScale(bands: unknown): ScaleBand[] | undefined {
+  if (!Array.isArray(bands)) return undefined;
+  const byScore = new Map<number, ScaleBand>();
+  for (const band of bands) {
+    if (!band || typeof band !== 'object') continue;
+    const score = Number((band as Record<string, unknown>).score);
+    const descriptor = String((band as Record<string, unknown>).descriptor ?? '').trim();
+    if (Number.isFinite(score) && score >= 0 && descriptor !== '' && !byScore.has(score)) byScore.set(score, { score, descriptor });
+  }
+  const clean = [...byScore.values()].sort((a, b) => a.score - b.score);
+  return clean.length >= 2 ? clean : undefined;
+}
 
 export type SubmissionRules = {
   uploadLimitMb?: number;
@@ -169,6 +187,7 @@ export function particularsFromReading(extraction: Record<string, unknown>, docu
         equivalentEvidence: text(evaluation.equivalentEvidence),
         qualificationsPermitted: flag(evaluation.qualificationsPermitted),
         variantsPermitted: flag(evaluation.variantsPermitted),
+        scoringScale: cleanScale(evaluation.scoringScale),
         source: cite(evaluation.sourceQuote),
       })
     : undefined;
@@ -345,7 +364,8 @@ export const PARTICULARS_PROMPT =
   'documents), with its reference, revision and issue date where stated; `documentsNotSupplied` — documents it refers ' +
   'to that are not among those supplied (available on the portal only, to follow, or missing); `precedence` — the ' +
   'order in which the documents take precedence where it states one, highest first; `evaluation` — the quality and ' +
-  'price split as percentages, any minimum quality score as stated, the scoring method, and what it says about ' +
+  'price split as percentages, any minimum quality score as stated, the scoring method, the scoring scale as ' +
+  '`scoringScale` — each mark an answer can be given with the descriptor that earns it, exactly as published — and what it says about ' +
   'consortia, subcontracting, reliance on other entities, equivalent evidence, and whether qualifications or variant ' +
   'bids are permitted; `submissionRules` — upload size limit in MB, file naming convention, permitted formats, ' +
   'signature requirements and whether appendices are permitted; `tenderValidityDays` — how long the tender must ' +
@@ -401,6 +421,10 @@ export const PARTICULARS_SCHEMA: Record<string, unknown> = {
       equivalentEvidence: NULLABLE_TEXT,
       qualificationsPermitted: { type: ['boolean', 'null'] },
       variantsPermitted: { type: ['boolean', 'null'] },
+      scoringScale: {
+        type: 'array',
+        items: { type: 'object', properties: { score: { type: 'number' }, descriptor: { type: 'string' } }, required: ['score', 'descriptor'] },
+      },
       sourceQuote: QUOTE,
     },
   },

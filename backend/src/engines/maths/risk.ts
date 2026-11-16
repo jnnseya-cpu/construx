@@ -6,17 +6,20 @@
  * contingency figure can be defended line by line.
  */
 
-export type RiskCategory =
-  | 'COMMERCIAL'
-  | 'PROGRAMME'
-  | 'SAFETY'
-  | 'DESIGN'
-  | 'QUALITY'
-  | 'ENVIRONMENTAL'
-  | 'REGULATORY'
-  | 'SUPPLY_CHAIN'
-  | 'GROUND_CONDITIONS'
-  | 'WEATHER';
+/** The categories a risk is scored and reported under — the one list the risk screen offers. */
+export const RISK_CATEGORIES = [
+  'COMMERCIAL',
+  'PROGRAMME',
+  'SAFETY',
+  'DESIGN',
+  'QUALITY',
+  'ENVIRONMENTAL',
+  'REGULATORY',
+  'SUPPLY_CHAIN',
+  'GROUND_CONDITIONS',
+  'WEATHER',
+] as const;
+export type RiskCategory = (typeof RISK_CATEGORIES)[number];
 
 /**
  * Who carries a risk if the event happens. A risk the client owns is not priced
