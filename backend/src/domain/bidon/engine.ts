@@ -1,4 +1,5 @@
 import { expertBriefing, expertPersona } from '../../ai/expertise.ts';
+import { SOURCE_MATERIAL_RULE } from '../../ai/sourcematerial.ts';
 import { config } from '../../config.ts';
 import { DomainError } from '../../core/errors.ts';
 import { ulid } from '../../core/ids.ts';
@@ -579,7 +580,7 @@ export async function parseQuestionnaire(
           `${expertPersona('BID_MANAGER')} ` +
           'Read this prequalification or tender questionnaire and list every question a bidder must answer. Return ' +
           'JSON with `questions`: an array of { section, number, text, answerType, wordLimit, weighting, mandatory, ' +
-          'passFail }.',
+          `passFail }. ${SOURCE_MATERIAL_RULE}`,
         payload: {
           scheme: bid.scheme,
           buyer: bid.buyerName,
@@ -1316,10 +1317,10 @@ export async function readEvidence(
         task: part.media
           ? 'Read this document and return the passages a bid writer would cite from it. Return JSON with ' +
             '`passages`: an array of { text, pageRef }, and `lines`: the document as plain text, one paragraph per ' +
-            'entry — this document is a scan, so your transcription is the only text of it anybody will have.'
+            `entry — this document is a scan, so your transcription is the only text of it anybody will have. ${SOURCE_MATERIAL_RULE}`
           : 'Read this document and return the passages a bid writer would cite from it. Return JSON with ' +
             '`passages`: an array of { text, pageRef }. Do not return the document itself: the platform has its ' +
-            'text already and is sending it to you.',
+            `text already and is sending it to you. ${SOURCE_MATERIAL_RULE}`,
         ...(part.media ? { media: part.media } : {}),
         payload: {
           // The hash travels in the payload as well as on the media, so the
@@ -1734,7 +1735,7 @@ export async function draftAnswer(
         'Write one answer to one question of a construction prequalification or tender questionnaire, using only the ' +
         'supplied passages. Return JSON with `body`: an array of paragraph strings, `citations`: an array of the ' +
         '`chunkId` values you actually relied on, and `unsupported`: an array of anything the question asks for that ' +
-        'the passages do not support.' +
+        `the passages do not support. ${SOURCE_MATERIAL_RULE}` +
         (wantsYesNo
           ? ' This question is answered **yes or no**. Also return `yesNo` as a boolean — `true` for yes, `false` ' +
             'for no — decided from the passages and consistent with the prose. It is a separate field because a ' +

@@ -1000,13 +1000,15 @@ export function packDocuments(
  */
 export function packText(
   ctx: EngineContext,
-  options: { maxCharacters?: number } = {},
+  options: { maxCharacters?: number; only?: ReadonlyArray<string> } = {},
 ): {
   text: string;
   files: Array<{ ingestionId: string; filename: string; kind: string; characters: number }>;
   omitted: string[];
 } {
-  const docs = packDocuments(ctx).sort(
+  const docs = packDocuments(ctx)
+    .filter((doc) => !options.only || options.only.includes(doc.ingestionId))
+    .sort(
     (a, b) =>
       Number(b.kind === 'INVITATION') - Number(a.kind === 'INVITATION') ||
       a.label.localeCompare(b.label, 'en', { numeric: true }),

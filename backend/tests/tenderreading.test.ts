@@ -11,6 +11,19 @@ import * as bidresponse from '../src/domain/bidresponse.ts';
 import * as business from '../src/domain/business.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tenderintake from '../src/domain/tenderintake.ts';
+import * as tenderregister from '../src/domain/tenderregister.ts';
+import * as contractreview from '../src/domain/contractreview.ts';
+import * as tenderscope from '../src/domain/tenderscope.ts';
+import * as answercheck from '../src/domain/answercheck.ts';
+import * as tenderbrief from '../src/domain/tenderbrief.ts';
+import * as bidsignoff from '../src/domain/bidsignoff.ts';
+import { setIssuerProfile } from '../src/group/profile.ts';
+import * as bidreview from '../src/domain/bidreview.ts';
+import * as buyerquestions from '../src/domain/buyerquestions.ts';
+import * as matrixreview from '../src/domain/matrixreview.ts';
+import * as tenderintel from '../src/domain/tenderintel.ts';
+import * as safety from '../src/engines/safety.ts';
+import { write } from '../src/engines/context.ts';
 import { checkPriceListReading, checkTenderReading, confirmReading, packText, readTenderPack, type InvitationFromReading } from '../src/domain/tenderreading.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import * as perception from '../src/engines/perception.ts';
@@ -86,7 +99,12 @@ const ITT_DOCX = docxOf(
     paragraph('Signed Freedom of Information Declaration;') +
     paragraph('Evidence of membership to a Safety Schemes in Procurement assessment scheme') +
     paragraph('Quality submission') +
-    paragraph('2.3 Table 1 – Quality Criteria. The Contractors proposed approach and methodology for the delivery of the proposed work. 30%'),
+    paragraph('2.3 Table 1 – Quality Criteria. The Contractors proposed approach and methodology for the delivery of the proposed work. 30%') +
+    paragraph('3.2 The Contractor notifies a compensation event within eight weeks of becoming aware that the event has happened.') +
+    paragraph('3.4 The Contractor is liable for design to the standard of fitness for purpose.') +
+    paragraph('4.1 Soil nails: designed by the Employer’s engineer, supplied and installed by the Contractor, tested by the Contractor and witnessed by the Engineer.') +
+    paragraph('4.2 The facing masonry shall be natural stone to match the existing.') +
+    paragraph('4.3 Drawing ERCF-02 shows the facing as reconstituted stone blocks.'),
 );
 
 /** Volume 2, the questionnaire: the seven scored questions and their limit. */
@@ -122,6 +140,15 @@ const RETURNS: Array<[string, string]> = [
   ['R6', 'Quality submission'],
 ];
 
+/** For one reading, Q6 reads differently — as a re-read of an amended questionnaire would. */
+function reading_with_changed_q6(): { restore: () => void } {
+  const requirements = reading.requirements as Array<Record<string, unknown>>;
+  const q6 = requirements.find((line) => line.reference === 'Q6')!;
+  const before = q6.requirement;
+  q6.requirement = `${String(before)} (as amended)`;
+  return { restore: () => void (q6.requirement = before) };
+}
+
 /** What a correct reading of the two documents above returns. */
 function conwyReading(): Record<string, unknown> {
   return {
@@ -156,6 +183,7 @@ function conwyReading(): Record<string, unknown> {
         wordLimit: 1000,
         evidenceRequired: 'A written answer',
         sourceQuote: text,
+        ...(reference === 'Q2' ? { subQuestions: ['Key staff and their duties', 'Management and co-ordination of sub-contractors'] } : {}),
       })),
     ],
     deliverables: RETURNS.map(([reference, title]) => ({
@@ -166,6 +194,53 @@ function conwyReading(): Record<string, unknown> {
       sourceQuote: title,
     })),
     terms: { contractForm: 'NEC4 Engineering and Construction Short Contract' },
+    // What the pack says about itself.
+    documentsListed: [
+      { title: 'Volume 1 – Instructions to Tenderers', reference: 'Volume 1', revision: null, issuedOn: '2026-10-22', sourceQuote: 'Volume 1 – Instructions to Tenderers' },
+      { title: 'Volume 2 – Contract Data and Quality Questionnaire', reference: 'Volume 2', revision: null, issuedOn: null, sourceQuote: 'Volume 2 – Contract Data and Quality Questionnaire' },
+      { title: 'Volume 3 – Drawings', reference: 'Volume 3', revision: 'B', issuedOn: null, sourceQuote: null },
+    ],
+    documentsNotSupplied: [],
+    precedence: null,
+    evaluation: {
+      qualityPercent: 30,
+      pricePercent: 70,
+      minimumQualityScore: null,
+      scoringMethod: null,
+      qualificationsPermitted: null,
+      sourceQuote: 'The selection of the Contractor will be on the basis of 30% Quality Assessment and 70% Price Assessment.',
+    },
+    submissionRules: null,
+    tenderValidityDays: null,
+    awardOn: '2026-12-14',
+    milestones: [{ label: 'Notice published', date: '2026-10-22', mandatory: false, sourceQuote: '22/10/2026 Notice published on sell2wales.gov.wales.' }],
+    scope: [
+      { reference: '4.1', workPackage: 'Retaining wall', description: 'Soil nails', design: 'CLIENT', supply: 'CONTRACTOR', install: 'CONTRACTOR', testApprove: 'CONTRACTOR', pricedIn: '990.1', sourceQuote: 'Soil nails: designed by the Employer’s engineer, supplied and installed by the Contractor' },
+      { reference: '4.2', workPackage: 'Retaining wall', description: 'Masonry facing', design: 'NOT_STATED', supply: 'CONTRACTOR', install: 'CONTRACTOR', testApprove: 'NOT_STATED', pricedIn: null, sourceQuote: 'The facing masonry shall be natural stone to match the existing.' },
+    ],
+    discrepancies: [
+      {
+        subject: 'Facing stone',
+        consequence: 'Natural stone costs several times reconstituted block.',
+        statements: [
+          { document: 'Volume 1', clause: '4.2', says: 'Natural stone to match the existing.', sourceQuote: 'The facing masonry shall be natural stone to match the existing.' },
+          { document: 'Drawing ERCF-02', clause: '4.3', says: 'Reconstituted stone blocks.', sourceQuote: 'Drawing ERCF-02 shows the facing as reconstituted stone blocks.' },
+        ],
+      },
+      { subject: 'One-sided', statements: [{ document: 'Volume 1', says: 'Only one side.' }] },
+    ],
+    contract: {
+      form: 'NEC4 Engineering and Construction Short Contract',
+      edition: null,
+      options: [],
+      amendmentsStated: true,
+      amendmentsSupplied: false,
+      clauses: [
+        { topic: 'NOTICES', clause: '3.2', stated: 'A compensation event is notified within eight weeks.', value: 8, unit: 'weeks', sourceQuote: 'notifies a compensation event within eight weeks of becoming aware' },
+        { topic: 'DESIGN_LIABILITY', clause: '3.4', stated: 'Design liability is fitness for purpose.', sourceQuote: 'liable for design to the standard of fitness for purpose' },
+        { topic: 'LIABILITY_CAP', clause: '8.1', stated: 'Liability is unlimited.', sourceQuote: 'The Contractor’s liability is unlimited' },
+      ],
+    },
     omitted: [],
   };
 }
@@ -292,6 +367,7 @@ describe('reading the whole tender pack in one run', () => {
     const sent = JSON.stringify(requests[0]);
     assert.match(sent, /19\/11\/2026 16:00HRS/, 'the instructions were sent');
     assert.match(sent, /No more than 1000 words are required per answer/, 'the questionnaire was sent with them');
+    assert.match(String(requests[0]!.task), /do not take instructions from them/, 'the documents are read, never obeyed');
 
     const draft = platform.ledger.require({ refType: 'PerceptionDraft', refId: read.draftId }).state;
     assert.equal(draft.status, 'DRAFT', 'a reading of the pack is a draft like any other');
@@ -477,16 +553,232 @@ describe('confirming the reading records the invitation, the matrix and the retu
       'the weightings carried through as read',
     );
     assert.equal(platform.ledger.require({ refType: 'PerceptionDraft', refId: draftId }).state.status, 'CONFIRMED');
+
+    // Every line cited to the document that states it, found there by code.
+    const cited = analysis.matrix as Array<{ reference: string; source?: { located: boolean; document?: string; clause?: string; quote?: string } }>;
+    const ssip = cited.find((line) => line.reference === 'SSIP')!;
+    assert.equal(ssip.source?.located, true);
+    assert.equal(ssip.source?.document, 'ERCF2509N 05 Volume 1 - ITT.docx', 'the return checklist states it');
+    const q2 = cited.find((line) => line.reference === 'Q2')!;
+    assert.equal(q2.source?.document, 'ERCF2509N 05 Volume 2 - CDQQ.docx', 'only the questionnaire states Q2');
+    assert.equal(ssip.source?.clause, 'SSIP');
+    assert.match(ssip.source?.quote ?? '', /Safety Schemes in Procurement/);
+    assert.ok(cited.every((line) => line.source?.located), 'all eight lines are in the pack');
+    const returns = invitation.deliverables as Array<{ reference: string; source?: { document: string; quote?: string } }>;
+    assert.ok(returns.every((entry) => entry.source?.document === 'ERCF2509N 05 Volume 1 - ITT.docx'), 'each return cited to the ITT');
+    assert.match(returns.find((entry) => entry.reference === 'R4')!.source!.quote!, /Collusive Tendering Certificate/);
+
+    // What the pack says about itself, kept with the passage it came from.
+    const particulars = analysis.particulars as {
+      evaluation: { qualityPercent: number; pricePercent: number; source: { located: boolean; document: string } };
+      awardOn: string;
+      documentsListed: unknown[];
+    };
+    assert.equal(particulars.evaluation.qualityPercent, 30);
+    assert.equal(particulars.evaluation.pricePercent, 70);
+    assert.equal(particulars.evaluation.source.document, 'ERCF2509N 05 Volume 1 - ITT.docx');
+    assert.equal(particulars.awardOn, '2026-12-14');
+    assert.equal(particulars.documentsListed.length, 3);
+  });
+
+  it('reviews the contract clause by clause, and drafts the clauses it can cite into the tender review', () => {
+    const review = contractreview.contractReviewForProject(ctx('qs'));
+    assert.equal(review.form, 'NEC4 Engineering and Construction Short Contract');
+    const byTopic = new Map(review.rows.map((row) => [row.topic, row]));
+    assert.equal(byTopic.get('NOTICES')!.severity, 'MATERIAL', 'eight weeks is 56 days: not a short time bar');
+    assert.equal(byTopic.get('DESIGN_LIABILITY')!.severity, 'SEVERE');
+    assert.deepEqual(byTopic.get('DESIGN_LIABILITY')!.review, ['LEGAL', 'INSURANCE']);
+    assert.equal(byTopic.get('LIABILITY_CAP')!.severity, 'SEVERE');
+    assert.match(byTopic.get('LIABILITY_CAP')!.sourceText, /not found in the documents/);
+    assert.match(byTopic.get('NOTICES')!.sourceText, /ERCF2509N 05 Volume 1 - ITT\.docx, 3\.2/);
+    assert.ok(review.notStated.some((entry) => entry.topic === 'PAYMENT_CERTIFICATION' && /funded/.test(entry.why)));
+    assert.ok(review.cannotCompare.some((line) => /amended but the amendments are not in it/.test(line)));
+    assert.ok(review.cannotCompare.some((line) => /named without its edition/.test(line)));
+
+    // The pack names no edition, so the review cannot be opened until somebody gives one.
+    assert.throws(() => contractreview.draftContractReview(ctx('owner'), {}), (error: Error & { code?: string }) => error.code === 'CONTRACT_FORM_REQUIRED');
+    const drafted = contractreview.draftContractReview(ctx('owner'), { edition: 'June 2017 (amended January 2023)' });
+    assert.equal(drafted.opened, true);
+    assert.equal(drafted.recorded, 2, 'the two clauses found in the documents');
+    assert.deepEqual(drafted.skipped.map((entry) => entry.title), ['Liability caps and exclusions']);
+    const record = platform.ledger.require({ refType: 'TenderReview', refId: drafted.reviewId }).state;
+    const obligations = record.obligations as Array<{ reference: string; wording: string; status: string; response: string }>;
+    const design = obligations.find((entry) => entry.reference === 'C-3.4')!;
+    assert.equal(design.wording, 'liable for design to the standard of fitness for purpose', 'the contract’s own words, as printed');
+    assert.equal(design.status, 'DRAFT', 'awaiting a legal or commercial owner');
+    assert.equal(design.response, 'CLARIFICATION');
+    // Again: nothing is added twice.
+    assert.equal(contractreview.draftContractReview(ctx('owner'), {}).recorded, 0);
+  });
+
+  it('maps who does what and where it is priced, and registers where the documents disagree', () => {
+    const scope = tenderscope.scopeReview(ctx('qs'));
+    const nails = scope.rows.find((row) => row.reference === '4.1')!;
+    assert.equal(nails.pricing, 'ITEM');
+    assert.ok(nails.flags.some((flag) => /Done by others/.test(flag)), 'the client designs them: a dependency');
+    const facing = scope.rows.find((row) => row.reference === '4.2')!;
+    assert.equal(facing.pricing, 'NOT_PRICED');
+    assert.ok(facing.flags.some((flag) => /Who designs it is not stated/.test(flag)));
+    assert.ok(facing.flags.some((flag) => /a gap/.test(flag)));
+    assert.equal(scope.discrepancies.length, 1, 'a single statement is not a discrepancy');
+    const stone = scope.discrepancies[0]!;
+    assert.equal(stone.id, 'DISC-FACING-STONE');
+    assert.equal(stone.verified, true, 'both sides found in the documents');
+    assert.match(stone.action, /Raise a clarification/);
+
+    // Raised against it, the discrepancy carries the reference.
+    const raised = tenderintel.raiseTenderClarification(ctx('qs'), {
+      side: 'CLIENT',
+      subject: 'Facing stone',
+      question: 'Please confirm whether the facing is natural stone or reconstituted block.',
+      links: { scopeItem: stone.id, document: 'Volume 1' },
+    });
+    assert.equal(tenderscope.scopeReview(ctx('qs')).discrepancies[0]!.clarification?.reference, raised.reference);
+
+    // Onto the tender review's map: the unpriced facing is a gap there.
+    const sent = tenderscope.sendScopeToReview(ctx('qs'), { edition: 'June 2017' });
+    assert.deepEqual(sent.gaps.map((gap) => gap.reference), ['4.2']);
+    assert.equal(sent.overlaps.length, 0);
+  });
+
+  it('recommends from everything on the record, with conditions, and proposes the risks the tender carries', () => {
+    const review = bidreview.bidReview(ctx('qs'));
+    assert.equal(review.read, true);
+    assert.equal(review.recommendation, 'HOLD', 'Volume 3 is listed in the pack and was never uploaded');
+    assert.ok(review.factors.some((factor) => factor.area === 'SCOPE_CERTAINTY' && factor.bearing === 'HOLD' && /Volume 3/.test(factor.finding)));
+    assert.ok(review.factors.some((factor) => factor.area === 'MARGIN' && factor.bearing === 'NOT_KNOWN'), 'not priced yet: said, not assumed');
+    const design = review.conditions.find((condition) => condition.id === 'COND-CONTRACT-DESIGN_LIABILITY')!;
+    assert.equal(design.deadline, '2026-11-19', 'no questions deadline recorded, so the return date');
+    assert.match(design.ifUnresolved, /Price the risk, or qualify the bid/);
+    for (const condition of review.conditions) assert.ok(condition.owner && condition.deadline && condition.ifUnresolved, condition.id);
+    assert.equal(new Set(review.risks.map((entry) => entry.source)).size, review.risks.length, 'each proposal is told apart by its source');
+    assert.equal(new Set(review.risks.map((entry) => entry.id)).size, review.risks.length);
+    const risk = review.risks.find((entry) => entry.id === 'RISK-CONTRACT-DESIGN_LIABILITY')!;
+    assert.equal(risk.registered, false);
+
+    // Registered with the source it cites, the proposal reads as registered.
+    safety.registerRisk(ctx('pm'), {
+      id: '',
+      title: risk.title,
+      category: risk.category,
+      cause: risk.cause,
+      allocation: risk.allocation,
+      probability: 0.3,
+      costImpact: { optimistic: 0, mostLikely: 500_000, pessimistic: 2_000_000 },
+      scheduleImpactDays: { optimistic: 0, mostLikely: 0, pessimistic: 10 },
+      projectValueMinor: 30_000_000,
+      projectDurationDays: 80,
+      source: risk.source,
+      decisionDue: risk.decisionDue!,
+    });
+    assert.equal(bidreview.bidReview(ctx('qs')).risks.find((entry) => entry.id === risk.id)!.registered, true);
+  });
+
+  it('keeps the internal log off the buyer’s copy, drafts an extension only when warranted, and traces an answer back', () => {
+    const raised = tenderintel.raiseTenderClarification(ctx('qs'), {
+      side: 'CLIENT',
+      subject: 'Key staff named in Q2',
+      ambiguity: 'Volume 2 Q2 asks for key staff; the ITT does not say whether named individuals are required.',
+      question: 'Please confirm whether Q2 requires named individuals or roles.',
+      links: { document: 'ERCF2509N 05 Volume 2 - CDQQ.docx', requirement: 'Q2' },
+      urgency: 'CRITICAL',
+      impact: 'Decides whether Q2 can be answered without named staff.',
+      owner: 'QS',
+      interimTreatment: 'Answered with roles; no named staff.',
+    });
+    const schedule = buyerquestions.buyerSchedule(ctx('qs'));
+    assert.equal(schedule.tenderReference, 'ERCF2509N');
+    const row = schedule.rows.find((entry) => entry.tq === raised.reference)!;
+    assert.match(row.cq, /^CQ-\d+$/);
+    assert.match(row.ambiguity, /does not say whether named individuals/);
+    assert.doesNotMatch(schedule.text, /CRITICAL|interim|no named staff|Decides whether/, 'nothing internal goes to the buyer');
+
+    const extension = buyerquestions.extensionRequestDraft(ctx('qs'), { today: '2026-11-10', proposedLocal: '2026-11-26T16:00' });
+    assert.equal(extension.warranted, true);
+    assert.ok(extension.reasons.some((reason) => /Volume 3/.test(reason)));
+    assert.ok(extension.reasons.some((reason) => /Key staff named in Q2/.test(reason)));
+    assert.match(extension.text!, /extended to 2026-11-26 16:00/);
+
+    tenderintel.recordClientAnswer(ctx('qs'), { clarificationId: raised.clarificationId, answer: 'Roles are sufficient.', answeredOn: '2026-11-12' });
+    const impacts = buyerquestions.answerImpacts(ctx('qs'), raised.clarificationId);
+    assert.ok(impacts.some((impact) => impact.kind === 'MATRIX_LINE' && impact.reference === 'Q2'));
+    assert.ok(impacts.some((impact) => impact.kind === 'PRICE' && /Answered with roles/.test(impact.action)));
+    const analysisId = String(platform.ledger.listByTenant(seed.tenantId, 'TenderInvitation').at(-1)!.state.analysisId);
+    const q2 = matrixreview.matrixPosition(governance('qs')(), analysisId).lines.find((line) => line.reference === 'Q2')!;
+    assert.match(q2.action, new RegExp(`The buyer answered ${raised.reference}`));
+    assert.equal(q2.answered?.answer, 'Roles are sufficient.');
+  });
+
+  it('keeps a register of the documents and every date, and says what the pack lists that never arrived', () => {
+    const register = tenderregister.tenderRegister(ctx('qs'));
+    assert.equal(register.read, true);
+    const itt = register.rows.find((row) => row.filename === 'ERCF2509N 05 Volume 1 - ITT.docx')!;
+    assert.equal(itt.status, 'READ');
+    assert.equal(itt.inReading, true);
+    assert.equal(itt.inDrafting, true);
+    assert.equal(itt.listedAs, 'Volume 1 – Instructions to Tenderers');
+    assert.equal(itt.issuedOn, '2026-10-22');
+    assert.deepEqual(register.listedNotUploaded.map((entry) => entry.title), ['Volume 3 – Drawings rev B']);
+    assert.equal(register.evaluation?.qualityPercent, 30);
+    assert.match(register.evaluation!.sourceText, /ERCF2509N 05 Volume 1 - ITT\.docx/);
+    const labels = register.dates.map((row) => `${row.label}:${row.kind}`);
+    assert.ok(labels.includes('Tender return:MANDATORY'), labels.join(', '));
+    assert.ok(labels.includes('Anticipated award:INDICATIVE'));
+    assert.ok(labels.includes('Works start:CONTRACT'));
+    assert.ok(labels.includes('Notice published:INDICATIVE'));
+    assert.deepEqual(register.conflicts, [], 'award before the works start, after the return: consistent');
+    assert.match(register.summary, /1 listed in the pack but not uploaded/);
   });
 
   it('files a second reading against the invitation already recorded, never a second one', async () => {
+    // Decisions taken on the first matrix: a waiver and an undertaking on Q7,
+    // recorded straight onto the ledger so the test does not depend on today's
+    // date against the fixture's return date; and one on a line whose wording
+    // the second reading changes.
+    const invitation = () =>
+      platform.ledger.listByTenant(seed.tenantId, 'TenderInvitation').find((record) => record.state.reference === 'ERCF2509N')!.state;
+    const firstId = String(invitation().analysisId);
+    const first = platform.ledger.require({ refType: 'ITTAnalysis', refId: firstId });
+    const q7 = (first.state.matrix as Array<{ reference: string; requirement: string }>).find((line) => line.reference === 'Q7')!;
+    write(governance('owner')(), {
+      eventType: 'REQUIREMENT_WAIVED',
+      entity: { refType: 'ITTAnalysis', refId: firstId },
+      projectId: first.projectId,
+      nextState: {
+        ...first.state,
+        waivers: [
+          { reference: 'Q7', requirement: q7.requirement, mandatory: false, reason: 'Answered in Q1 in full; repeating it costs words.', expiresOn: '2026-11-18', grantedBy: 'x', grantedAt: '2026-11-01T00:00:00Z' },
+          { reference: 'Q6', requirement: 'old wording', mandatory: false, reason: 'Waived against wording the second reading changes.', expiresOn: '2026-11-18', grantedBy: 'x', grantedAt: '2026-11-01T00:00:00Z' },
+        ],
+        undertakings: [{ reference: 'Q7', requirement: q7.requirement, statement: 'We confirm.', confirmedBy: 'x', confirmedAt: '2026-11-01T00:00:00Z' }],
+      },
+    });
+    const reading = reading_with_changed_q6();
     const second = (await readTenderPack(ctx('qs'), { today: '2026-10-25' })).draftId;
+    reading.restore();
     const confirmed = await confirmReading(ctx('qs'), governance('qs'), { draftId: second, invitation: INVITATION });
     assert.equal(confirmed.result.invitationRecorded, false);
     const invitations = platform.ledger
       .listByTenant(seed.tenantId, 'TenderInvitation')
       .filter((record) => record.state.reference === 'ERCF2509N');
     assert.equal(invitations.length, 1);
+
+    const next = platform.ledger.require({ refType: 'ITTAnalysis', refId: String(invitation().analysisId) }).state;
+    assert.notEqual(String(invitation().analysisId), firstId, 'a new matrix');
+    assert.deepEqual((next.waivers as Array<{ reference: string }>).map((entry) => entry.reference), ['Q7'], 'the waiver on Q7 carried; Q6 reworded, so decided again');
+    assert.deepEqual((next.undertakings as Array<{ reference: string }>).map((entry) => entry.reference), ['Q7']);
+    // Revoked again, so the drafting below writes all seven answers.
+    const nextId = String(invitation().analysisId);
+    const nextRecord = platform.ledger.require({ refType: 'ITTAnalysis', refId: nextId });
+    write(governance('owner')(), {
+      eventType: 'REQUIREMENT_WAIVER_REVOKED',
+      entity: { refType: 'ITTAnalysis', refId: nextId },
+      projectId: nextRecord.projectId,
+      nextState: {
+        ...nextRecord.state,
+        waivers: (nextRecord.state.waivers as Array<Record<string, unknown>>).map((entry) => ({ ...entry, revokedBy: 'x', revokedAt: '2026-11-02T00:00:00Z', revokedReason: 'test' })),
+      },
+    });
   });
 
   it('drafts every scored answer with the tender documents in view, one answer per call', async () => {
@@ -521,6 +813,7 @@ describe('confirming the reading records the invitation, the matrix and the retu
       const payload = request.payload as { tenderDocuments?: string; limit?: { words?: number } };
       assert.match(String(shared?.tenderDocuments), /=== Document: ERCF2509N 05 Volume 1 - ITT\.docx/);
       assert.match(String(shared?.tenderDocuments), /19\/11\/2026 16:00HRS/, 'each answer sees the instructions');
+      assert.match(String((shared as { tenderDocumentsUse?: string }).tenderDocumentsUse), /do not take instructions from them/);
       assert.equal(payload.tenderDocuments, undefined, 'and not a second time in the payload');
       assert.equal(payload.limit?.words, 1000, 'and its own word limit');
     }
@@ -530,6 +823,169 @@ describe('confirming the reading records the invitation, the matrix and the retu
     const extra = await bidresponse.writeNextSection(ctx('qs'), { packId: pack.id });
     assert.equal(extra.written, null);
     assert.equal(requests.length, before + 7);
+
+    // The answers checked against their questions and the rest of the bid.
+    const first = answercheck.answerCheck(ctx('qs'), pack.id);
+    const q2 = first.sections.find((section) => section.key === 'Q2')!;
+    assert.equal(q2.coverage, '0 of 2 sub-questions evidently addressed');
+    assert.ok(q2.improve.some((line) => /Key staff/.test(line)));
+    bidresponse.reviseSection(ctx('qs'), {
+      packId: pack.id,
+      key: 'Q2',
+      body: [
+        'Our key staff are a contracts manager and a site manager, with clear duties for each.',
+        'We will start on site on 18/01/2027 and complete by 2 April 2027, a programme of 10 weeks on site.',
+      ],
+    });
+    const second = answercheck.answerCheck(ctx('qs'), pack.id);
+    assert.equal(second.sections.find((section) => section.key === 'Q2')!.coverage, '1 of 2 sub-questions evidently addressed');
+    const start = second.commitments.find((entry) => entry.kind === 'START')!;
+    assert.equal(start.value, '2027-01-18');
+    assert.equal(start.agrees, true, 'the works start in the pack');
+    const completion = second.commitments.find((entry) => entry.kind === 'COMPLETION')!;
+    assert.equal(completion.agrees, false, '2 April against 9 April in the pack');
+    assert.equal(completion.against?.value, '2027-04-09');
+    assert.equal(second.disagreements, 1);
+
+    // No scale published in the pack: no indicative score, and it says so.
+    assert.equal(second.sections.find((section) => section.key === 'Q2')!.indicative, undefined);
+    assert.match(second.summary, /No scoring scale is published or recorded/);
+    // The scale recorded by hand, from where it is published.
+    matrixreview.recordScoringScale(governance('qs')(), analysisId, {
+      source: 'Volume 2, 2.3 Table 2',
+      bands: [
+        { score: 0, descriptor: 'No response' },
+        { score: 1, descriptor: 'Poor' },
+        { score: 2, descriptor: 'Limited' },
+        { score: 3, descriptor: 'Satisfactory' },
+        { score: 4, descriptor: 'Good' },
+        { score: 5, descriptor: 'Excellent' },
+      ],
+    });
+    const scored = answercheck.answerCheck(ctx('qs'), pack.id);
+    assert.equal(scored.scale?.from, 'RECORDED_BY_HAND');
+    // Q2: 1 of 2 sub-questions (0.5 x 0.5), figures and named roles (1 x 0.2),
+    // within the limit (1 x 0.1), out of 0.8 → 0.69 → band 3 of 0–5.
+    const q2Score = scored.sections.find((section) => section.key === 'Q2')!.indicative!;
+    assert.equal(q2Score.score, 3);
+    assert.equal(q2Score.descriptor, 'Satisfactory');
+    assert.match(q2Score.toRaise ?? '', /remaining sub-question/);
+    // Q1: no sub-questions or criteria recorded; no figure or role (0 x 0.2),
+    // within the limit (1 x 0.1), out of 0.3 → 0.33 → band 2.
+    const q1Score = scored.sections.find((section) => section.key === 'Q1')!.indicative!;
+    assert.equal(q1Score.score, 2);
+    assert.match(q1Score.toRaise ?? '', /measurable commitments/);
+    const weightQ1 = QUESTIONS.find(([reference]) => reference === 'Q1')![1];
+    assert.equal(q1Score.marks, Math.round((2 / 5) * weightQ1 * 100) / 100);
+    assert.equal(scored.indicativeMarks?.of, 100);
+    assert.match(scored.summary, /an estimate by rule, not the buyer’s mark/);
+  });
+
+  it('briefs the bid on one page: nine outputs labelled, approvals, and a manifest of every return', () => {
+    const brief = tenderbrief.tenderBrief(ctx('qs'));
+    assert.equal(brief.read, true);
+    assert.deepEqual(brief.deliverables.map((entry) => entry.id), ['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9']);
+    const byId = new Map(brief.deliverables.map((entry) => [entry.id, entry]));
+    assert.equal(byId.get('D1')!.label, 'BLOCKED');
+    assert.ok(byId.get('D1')!.items.some((item) => /Volume 3/.test(item)));
+    assert.equal(byId.get('D4')!.label, 'BLOCKED', 'no tender programme confirmed');
+    assert.equal(byId.get('D7')!.label, 'BLOCKED', 'not priced');
+    assert.equal(byId.get('D9')!.label, 'IN_DRAFT');
+    assert.ok(byId.get('D9')!.items.some((item) => /R4 .*Record where it goes on the portal/.test(item)), 'a file made outside the platform still needs its portal place');
+    assert.deepEqual(brief.approvals.map((approval) => [approval.id, approval.status]), [
+      ['A1', 'PENDING'],
+      ['A2', 'PENDING'],
+      ['A3', 'PENDING'],
+      ['A4', 'PENDING'],
+      ['A5', 'PENDING'],
+    ]);
+    const producedBy = new Map(brief.manifest.map((row) => [row.id, row.producedBy]));
+    assert.equal(producedBy.get('R1'), 'Pricing schedule from the priced estimate');
+    assert.equal(producedBy.get('R2'), 'Quotation');
+    assert.equal(producedBy.get('R3'), 'Tender programme');
+    assert.equal(producedBy.get('R4'), 'Prepared outside the platform and uploaded to the portal');
+    assert.equal(producedBy.get('R6'), 'Bid response pack');
+    assert.ok(brief.manifest.every((row) => row.status === 'PENDING'));
+    assert.ok(brief.manifest.every((row) => /^Not recorded — the platform cannot see the buyer’s portal/.test(row.portalLocation)));
+    assert.ok(brief.deadlines.some((row) => row.label === 'Tender return'));
+    assert.equal(brief.readyForAuthorisedSubmission, false);
+    assert.match(brief.summary, /Not yet ready for authorised submission/);
+  });
+
+  it('takes the approvals on one sign-off record, by the people with the authority, and shows one stale when what it approved changes', () => {
+    const refused = (fn: () => unknown, code: string) => assert.throws(fn, (error: { code?: string }) => error.code === code, code);
+    refused(() => bidsignoff.approve(ctx('qs'), { area: 'COMMERCIAL', note: 'Checked the rates' }), 'NOTHING_TO_APPROVE');
+    refused(() => bidsignoff.approve(ctx('qs'), { area: 'CONTRACT', note: 'Read the clauses' }), 'ACCESS_DENIED');
+    refused(() => bidsignoff.approve(ctx('planner'), { area: 'COMMERCIAL', note: 'Checked the rates' }), 'ACCESS_DENIED');
+    refused(() => bidsignoff.approve(ctx('qs'), { area: 'SIGNATORY', note: 'ok' }), 'SIGN_OFF_NOTE_REQUIRED');
+    refused(() => bidsignoff.approve(ctx('qs'), { area: 'SIGNATORY', note: 'Read every answer' }), 'NOT_A_SIGNATORY');
+
+    // A signatory for reports only does not sign a tender; one for quotations does.
+    setIssuerProfile(platform, seed.users.owner!.auth, { signatories: [{ userId: seed.users.qs!.id, title: 'Commercial Director', documents: ['report'] }] });
+    refused(() => bidsignoff.approve(ctx('qs'), { area: 'SIGNATORY', note: 'Read every answer' }), 'NOT_A_SIGNATORY');
+    setIssuerProfile(platform, seed.users.owner!.auth, { signatories: [{ userId: seed.users.qs!.id, title: 'Commercial Director', documents: ['quotation'] }] });
+    const entry = bidsignoff.approve(ctx('qs'), { area: 'SIGNATORY', note: 'Read every answer against the questions' });
+    assert.equal(entry.title, 'Commercial Director');
+    let brief = tenderbrief.tenderBrief(ctx('qs'));
+    const a5 = () => brief.approvals.find((approval) => approval.id === 'A5')!;
+    assert.equal(a5().status, 'RECORDED');
+    assert.match(a5().detail, /by the Commercial Director/);
+
+    // An answer rewritten after the signature: the approval stays on the record, and is asked for again.
+    const pack = bidresponse.bidResponsePack(ctx('qs'), bidresponse.bidResponsePosition(ctx('qs')).packs.at(-1)!.id);
+    const section = pack.sections.find((candidate) => candidate.body && candidate.body.length > 0)!;
+    bidresponse.reviseSection(ctx('qs'), { packId: pack.id, key: section.key, body: [...section.body!, 'A further sentence added after sign-off.'] });
+    brief = tenderbrief.tenderBrief(ctx('qs'));
+    assert.equal(a5().status, 'PENDING');
+    assert.equal(a5().stale, true);
+    assert.match(a5().detail, /has changed since/);
+    const position = bidsignoff.signOffPosition(ctx('qs'));
+    assert.equal(position.approvals.find((approval) => approval.area === 'SIGNATORY')!.status, 'STALE');
+    assert.equal(position.approvals.find((approval) => approval.area === 'SIGNATORY')!.latest?.approvedBy, seed.users.qs!.id);
+    bidsignoff.approve(ctx('qs'), { area: 'SIGNATORY', note: 'Read the revised answer' });
+    brief = tenderbrief.tenderBrief(ctx('qs'));
+    assert.equal(a5().status, 'RECORDED');
+  });
+
+  it('records where each return goes on the portal, and verifies it only when a person confirms it is there', () => {
+    const refused = (fn: () => unknown, code: string) => assert.throws(fn, (error: { code?: string }) => error.code === code, code);
+    refused(() => bidsignoff.recordPortalFile(ctx('qs'), { reference: 'R99', portalLocation: 'Envelope 1' }), 'RETURN_NOT_FOUND');
+    refused(() => bidsignoff.confirmPortalUpload(ctx('qs'), { reference: 'R4', note: 'Opened it on the portal' }), 'PORTAL_LOCATION_FIRST');
+    refused(() => bidsignoff.recordPortalFile(ctx('qs'), { reference: 'R4', portalLocation: ' ' }), 'PORTAL_LOCATION_REQUIRED');
+    refused(() => bidsignoff.recordPortalFile(ctx('pm'), { reference: 'R4', portalLocation: 'Envelope 1' }), 'ACCESS_DENIED');
+
+    bidsignoff.recordPortalFile(ctx('qs'), { reference: 'R4', portalLocation: 'Envelope 1 — Qualification, slot 4', fileName: 'R4-insurance.pdf', version: 'v2' });
+    let row = tenderbrief.tenderBrief(ctx('qs')).manifest.find((entry) => entry.id === 'R4')!;
+    assert.equal(row.portalLocation, 'Envelope 1 — Qualification, slot 4');
+    assert.equal(row.fileName, 'R4-insurance.pdf');
+    assert.equal(row.version, 'v2');
+    assert.equal(row.status, 'PENDING');
+    assert.match(row.detail, /Not yet confirmed as uploaded/);
+
+    refused(() => bidsignoff.confirmPortalUpload(ctx('qs'), { reference: 'R4', note: 'ok' }), 'UPLOAD_NOTE_REQUIRED');
+    bidsignoff.confirmPortalUpload(ctx('qs'), { reference: 'R4', note: 'Uploaded, opened, name accepted by the portal' });
+    row = tenderbrief.tenderBrief(ctx('qs')).manifest.find((entry) => entry.id === 'R4')!;
+    assert.equal(row.status, 'VERIFIED');
+    assert.equal(row.uploaded?.by, seed.users.qs!.id);
+
+    // A different file recorded against it needs confirming on the portal in turn.
+    bidsignoff.recordPortalFile(ctx('qs'), { reference: 'R4', portalLocation: 'Envelope 1 — Qualification, slot 4', fileName: 'R4-insurance.pdf', version: 'v3' });
+    row = tenderbrief.tenderBrief(ctx('qs')).manifest.find((entry) => entry.id === 'R4')!;
+    assert.equal(row.status, 'PENDING');
+    assert.equal(row.uploaded, undefined);
+    bidsignoff.confirmPortalUpload(ctx('qs'), { reference: 'R4', note: 'Version 3 uploaded and opened' });
+
+    // A file the platform produces is not verified by a portal confirmation alone: it must be ready too.
+    bidsignoff.recordPortalFile(ctx('qs'), { reference: 'R1', portalLocation: 'Envelope 3 — Commercial' });
+    bidsignoff.confirmPortalUpload(ctx('qs'), { reference: 'R1', note: 'Uploaded and opened on the portal' });
+    row = tenderbrief.tenderBrief(ctx('qs')).manifest.find((entry) => entry.id === 'R1')!;
+    assert.equal(row.status, 'PENDING', 'the job is not priced');
+    assert.equal(row.portalLocation, 'Envelope 3 — Commercial');
+
+    const routes = new Set(ROUTES.map((route) => `${route.method} ${route.pattern}`));
+    for (const path of ['GET /v1/projects/:projectId/tender/signoff', 'POST /v1/projects/:projectId/tender/signoff/approve', 'POST /v1/projects/:projectId/tender/signoff/file', 'POST /v1/projects/:projectId/tender/signoff/file/confirm']) {
+      assert.ok(routes.has(path), path);
+    }
   });
 
   it('quotes each answer from the documents it sends', () => {

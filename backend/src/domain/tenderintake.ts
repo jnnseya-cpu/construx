@@ -77,6 +77,8 @@ export type SourceAnchor = {
   /** Clause, paragraph or question number. */
   clause?: string;
   page?: number;
+  /** The passage that states it, as the document prints it — where it was found in the pack. */
+  quote?: string;
 };
 
 /**

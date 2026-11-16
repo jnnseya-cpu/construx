@@ -29,6 +29,9 @@ import { BRIEF_ITEMS, recordFact } from '../domain/etablix/brief.ts';
 import { requireModule } from '../identity/modules.ts';
 import { bindAnalysis, extractRequirements, type SubmissionChannel, type TenderDeliverable } from '../domain/tenderintake.ts';
 import { recordModelReading } from '../evidence/pipeline.ts';
+import { locateQuote, sourceDocumentsForDraft } from '../domain/tendersource.ts';
+import { SOURCE_MATERIAL_RULE } from '../ai/sourcematerial.ts';
+import { mergeParticulars, PARTICULARS_PROMPT, PARTICULARS_SCHEMA, particularsFromReading, type TenderParticulars } from '../domain/tenderparticulars.ts';
 
 /**
  * Perception ingestion: reading a file the platform holds.
@@ -497,7 +500,9 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       'Report no limit where none is stated rather than a conventional one. Where the document has a quality ' +
       'questionnaire or method-statement questions that the evaluator marks, list each question as its own ' +
       'requirement: its reference as numbered (e.g. "Q1"), the full question text verbatim, its own weighting, and ' +
-      'its word or page limit — these are the answers the bid is scored on, so none may be missed or merged. A ' +
+      'its word or page limit — these are the answers the bid is scored on, so none may be missed or merged — with ' +
+      '`subQuestions`, each distinct thing the question asks in its own words, and `scoringCriteria`, what the document ' +
+      'says earns the marks for it, where it says. A ' +
       'weighting is the marks for that one question, never the overall quality/price split; the split and the ' +
       'scoring rules are not questions and carry no weighting. Notes printed on drawings (dimensions in metres, ' +
       'read in conjunction with…) are not requirements; leave them out. Separately list every deliverable that must be ' +
@@ -516,7 +521,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       'the document that states it, so a person can find it. Where the text is several documents, each begins with ' +
       'a "=== Document:" line; a requirement in one may be explained in another, so read them together. Quote the ' +
       'document rather than summarising it, and omit anything it does not state rather than inferring it; list what ' +
-      'you omitted and why.',
+      `you omitted and why. ${PARTICULARS_PROMPT}`,
     responseSchema: {
       type: 'object',
       properties: {
@@ -562,6 +567,8 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
               pageLimit: { type: ['number', 'null'] },
               limitStatedAs: { type: ['string', 'null'] },
               sourceQuote: { type: ['string', 'null'] },
+              subQuestions: { type: 'array', items: { type: 'string' } },
+              scoringCriteria: { type: ['string', 'null'] },
             },
             required: ['reference', 'category', 'requirement', 'mandatory', 'evidenceRequired'],
           },
@@ -604,6 +611,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
           },
         },
         omitted: { type: 'array', items: { type: 'string' } },
+        ...PARTICULARS_SCHEMA,
       },
       required: ['requirements'],
     },
@@ -1094,7 +1102,8 @@ export async function extract(
     capability: 'PERCEPTION',
     inputRefs: [{ refType: 'EvidenceItem', refId: record.refId }],
     request: {
-      task: definition.prompt,
+      // Every document read here is from outside the business: read, never obeyed.
+      task: `${definition.prompt} ${SOURCE_MATERIAL_RULE}`,
       // The hash travels in the payload as well as on the media, so the answer
       // is traceable to the exact bytes that produced it — and, where a page
       // range was taken, which pages of that file it was read from.
@@ -1324,7 +1333,8 @@ export async function extractFromText(
     capability: 'REASONING',
     inputRefs: [evidenceRef],
     request: {
-      task: definition.prompt,
+      // Every document read here is from outside the business: read, never obeyed.
+      task: `${definition.prompt} ${SOURCE_MATERIAL_RULE}`,
       payload: { text, source: input.source, ...(input.documentHash ? { documentHash: input.documentHash } : {}) },
       responseSchema: definition.responseSchema,
     },
@@ -1653,8 +1663,23 @@ export async function confirm(
       terms?: Record<string, unknown>;
     };
 
-    const requirements = (read.requirements ?? []).map((requirement) => ({
+    // Each requirement and return cited to the document that states it, found
+    // in the documents by code — the quote the model gave, or the line's own
+    // words — so the matrix can be checked back to the pack.
+    const sourceDocs = sourceDocumentsForDraft(ctx, draft as unknown as Record<string, unknown>);
+    const requirements = (read.requirements ?? []).map((requirement): ITTRequirement => ({
+      source: locateQuote(sourceDocs, {
+        quote: requirement.sourceQuote,
+        fallback: requirement.requirement,
+        clause: requirement.reference,
+      }),
       reference: String(requirement.reference ?? ''),
+      ...(Array.isArray(requirement.subQuestions) && requirement.subQuestions.length > 0
+        ? { subQuestions: (requirement.subQuestions as unknown[]).map(String).filter((entry) => entry.trim() !== '') }
+        : {}),
+      ...(typeof requirement.scoringCriteria === 'string' && requirement.scoringCriteria.trim() !== ''
+        ? { scoringCriteria: requirement.scoringCriteria.trim() }
+        : {}),
       category: String(requirement.category ?? 'SUBMISSION') as ITTRequirement['category'],
       requirement: String(requirement.requirement ?? ''),
       mandatory: requirement.mandatory === true,
@@ -1723,6 +1748,13 @@ export async function confirm(
     const priorAnalysisId = invitationRecord.state.analysisId as string | undefined;
     let mergedRequirements = requirements;
     let mergedTerms = commercial;
+    let mergedParticulars = particularsFromReading(extraction, sourceDocs);
+    // The decisions people took on the matrix this one replaces — reviews,
+    // waivers, confirmed undertakings — carried across where the line they were
+    // taken on reads the same; a line whose wording changed is decided again.
+    let carriedReviews: Array<{ reference: string }> = [];
+    let carriedWaivers: Array<{ reference: string }> = [];
+    let carriedUndertakings: Array<{ reference: string }> = [];
     // The tender's own identity — the reference, client and return date it is
     // known by. On a first reading these come from the document (or the
     // invitation when the document did not state one). On a re-read they are
@@ -1740,6 +1772,17 @@ export async function confirm(
         const priorMatrix = (prior.state.matrix as MatrixLine[] | undefined) ?? [];
         mergedRequirements = mergeRequirements(requirementsFromMatrix(priorMatrix), requirements);
         mergedTerms = mergeCommercialTerms(prior.state.commercialTerms as CommercialTerms | undefined, commercial);
+        mergedParticulars = mergeParticulars(prior.state.particulars as TenderParticulars | undefined, mergedParticulars);
+        const unchanged = new Set(
+          priorMatrix
+            .filter((line) => mergedRequirements.some((next) => next.reference === line.reference && next.requirement === line.requirement))
+            .map((line) => line.reference),
+        );
+        const keep = <T extends { reference: string }>(entries: unknown): T[] =>
+          ((entries as T[] | undefined) ?? []).filter((entry) => unchanged.has(entry.reference));
+        carriedReviews = keep(prior.state.reviews);
+        carriedWaivers = keep(prior.state.waivers);
+        carriedUndertakings = keep(prior.state.undertakings);
         const priorReference = String(prior.state.reference ?? '').trim();
         const priorClient = String(prior.state.clientName ?? '').trim();
         const priorReturnBy = String(prior.state.returnBy ?? '').trim();
@@ -1757,6 +1800,10 @@ export async function confirm(
       ...(input.durationWeeks === undefined ? {} : { durationWeeks: input.durationWeeks }),
       requirements: mergedRequirements,
       terms: mergedTerms,
+      particulars: mergedParticulars,
+      ...(carriedReviews.length > 0 ? { reviews: carriedReviews } : {}),
+      ...(carriedWaivers.length > 0 ? { waivers: carriedWaivers } : {}),
+      ...(carriedUndertakings.length > 0 ? { undertakings: carriedUndertakings } : {}),
       ...(input.targetMarginPercent !== undefined ? { targetMarginPercent: input.targetMarginPercent } : {}),
     });
 
@@ -1774,6 +1821,19 @@ export async function confirm(
       ...(deliverable.signatureRequired != null ? { signatureRequired: deliverable.signatureRequired === true } : {}),
       ...(deliverable.bondRequired != null ? { bondRequired: deliverable.bondRequired === true } : {}),
       ...(deliverable.channel ? { channel: String(deliverable.channel) as SubmissionChannel } : {}),
+      ...((): { source?: TenderDeliverable['source'] } => {
+        const found = locateQuote(sourceDocs, { quote: deliverable.sourceQuote, fallback: deliverable.title, clause: deliverable.reference });
+        return found.located && found.document
+          ? {
+              source: {
+                document: found.document,
+                ...(found.clause ? { clause: found.clause } : {}),
+                ...(found.page !== undefined ? { page: found.page } : {}),
+                ...(found.quote ? { quote: found.quote } : {}),
+              },
+            }
+          : {};
+      })(),
     }));
 
     // Keep every deliverable already on the tender — the owner, date and source

@@ -176,6 +176,17 @@ import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
 import * as tenderpackcheck from '../domain/tenderpackcheck.ts';
 import * as tenderreading from '../domain/tenderreading.ts';
+import * as bidreview from '../domain/bidreview.ts';
+import * as buyerquestions from '../domain/buyerquestions.ts';
+import * as answercheck from '../domain/answercheck.ts';
+import * as pricecheck from '../domain/pricecheck.ts';
+import { RISK_CATEGORIES } from '../engines/maths/risk.ts';
+import * as bidsignoff from '../domain/bidsignoff.ts';
+import * as tenderbrief from '../domain/tenderbrief.ts';
+import * as tenderscope from '../domain/tenderscope.ts';
+import * as contractreview from '../domain/contractreview.ts';
+import * as tenderregister from '../domain/tenderregister.ts';
+import * as matrixreview from '../domain/matrixreview.ts';
 import * as aiclearance from '../domain/aiclearance.ts';
 import * as tenderreadiness from '../domain/tenderreadiness.ts';
 import * as clarificationreview from '../domain/clarificationreview.ts';
@@ -503,7 +514,8 @@ export type Route = {
      * than named in the path — the whole tender pack. The quote sizes the
      * estimate from it, so the price shown is the price of what is sent.
      */
-    quoteInputText?: (ctx: EngineContext) => string | undefined;
+    /** The text the run will send, to size its estimate — `query` carries what the path names, such as a batch. */
+    quoteInputText?: (ctx: EngineContext, query?: URLSearchParams) => string | undefined;
   };
   /**
    * A control that never belongs on a handset, and which control it is.
@@ -5318,6 +5330,69 @@ export const ROUTES: Route[] = [
         tenantContext(platform, ctx),
         ctx.params.analysisId as string,
         body<{ addendum: string; reference: string; note: string }>(ctx),
+      ),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/pipeline/analyses/:analysisId/position',
+    readOnly: true,
+    description:
+      'Where every requirement stands — confirmed, assumed, conflicting, missing or a decision required — with its basis, where the tender states it, its threshold and the next action',
+    handler: (platform, ctx) => matrixreview.matrixPosition(tenantContext(platform, ctx), ctx.params.analysisId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/analyses/:analysisId/reviews',
+    description: "Record a person's review of one requirement: its status, what it rests on, and what happens next",
+    schema: {
+      type: 'object',
+      required: ['reference', 'status', 'basis'],
+      properties: {
+        reference: stringField,
+        status: { type: 'string', enum: [...matrixreview.REVIEW_STATUSES] },
+        basis: { type: 'string', minLength: 1, maxLength: 2000 },
+        action: { type: 'string', maxLength: 500 },
+        owner: { type: 'string' },
+        decisionDue: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        obtainable: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      matrixreview.reviewRequirement(
+        tenantContext(platform, ctx),
+        ctx.params.analysisId as string,
+        body<Parameters<typeof matrixreview.reviewRequirement>[2]>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/analyses/:analysisId/scoring-scale',
+    description: 'Record the buyer’s scoring scale — each mark and the words that earn it — where the reading did not find it, with where it is published',
+    schema: {
+      type: 'object',
+      required: ['bands', 'source'],
+      properties: {
+        bands: {
+          type: 'array',
+          minItems: 2,
+          maxItems: 21,
+          items: {
+            type: 'object',
+            required: ['score', 'descriptor'],
+            properties: { score: { type: 'number', minimum: 0 }, descriptor: { type: 'string', minLength: 1, maxLength: 1000 } },
+            additionalProperties: false,
+          },
+        },
+        source: { type: 'string', minLength: 1, maxLength: 300 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      matrixreview.recordScoringScale(
+        tenantContext(platform, ctx),
+        ctx.params.analysisId as string,
+        body<{ bands: Array<{ score: number; descriptor: string }>; source: string }>(ctx),
       ),
   },
   {
@@ -16452,15 +16527,46 @@ export const ROUTES: Route[] = [
       type: 'object',
       required: ['payment', 'supply', 'vat'],
       properties: {
+        // The fields the funding engine reads (`PaymentTerms`, `SupplyTerms`, `VatTreatment`). The
+        // schema used to require four payment fields the engine never read and none it did, so a
+        // caller that followed it got a cash model built from missing numbers.
         payment: {
           type: 'object',
-          required: ['applicationDayOfMonth', 'paymentNoticeDays', 'payLessNoticeDaysBeforeFinal', 'finalDateDays'],
+          required: ['applicationIntervalDays', 'certificationDays', 'paymentDays', 'retentionPercent', 'retentionReleasedAtCompletionPercent', 'defectsLiabilityWeeks'],
+          properties: {
+            applicationIntervalDays: { type: 'integer', minimum: 1 },
+            certificationDays: { type: 'integer', minimum: 0 },
+            paymentDays: { type: 'integer', minimum: 0 },
+            retentionPercent: { type: 'number', minimum: 0, maximum: 100 },
+            retentionReleasedAtCompletionPercent: { type: 'number', minimum: 0, maximum: 100 },
+            defectsLiabilityWeeks: { type: 'integer', minimum: 0 },
+            advancePaymentPercent: { type: 'number', minimum: 0, maximum: 100 },
+          },
+          additionalProperties: false,
         },
         supply: {
           type: 'object',
           required: ['subcontractorPaymentDays', 'materialSupplierPaymentDays', 'materialsDepositPercent', 'materialsDepositLeadWeeks', 'plantPaymentDays'],
+          properties: {
+            subcontractorPaymentDays: { type: 'integer', minimum: 0 },
+            materialSupplierPaymentDays: { type: 'integer', minimum: 0 },
+            materialsDepositPercent: { type: 'number', minimum: 0, maximum: 100 },
+            materialsDepositLeadWeeks: { type: 'integer', minimum: 0 },
+            plantPaymentDays: { type: 'integer', minimum: 0 },
+          },
+          additionalProperties: false,
         },
-        vat: { type: 'object', required: ['ratePercent', 'reverseCharge', 'returnIntervalWeeks', 'settlementLagWeeks'] },
+        vat: {
+          type: 'object',
+          required: ['ratePercent', 'reverseCharge', 'returnIntervalWeeks', 'settlementLagWeeks'],
+          properties: {
+            ratePercent: { type: 'number', minimum: 0, maximum: 100 },
+            reverseCharge: { type: 'boolean' },
+            returnIntervalWeeks: { type: 'integer', minimum: 1 },
+            settlementLagWeeks: { type: 'integer', minimum: 0 },
+          },
+          additionalProperties: false,
+        },
         // Spent before anybody is productive: hoarding, cabins, bonds, deposits.
         mobilisationMinor: { type: 'integer', minimum: 0 },
         availableWorkingCapitalMinor: { type: 'integer', minimum: 0 },
@@ -21894,7 +22000,7 @@ export const ROUTES: Route[] = [
         // so a browser form need not invent an id.
         id: stringField,
         title: stringField,
-        category: stringField,
+        category: { type: 'string', enum: [...RISK_CATEGORIES] },
         // cause → event → impact as one record, and who carries it.
         cause: stringField,
         allocation: { type: 'string', enum: ['CLIENT', 'CONTRACTOR', 'SHARED'] },
@@ -21925,6 +22031,9 @@ export const ROUTES: Route[] = [
         mitigations: { type: 'array', items: { type: 'object' } },
         projectValueMinor: { type: 'integer', minimum: 0 },
         projectDurationDays: { type: 'integer', minimum: 1 },
+        // Where it comes from, and when the decision on it is due — a tender's risk register asks both.
+        source: { type: 'string', maxLength: 500 },
+        decisionDue: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
       },
       additionalProperties: false,
     },
@@ -25922,12 +26031,18 @@ export const ROUTES: Route[] = [
             drawing: { type: 'string' },
             package: { type: 'string' },
             scopeItem: { type: 'string' },
+            requirement: { type: 'string' },
           },
           additionalProperties: false,
         },
         responseDeadline: { type: 'string' },
         confidentiality: { type: 'string', enum: [...tenderintel.CONFIDENTIALITY] },
         bidderPartyId: { type: 'string' },
+        ambiguity: { type: 'string', maxLength: 2000 },
+        impact: { type: 'string', maxLength: 1000 },
+        urgency: { type: 'string', enum: [...tenderintel.CLARIFICATION_URGENCY] },
+        owner: { type: 'string', maxLength: 120 },
+        interimTreatment: { type: 'string', maxLength: 1000 },
       },
       additionalProperties: false,
     },
@@ -26079,11 +26194,15 @@ export const ROUTES: Route[] = [
       properties: { answer: stringField, answeredOn: { type: 'string' } },
       additionalProperties: false,
     },
-    handler: (platform, ctx) =>
-      tenderintel.recordClientAnswer(projectContext(platform, ctx), {
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      const recorded = tenderintel.recordClientAnswer(engineCtx, {
         clarificationId: ctx.params.clarificationId as string,
         ...body<{ answer: string; answeredOn?: string }>(ctx),
-      }),
+      });
+      // What the answer reaches — the matrix line, the drafted answers, the risks, the price — returned with it.
+      return { ...recorded, impacts: buyerquestions.answerImpacts(engineCtx, recorded.clarificationId) };
+    },
   },
   {
     method: 'POST',
@@ -27893,7 +28012,7 @@ export const ROUTES: Route[] = [
       const heldFile = ingestionId || input.hash
         ? ingestion.ingestedFiles(engineCtx).find((file) => (ingestionId ? file.ingestionId === ingestionId : file.hash === input.hash))
         : undefined;
-      const inputText = heldFile?.extraction.text || matched.route.ai.quoteInputText?.(engineCtx);
+      const inputText = heldFile?.extraction.text || matched.route.ai.quoteInputText?.(engineCtx, new URLSearchParams(input.path.split('?')[1] ?? ''));
       const passes = (matched.route.ai.passes ?? 1) * (input.repeat ?? 1);
 
       return platform.orchestrator.quote({
@@ -28329,6 +28448,185 @@ export const ROUTES: Route[] = [
       ),
   },
   {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/contract-review',
+    readOnly: true,
+    description:
+      'The contract as the pack states it, clause by clause: what each does to cost, programme, cash, insurance or liability, which need legal, insurance or finance review, what the pack does not state, and what cannot be compared',
+    handler: (platform, ctx) => contractreview.contractReviewForProject(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/contract-review/draft',
+    description:
+      'Put the clauses read from the pack into the tender review, each with the contract’s own wording, for a legal or commercial owner to accept or reject',
+    schema: {
+      type: 'object',
+      properties: { edition: { type: 'string', maxLength: 120 }, owner: { type: 'string', maxLength: 120 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => contractreview.draftContractReview(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/answer-check',
+    readOnly: true,
+    description:
+      'Each drafted answer against the sub-questions and scoring criteria of its question and its limit, and every date, duration and social-value commitment in the answers against the programme, the estimate and the contract dates',
+    handler: (platform, ctx) => answercheck.answerCheck(projectContext(platform, ctx), ctx.params.packId as string),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/brief',
+    readOnly: true,
+    description:
+      'The executive brief: the recommendation, the binding deadlines, the decision drivers and the approvals; the nine outputs of the bid review, each Ready for Review, In Draft or Blocked with what stands in the way; and the submission manifest',
+    handler: (platform, ctx) => tenderbrief.tenderBrief(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/signoff',
+    readOnly: true,
+    description:
+      'The one sign-off record for the bid: the commercial, programme, contract and signatory approvals, each current or stale against what it approved; and where each return goes on the buyer’s portal, with whether a person confirmed it is there',
+    handler: (platform, ctx) => bidsignoff.signOffPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/signoff/approve',
+    description: 'Approve one area of the bid — the price, the programme, the contract or, as an authorised signatory, the submission — recording exactly what was approved',
+    schema: {
+      type: 'object',
+      required: ['area', 'note'],
+      properties: { area: { type: 'string', enum: ['COMMERCIAL', 'PROGRAMME', 'CONTRACT', 'SIGNATORY'] }, note: { type: 'string', minLength: 1, maxLength: 2000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => bidsignoff.approve(projectContext(platform, ctx), body<Parameters<typeof bidsignoff.approve>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/signoff/file',
+    description: 'Record where a return goes on the buyer’s portal — the section or upload slot, the file name and the version',
+    schema: {
+      type: 'object',
+      required: ['reference', 'portalLocation'],
+      properties: {
+        reference: { type: 'string', minLength: 1, maxLength: 100 },
+        portalLocation: { type: 'string', minLength: 1, maxLength: 300 },
+        fileName: { type: 'string', maxLength: 300 },
+        version: { type: 'string', maxLength: 100 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => bidsignoff.recordPortalFile(projectContext(platform, ctx), body<Parameters<typeof bidsignoff.recordPortalFile>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/signoff/file/confirm',
+    description: 'Confirm a return was uploaded and checked on the buyer’s portal, saying what was checked',
+    schema: {
+      type: 'object',
+      required: ['reference', 'note'],
+      properties: { reference: { type: 'string', minLength: 1, maxLength: 100 }, note: { type: 'string', minLength: 1, maxLength: 2000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => bidsignoff.confirmPortalUpload(projectContext(platform, ctx), body<Parameters<typeof bidsignoff.confirmPortalUpload>[1]>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/price-check',
+    readOnly: true,
+    description:
+      'Whether the price can be approved or is still provisional and why, how overhead and profit are applied (markup on cost and margin on price), whether the buyer’s schedule adds to the internal total, and the cash month by month with each modelled scenario',
+    handler: (platform, ctx) => pricecheck.priceCheck(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/scope',
+    readOnly: true,
+    description:
+      'Who designs, supplies, installs and tests each part of the work and where it is priced, with the gaps and interfaces flagged; and every place two documents disagree, each side cited',
+    handler: (platform, ctx) => tenderscope.scopeReview(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/scope/send-to-review',
+    description: 'Put the scope read from the pack onto the tender review’s gap-and-overlap map, each element with the document that imposes it and the package that prices it',
+    schema: { type: 'object', properties: { edition: { type: 'string', maxLength: 120 } }, additionalProperties: false },
+    handler: (platform, ctx) => tenderscope.sendScopeToReview(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/bid-review',
+    readOnly: true,
+    description:
+      'The bid recommendation — bid, conditional bid, hold or no bid — from the matrix, the documents, the contract, the open questions, the margin and the cash, with each condition’s owner, deadline and fallback, and the risks the tender carries',
+    handler: (platform, ctx) => bidreview.bidReview(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/buyer-questions',
+    readOnly: true,
+    description: 'The open questions for the buyer in the buyer’s form — CQ-n, tender reference, document and clause, the ambiguity and the question — with nothing internal on it',
+    handler: (platform, ctx) => buyerquestions.buyerSchedule(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/buyer-questions.pdf',
+    binary: true,
+    description: 'The buyer’s questions as a branded document (PDF or DOCX), for the buyer’s channel — nothing internal on it',
+    schema: {
+      type: 'object',
+      properties: { format: { type: 'string', enum: ['PDF', 'DOCX'] } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const projectId = ctx.params.projectId as string;
+      const actor = auth(ctx);
+      const chosen: RenderableFormat = body<{ format?: RenderableFormat }>(ctx).format ?? 'PDF';
+      const schedule = buyerquestions.buyerSchedule(projectContext(platform, ctx));
+      if (schedule.rows.length === 0) {
+        throw new DomainError('NO_OPEN_QUESTIONS', 'There is no open question for the buyer to put in a schedule.', 409);
+      }
+      const document = platform.exports.document(actor, projectId, {
+        title: 'Tender Clarification Questions',
+        subtitle: schedule.tenderReference,
+        // Addressed to the buyer, not to the business issuing it.
+        ...(schedule.buyer ? { preparedFor: schedule.buyer } : {}),
+        blocks: buyerquestions.buyerScheduleBlocks(schedule),
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+      });
+      return renderAndCharge(
+        platform.spendingWalletFor(actor, projectId).wallet,
+        document,
+        { format: chosen, projectId, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/extension-request',
+    description:
+      'Draft a reasoned request to extend the return date, only where missing information threatens it — for a person to approve and send; writes nothing and sends nothing',
+    schema: {
+      type: 'object',
+      properties: { proposedLocal: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}(?:[T ]\\d{2}:\\d{2})?$' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => buyerquestions.extensionRequestDraft(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/register',
+    readOnly: true,
+    description:
+      'The tender documents and dates in one place: every upload with what was read of it, what the pack lists or refers to that is missing, precedence, evaluation and submission rules, and every date — binding or indicative — with the conflicts between them',
+    handler: (platform, ctx) => tenderregister.tenderRegister(projectContext(platform, ctx)),
+  },
+  {
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/read-pack',
     // Its own task type: a whole pack is several times the length of one file,
@@ -28338,12 +28636,18 @@ export const ROUTES: Route[] = [
       engine: 'TENDER',
       taskType: perception.textTaskType('ITT_REQUIREMENTS', 'TENDER_PACK'),
       capability: 'REASONING',
-      quoteInputText: (engineCtx) => tenderreading.packText(engineCtx).text || undefined,
+      // A batch is quoted from that batch's documents alone.
+      quoteInputText: (engineCtx, query) => {
+        const batch = Number(query?.get('batch'));
+        if (!batch) return tenderreading.packText(engineCtx).text || undefined;
+        const files = tenderreading.packBatches(engineCtx).batches.find((entry) => entry.index === batch)?.files ?? [];
+        return tenderreading.packText(engineCtx, { only: files.map((file) => file.ingestionId) }).text || undefined;
+      },
     },
     description:
       'Read every tender document on the project together, in one run, into one draft: the invitation facts, the requirements matrix and the returns, with the checks run on it in code',
-    schema: { type: 'object', properties: {}, additionalProperties: false },
-    handler: (platform, ctx) => tenderreading.readTenderPack(projectContext(platform, ctx)),
+    schema: { type: 'object', properties: { batch: { type: 'integer', minimum: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => tenderreading.readTenderPack(projectContext(platform, ctx), body<{ batch?: number }>(ctx)),
   },
   {
     method: 'POST',

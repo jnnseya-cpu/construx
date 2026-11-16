@@ -79,7 +79,13 @@ export type InformationLink = {
   package?: string;
   /** The scope-matrix item, where the question came out of the review. */
   scopeItem?: string;
+  /** The compliance-matrix line it concerns — so the answer can be traced back to it. */
+  requirement?: string;
 };
+
+/** How soon an answer is needed: what an unanswered question puts at stake. */
+export const CLARIFICATION_URGENCY = ['CRITICAL', 'HIGH', 'NORMAL'] as const;
+export type ClarificationUrgency = (typeof CLARIFICATION_URGENCY)[number];
 
 export type ClarificationRecipient = {
   partyId: string;
@@ -100,7 +106,8 @@ function hasLink(links: InformationLink): boolean {
       links.clause?.trim() ||
       links.drawing?.trim() ||
       links.package?.trim() ||
-      links.scopeItem?.trim(),
+      links.scopeItem?.trim() ||
+      links.requirement?.trim(),
   );
 }
 
@@ -127,9 +134,23 @@ export function raiseTenderClarification(
     confidentiality?: Confidentiality;
     /** Required for a bidder-side question: the firm that asked it. */
     bidderPartyId?: string;
+    /** For the buyer: the ambiguity, stated neutrally — what the documents say, not what we want. */
+    ambiguity?: string;
+    /** Internal: what an unanswered question does to eligibility, the price or the programme. */
+    impact?: string;
+    urgency?: ClarificationUrgency;
+    /** Internal: who chases it. */
+    owner?: string;
+    /** Internal: how it is priced or programmed until the answer arrives. */
+    interimTreatment?: string;
   },
 ): { clarificationId: string; reference: string } {
   authorise(ctx, 'PROCUREMENT_AWARD', 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+  if (input.urgency !== undefined && !CLARIFICATION_URGENCY.includes(input.urgency)) {
+    throw new DomainError('CLARIFICATION_URGENCY_INVALID', `Urgency is one of ${CLARIFICATION_URGENCY.join(', ')}.`, 422, [
+      { field: 'urgency', message: 'choose one' },
+    ]);
+  }
 
   if (!input.subject.trim() || !input.question.trim()) {
     throw new DomainError('CLARIFICATION_EMPTY', 'A clarification needs a subject and the question itself.');
@@ -176,6 +197,11 @@ export function raiseTenderClarification(
       responseDeadline: input.responseDeadline,
       confidentiality,
       supplierId: input.bidderPartyId,
+      ...(input.ambiguity?.trim() ? { ambiguity: input.ambiguity.trim() } : {}),
+      ...(input.impact?.trim() ? { impact: input.impact.trim() } : {}),
+      ...(input.urgency ? { urgency: input.urgency } : {}),
+      ...(input.owner?.trim() ? { owner: input.owner.trim() } : {}),
+      ...(input.interimTreatment?.trim() ? { interimTreatment: input.interimTreatment.trim() } : {}),
       status: 'OPEN',
       raisedAt: new Date().toISOString(),
       raisedBy: ctx.auth.actorId,
@@ -1192,6 +1218,12 @@ export type TenderIntelPosition = {
     answeredOn?: string;
     /** On a WITHDRAWN question: why it was dropped, so it is not raised again. */
     withdrawnReason?: string;
+    /** The internal log: the ambiguity stated for the buyer, what is at stake, how soon, who chases it, and how it is priced meanwhile. */
+    ambiguity?: string;
+    impact?: string;
+    urgency?: ClarificationUrgency;
+    owner?: string;
+    interimTreatment?: string;
   }>;
   comparisons: Array<{
     comparisonId: string;
@@ -1289,6 +1321,11 @@ export function tenderIntelPosition(ctx: EngineContext): TenderIntelPosition {
       ...(record.state.answer ? { answer: String(record.state.answer) } : {}),
       ...(record.state.answeredOn ? { answeredOn: String(record.state.answeredOn) } : {}),
       ...(record.state.withdrawnReason ? { withdrawnReason: String(record.state.withdrawnReason) } : {}),
+      ...(record.state.ambiguity ? { ambiguity: String(record.state.ambiguity) } : {}),
+      ...(record.state.impact ? { impact: String(record.state.impact) } : {}),
+      ...(record.state.urgency ? { urgency: record.state.urgency as ClarificationUrgency } : {}),
+      ...(record.state.owner ? { owner: String(record.state.owner) } : {}),
+      ...(record.state.interimTreatment ? { interimTreatment: String(record.state.interimTreatment) } : {}),
     };
   });
 

@@ -132,7 +132,7 @@ export async function billing(root) {
                   entry.granted
                     ? html`${levelName(entry.granted.level)}<div style="font-size:11.5px;color:var(--text-3)">${entry.granted.reason} · ${String(entry.granted.grantedAt).slice(0, 10)}</div>`
                     : '—',
-                  badge(levelName(entry.effective), ['COMMERCIAL_L3', 'LEGAL_L4'].includes(entry.effective) ? 'good' : ''),
+                  badge(levelName(entry.effective), ['COMMERCIAL_L3', 'LEGAL_L4'].includes(entry.effective) ? 'ok' : ''),
                   clearance.canChange
                     ? html`<button class="btn quiet sm" data-clear-provider="${entry.provider}">Clear it</button>
                         ${entry.granted ? html`<button class="btn quiet sm" data-withdraw-provider="${entry.provider}">Withdraw</button>` : ''}`

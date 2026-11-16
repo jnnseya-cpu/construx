@@ -50,6 +50,12 @@ const WORD_GAP = -180;
 export type PdfReading = {
   /** Pages found on the page tree, or by scanning where the tree is broken. */
   pages: number;
+  /**
+   * Where each page that yielded text begins in `text`: its page number on the
+   * page tree and the character offset. A page with no text has no entry, so a
+   * quote found in the text can be cited by the page it is printed on.
+   */
+  pageStarts?: Array<{ page: number; offset: number }>;
   /** Pages that yielded at least one character. */
   textPages: number;
   /** Pages that drew an image and yielded no text: what a scan looks like. */
@@ -1312,6 +1318,8 @@ export function readPdfText(bytes: Buffer): PdfReading {
     const pages = file.pages();
     const cache = new Map<string, Decoder>();
     const texts: string[] = [];
+    const pageStarts: Array<{ page: number; offset: number }> = [];
+    let offset = 0;
     const tables: PdfTable[] = [];
     let textPages = 0;
     let imageOnlyPages = 0;
@@ -1324,6 +1332,10 @@ export function readPdfText(bytes: Buffer): PdfReading {
       undecodable += state.undecodable;
       if (text !== '') {
         textPages += 1;
+        // Joined with a blank line between pages, as `text` is below.
+        if (texts.length > 0) offset += 2;
+        pageStarts.push({ page: index + 1, offset });
+        offset += text.length;
         texts.push(text);
         for (const rows of recoverTables(state.runs)) tables.push({ page: index + 1, rows });
       } else if (state.images > 0) imageOnlyPages += 1;
@@ -1336,6 +1348,7 @@ export function readPdfText(bytes: Buffer): PdfReading {
       unreadableStreams: file.unreadableStreams,
       encrypted: false,
       text: texts.join('\n\n'),
+      pageStarts,
       tables,
     };
   } catch {

@@ -45,15 +45,20 @@ export const DISCIPLINE = opts([
   ['TEMPORARY_WORKS', 'Temporary works'],
 ]);
 
+// The risk engine's own categories (`RISK_CATEGORIES` in engines/maths/risk.ts),
+// exactly — a test holds the two together. Labour shortages are supply chain or
+// programme risks.
 export const RISK_CATEGORY = opts([
-  ['DESIGN', 'Design'],
-  ['GROUND', 'Ground conditions'],
-  ['WEATHER', 'Weather'],
-  ['SUPPLY_CHAIN', 'Supply chain'],
-  ['LABOUR', 'Labour'],
-  ['REGULATORY', 'Regulatory'],
   ['COMMERCIAL', 'Commercial'],
+  ['PROGRAMME', 'Programme'],
   ['SAFETY', 'Safety'],
+  ['DESIGN', 'Design'],
+  ['QUALITY', 'Quality'],
+  ['ENVIRONMENTAL', 'Environmental'],
+  ['REGULATORY', 'Regulatory'],
+  ['SUPPLY_CHAIN', 'Supply chain, labour and materials'],
+  ['GROUND_CONDITIONS', 'Ground conditions'],
+  ['WEATHER', 'Weather'],
 ]);
 
 export const CHANGE_ORIGIN = opts([

@@ -16,12 +16,22 @@ import { contingencyRequirement, forecastSafety, scoreRisk, type RiskInput, type
 
 export function registerRisk(
   ctx: EngineContext,
-  input: RiskInput & { projectValueMinor: number; projectDurationDays: number },
+  input: RiskInput & {
+    projectValueMinor: number;
+    projectDurationDays: number;
+    /** Where the risk comes from — the document and clause, the matrix line — so it can be checked back. */
+    source?: string;
+    /** When the decision on it (price it, qualify it, ask, walk away) has to be made, YYYY-MM-DD. */
+    decisionDue?: string;
+  },
 ): { riskId: string; scored: ReturnType<typeof scoreRisk> } {
   authorise(ctx, 'RISK_REGISTER', 'C', { lifecyclePhase: currentPhase(ctx) });
 
   if (input.allocation && !['CLIENT', 'CONTRACTOR', 'SHARED'].includes(input.allocation)) {
     throw new DomainError('RISK_ALLOCATION_INVALID', 'Allocation is one of CLIENT, CONTRACTOR or SHARED');
+  }
+  if (input.decisionDue !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(input.decisionDue)) {
+    throw new DomainError('RISK_DECISION_DUE_INVALID', 'The decision date is a date, YYYY-MM-DD.', 422, [{ field: 'decisionDue', message: 'YYYY-MM-DD' }]);
   }
 
   const scored = scoreRisk(input, input.projectValueMinor, input.projectDurationDays);
@@ -34,6 +44,8 @@ export function registerRisk(
       ...scored,
       id: riskId,
       projectId: ctx.projectId,
+      ...(input.source?.trim() ? { source: input.source.trim() } : {}),
+      ...(input.decisionDue ? { decisionDue: input.decisionDue } : {}),
       status: 'OPEN',
       registeredAt: new Date().toISOString(),
       registeredBy: ctx.auth.actorId,

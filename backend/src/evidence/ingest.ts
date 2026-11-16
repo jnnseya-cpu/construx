@@ -667,6 +667,8 @@ export type Extraction = {
   method: 'NATIVE' | 'OCR' | 'NEEDS_OCR' | 'UNSUPPORTED';
   /** Pages, where the format has them. */
   pages?: number;
+  /** Where each page with text begins in `text` — so a quote can be cited by its page. PDFs read natively only. */
+  pageStarts?: Array<{ page: number; offset: number }>;
   /** Why nothing was extracted, where nothing was. Never blank on a refusal. */
   reason?: string;
   /** What a successful read left out or how it was made, where either is worth saying. */
@@ -741,6 +743,7 @@ export function extractText(bytes: Buffer, actualType: string | undefined): Extr
         ...(read.tables.length > 0 ? { tables: read.tables[0]!.rows, pageTables: read.tables } : {}),
         method: 'NATIVE',
         pages: read.pages,
+        ...(read.pageStarts && read.pageStarts.length > 0 ? { pageStarts: read.pageStarts } : {}),
         ...(notes.length > 0 ? { note: `${notes.join('; ')}.` } : {}),
       };
     }
