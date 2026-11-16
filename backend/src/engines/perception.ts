@@ -29,6 +29,9 @@ import { BRIEF_ITEMS, recordFact } from '../domain/etablix/brief.ts';
 import { requireModule } from '../identity/modules.ts';
 import { bindAnalysis, extractRequirements, type SubmissionChannel, type TenderDeliverable } from '../domain/tenderintake.ts';
 import { recordModelReading } from '../evidence/pipeline.ts';
+import { locateQuote, sourceDocumentsForDraft } from '../domain/tendersource.ts';
+import { SOURCE_MATERIAL_RULE } from '../ai/sourcematerial.ts';
+import { mergeParticulars, PARTICULARS_PROMPT, PARTICULARS_SCHEMA, particularsFromReading, type TenderParticulars } from '../domain/tenderparticulars.ts';
 
 /**
  * Perception ingestion: reading a file the platform holds.
@@ -516,7 +519,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       'the document that states it, so a person can find it. Where the text is several documents, each begins with ' +
       'a "=== Document:" line; a requirement in one may be explained in another, so read them together. Quote the ' +
       'document rather than summarising it, and omit anything it does not state rather than inferring it; list what ' +
-      'you omitted and why.',
+      `you omitted and why. ${PARTICULARS_PROMPT}`,
     responseSchema: {
       type: 'object',
       properties: {
@@ -604,6 +607,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
           },
         },
         omitted: { type: 'array', items: { type: 'string' } },
+        ...PARTICULARS_SCHEMA,
       },
       required: ['requirements'],
     },
@@ -1094,7 +1098,8 @@ export async function extract(
     capability: 'PERCEPTION',
     inputRefs: [{ refType: 'EvidenceItem', refId: record.refId }],
     request: {
-      task: definition.prompt,
+      // Every document read here is from outside the business: read, never obeyed.
+      task: `${definition.prompt} ${SOURCE_MATERIAL_RULE}`,
       // The hash travels in the payload as well as on the media, so the answer
       // is traceable to the exact bytes that produced it — and, where a page
       // range was taken, which pages of that file it was read from.
@@ -1324,7 +1329,8 @@ export async function extractFromText(
     capability: 'REASONING',
     inputRefs: [evidenceRef],
     request: {
-      task: definition.prompt,
+      // Every document read here is from outside the business: read, never obeyed.
+      task: `${definition.prompt} ${SOURCE_MATERIAL_RULE}`,
       payload: { text, source: input.source, ...(input.documentHash ? { documentHash: input.documentHash } : {}) },
       responseSchema: definition.responseSchema,
     },
@@ -1653,7 +1659,16 @@ export async function confirm(
       terms?: Record<string, unknown>;
     };
 
-    const requirements = (read.requirements ?? []).map((requirement) => ({
+    // Each requirement and return cited to the document that states it, found
+    // in the documents by code — the quote the model gave, or the line's own
+    // words — so the matrix can be checked back to the pack.
+    const sourceDocs = sourceDocumentsForDraft(ctx, draft as unknown as Record<string, unknown>);
+    const requirements = (read.requirements ?? []).map((requirement): ITTRequirement => ({
+      source: locateQuote(sourceDocs, {
+        quote: requirement.sourceQuote,
+        fallback: requirement.requirement,
+        clause: requirement.reference,
+      }),
       reference: String(requirement.reference ?? ''),
       category: String(requirement.category ?? 'SUBMISSION') as ITTRequirement['category'],
       requirement: String(requirement.requirement ?? ''),
@@ -1723,6 +1738,8 @@ export async function confirm(
     const priorAnalysisId = invitationRecord.state.analysisId as string | undefined;
     let mergedRequirements = requirements;
     let mergedTerms = commercial;
+    let mergedParticulars = particularsFromReading(extraction, sourceDocs);
+    let carriedReviews: Array<{ reference: string }> = [];
     // The tender's own identity — the reference, client and return date it is
     // known by. On a first reading these come from the document (or the
     // invitation when the document did not state one). On a re-read they are
@@ -1740,6 +1757,8 @@ export async function confirm(
         const priorMatrix = (prior.state.matrix as MatrixLine[] | undefined) ?? [];
         mergedRequirements = mergeRequirements(requirementsFromMatrix(priorMatrix), requirements);
         mergedTerms = mergeCommercialTerms(prior.state.commercialTerms as CommercialTerms | undefined, commercial);
+        mergedParticulars = mergeParticulars(prior.state.particulars as TenderParticulars | undefined, mergedParticulars);
+        carriedReviews = (prior.state.reviews as Array<{ reference: string }> | undefined) ?? [];
         const priorReference = String(prior.state.reference ?? '').trim();
         const priorClient = String(prior.state.clientName ?? '').trim();
         const priorReturnBy = String(prior.state.returnBy ?? '').trim();
@@ -1757,6 +1776,8 @@ export async function confirm(
       ...(input.durationWeeks === undefined ? {} : { durationWeeks: input.durationWeeks }),
       requirements: mergedRequirements,
       terms: mergedTerms,
+      particulars: mergedParticulars,
+      ...(carriedReviews.length > 0 ? { reviews: carriedReviews } : {}),
       ...(input.targetMarginPercent !== undefined ? { targetMarginPercent: input.targetMarginPercent } : {}),
     });
 
@@ -1774,6 +1795,19 @@ export async function confirm(
       ...(deliverable.signatureRequired != null ? { signatureRequired: deliverable.signatureRequired === true } : {}),
       ...(deliverable.bondRequired != null ? { bondRequired: deliverable.bondRequired === true } : {}),
       ...(deliverable.channel ? { channel: String(deliverable.channel) as SubmissionChannel } : {}),
+      ...((): { source?: TenderDeliverable['source'] } => {
+        const found = locateQuote(sourceDocs, { quote: deliverable.sourceQuote, fallback: deliverable.title, clause: deliverable.reference });
+        return found.located && found.document
+          ? {
+              source: {
+                document: found.document,
+                ...(found.clause ? { clause: found.clause } : {}),
+                ...(found.page !== undefined ? { page: found.page } : {}),
+                ...(found.quote ? { quote: found.quote } : {}),
+              },
+            }
+          : {};
+      })(),
     }));
 
     // Keep every deliverable already on the tender — the owner, date and source

@@ -798,6 +798,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('TENDER_ADDENDUM_IMPACT_REVIEWED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
   def('REQUIREMENT_WAIVED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
   def('REQUIREMENT_WAIVER_REVOKED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
+  // A person's review of one matrix line: confirmed, assumed, conflicting,
+  // missing, or a decision with an owner and a date. Human judgement, never an agent's.
+  def('REQUIREMENT_REVIEWED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
   // A compliance undertaking confirmed: the agent drafts the statement, a person
   // confirms it is true, so the confirmation is a human act, not aiAllowed.
   def('REQUIREMENT_UNDERTAKEN', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),

@@ -91,6 +91,16 @@ const ANSWER_TONE = { APPROVED: 'ok', DRAFT: 'warn', SUPERSEDED: '', RETIRED: 'b
  * bury the real gaps under everything nobody automated, so the distinction is
  * carried through to the screen rather than flattened into a tick or a cross.
  */
+/** The five positions a bid review puts a requirement in, and their tone. */
+const POSITION_TONE = { CONFIRMED: 'ok', ASSUMED: 'warn', CONFLICTING: 'bad', MISSING: 'bad', DECISION_REQUIRED: 'warn' };
+const POSITION_LABEL = {
+  CONFIRMED: 'Confirmed',
+  ASSUMED: 'Assumed',
+  CONFLICTING: 'Conflicting',
+  MISSING: 'Missing',
+  DECISION_REQUIRED: 'Decision required',
+};
+
 const MATRIX_MEANING = {
   SATISFIED: 'Evidenced from the company record',
   GAP: 'Nothing on file satisfies this',
@@ -184,6 +194,96 @@ function heldTenderFiles(evidence, ingestion) {
  * the invitation letter, the instructions to tenderers and the specification.
  */
 const CANNOT_BE_AN_INVITATION = ['DRAWING', 'CALCULATION', 'REPORT', 'SCHEDULE', 'PHOTOGRAPH', 'MODEL', 'CERTIFICATE'];
+
+const REGISTER_TONE = { READ: 'ok', NOT_READ: 'warn', UNREADABLE: 'bad', QUARANTINED: 'bad' };
+const REGISTER_LABEL = { READ: 'read', NOT_READ: 'not yet read', UNREADABLE: 'unreadable', QUARANTINED: 'quarantined' };
+const DATE_TONE = { MANDATORY: 'bad', CONTRACT: 'warn', INDICATIVE: '' };
+
+/**
+ * The tender's documents and its dates, from what the platform already holds —
+ * shown once a document is on the project. A denial is shown as a denial.
+ */
+function registerCard(register) {
+  if (!register) return '';
+  if (register.error) {
+    return html`<section class="card" style="margin-bottom:14px">${notice(`The tender's document register could not be read: ${register.error.message}`, 'err')}</section>`;
+  }
+  if ((register.rows ?? []).length === 0) return '';
+  const yesNo = (value) => (value === true ? 'yes' : value === false ? 'no' : 'not stated');
+  const evaluation = register.evaluation;
+  const submission = register.submission;
+  return html`<section class="card" style="margin-bottom:14px" aria-labelledby="pl-register-h" data-tender-register>
+    <h2 id="pl-register-h">Tender documents and dates</h2>
+    <p class="metric-sub">${register.summary}</p>
+    ${table({
+      headers: ['Document', 'As the pack lists it', 'Revision · date', 'Status', 'What was read', 'In the answers'],
+      rows: register.rows.map((row) => [
+        html`${row.filename}<br><span style="font-size:11px;color:var(--text-3)">${humanise(row.kind)} · uploaded ${date(row.uploadedAt)}</span>${
+          row.duplicateOf ? html`<br>${badge(`same as ${row.duplicateOf}`, 'warn')}` : ''
+        }`,
+        row.listedAs ?? html`<span style="color:var(--text-3)">—</span>`,
+        [row.revision ? `rev ${row.revision}` : '', row.issuedOn ? date(row.issuedOn) : ''].filter(Boolean).join(' · ') || '—',
+        badge(REGISTER_LABEL[row.status] ?? humanise(row.status), REGISTER_TONE[row.status] ?? ''),
+        html`<span style="font-size:12px">${row.coverage}</span>`,
+        row.inDrafting ? 'yes' : row.status === 'READ' || row.status === 'NOT_READ' ? badge('left out — too long', 'warn') : '—',
+      ]),
+    })}
+    ${
+      register.listedNotUploaded.length > 0 || register.notSupplied.length > 0
+        ? html`<h3 style="margin-top:14px">Missing from the pack</h3>
+            <ul style="margin:6px 0 0 18px;font-size:13px">
+              ${register.listedNotUploaded.map((entry) => html`<li>${entry.title} — listed in the pack, not uploaded <span style="color:var(--text-3)">(${entry.source})</span></li>`)}
+              ${register.notSupplied.map((entry) => html`<li>${entry.title} — referred to, not supplied: get it from the portal or ask the buyer <span style="color:var(--text-3)">(${entry.source})</span></li>`)}
+            </ul>`
+        : ''
+    }
+    ${
+      register.precedence
+        ? html`<p style="margin-top:12px;font-size:13px"><strong>Order of precedence:</strong> ${register.precedence.order.join(' → ')} <span style="color:var(--text-3)">(${register.precedence.source})</span></p>`
+        : html`<p style="margin-top:12px;font-size:13px;color:var(--text-3)">The pack states no order of precedence. Where two documents disagree, that is a clarification for the buyer.</p>`
+    }
+    ${
+      evaluation
+        ? html`<p style="font-size:13px"><strong>Evaluation:</strong> ${[
+            evaluation.qualityPercent !== undefined ? `quality ${evaluation.qualityPercent}%` : '',
+            evaluation.pricePercent !== undefined ? `price ${evaluation.pricePercent}%` : '',
+            evaluation.minimumQualityScore ? `minimum: ${evaluation.minimumQualityScore}` : '',
+            evaluation.scoringMethod ?? '',
+          ].filter(Boolean).join(' · ') || 'stated in part'}.
+          ${evaluation.consortia ? html`<br>Consortia: ${evaluation.consortia}` : ''}
+          ${evaluation.subcontracting ? html`<br>Subcontracting: ${evaluation.subcontracting}` : ''}
+          ${evaluation.relianceOnOthers ? html`<br>Reliance on other entities: ${evaluation.relianceOnOthers}` : ''}
+          ${evaluation.equivalentEvidence ? html`<br>Equivalent evidence: ${evaluation.equivalentEvidence}` : ''}
+          <br>Qualified bids permitted: ${yesNo(evaluation.qualificationsPermitted)} · variant bids: ${yesNo(evaluation.variantsPermitted)}
+          <span style="color:var(--text-3)">(${evaluation.sourceText})</span></p>`
+        : ''
+    }
+    ${
+      submission
+        ? html`<p style="font-size:13px"><strong>Submission rules:</strong> ${[
+            submission.uploadLimitMb !== undefined ? `upload limit ${submission.uploadLimitMb} MB` : '',
+            submission.permittedFormats?.length ? `formats ${submission.permittedFormats.join(', ')}` : '',
+            submission.namingConvention ? `file names: ${submission.namingConvention}` : '',
+            submission.signatures ? `signatures: ${submission.signatures}` : '',
+            submission.appendicesPermitted !== undefined ? `appendices permitted: ${yesNo(submission.appendicesPermitted)}` : '',
+          ].filter(Boolean).join(' · ')} <span style="color:var(--text-3)">(${submission.sourceText})</span></p>`
+        : ''
+    }
+    ${register.validity ? html`<p style="font-size:13px"><strong>Tender validity:</strong> ${register.validity.days} days <span style="color:var(--text-3)">(${register.validity.source})</span></p>` : ''}
+    <h3 style="margin-top:14px">Dates</h3>
+    ${register.conflicts.length > 0 ? notice(html`<strong>Dates that cannot all be right:</strong> ${register.conflicts.join(' ')}`, 'warn') : ''}
+    ${table({
+      headers: ['When', 'What', 'Binding?', 'Where it comes from'],
+      rows: register.dates.map((row) => [
+        html`${row.when.replace('T', ' ')}${row.timeZone ? html` <span style="font-size:11px;color:var(--text-3)">${row.timeZone}</span>` : ''}`,
+        row.label,
+        badge(row.kind === 'MANDATORY' ? 'mandatory' : row.kind === 'CONTRACT' ? 'contract date' : 'indicative', DATE_TONE[row.kind] ?? ''),
+        html`<span style="font-size:12px;color:var(--text-3)">${row.source}</span>`,
+      ]),
+      empty: 'No dates yet: read the pack and confirm it to record the invitation.',
+    })}
+  </section>`;
+}
 
 function ittReadingPanel({ perception, evidence, ingestion, projectId, projectName, blocked, tenderProjects, invitationOptions, projectHasInvitation }) {
   // Three separate reasons this cannot run, and they need different sentences.
@@ -541,6 +641,38 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                           </div>`
                         : ''
                     }
+                    ${
+                      read.evaluation && (read.evaluation.qualityPercent != null || read.evaluation.pricePercent != null || read.evaluation.minimumQualityScore)
+                        ? html`<div class="row">
+                            <span class="lbl">Evaluation</span>
+                            <span class="val">${[
+                              read.evaluation.qualityPercent != null ? `quality ${read.evaluation.qualityPercent}%` : '',
+                              read.evaluation.pricePercent != null ? `price ${read.evaluation.pricePercent}%` : '',
+                              read.evaluation.minimumQualityScore ? `minimum: ${read.evaluation.minimumQualityScore}` : '',
+                              read.evaluation.qualificationsPermitted === false ? 'no qualified bids' : '',
+                            ].filter(Boolean).join(' · ')}</span>
+                          </div>`
+                        : ''
+                    }
+                    ${
+                      read.tenderValidityDays != null || read.awardOn || (read.milestones ?? []).length > 0
+                        ? html`<div class="row">
+                            <span class="lbl">Validity · award · other dates</span>
+                            <span class="val">${read.tenderValidityDays != null ? String(read.tenderValidityDays) + ' days' : '—'} · ${read.awardOn ?? '—'} ·
+                              ${(read.milestones ?? []).map((m) => `${m.label} ${m.date}${m.mandatory ? ' (binding)' : ''}`).join('; ') || '—'}</span>
+                          </div>`
+                        : ''
+                    }
+                    ${
+                      (read.documentsListed ?? []).length > 0 || (read.documentsNotSupplied ?? []).length > 0 || (read.precedence?.order ?? []).length > 0
+                        ? html`<div class="row">
+                            <span class="lbl">Documents it lists · not supplied · precedence</span>
+                            <span class="val" style="font-size:12.5px">${(read.documentsListed ?? []).length} listed ·
+                              ${(read.documentsNotSupplied ?? []).map((d) => d.title).join('; ') || 'none missing'} ·
+                              ${(read.precedence?.order ?? []).join(' → ') || 'no order stated'}</span>
+                          </div>`
+                        : ''
+                    }
                     <div class="row">
                       <span class="lbl">Found</span>
                       <span class="val">${requirements.length} requirement(s), ${deliverables.length} deliverable(s)</span>
@@ -806,7 +938,8 @@ function tenderProgrammePanel(tenderDrafts) {
   </div>`;
 }
 
-function matrixDetail(analysis, waivers, addenda, coverage) {
+function matrixDetail(analysis, waivers, addenda, coverage, position) {
+  const positionOf = new Map((position?.lines ?? []).map((line) => [line.reference, line]));
   const gapRefs = new Set(analysis.mandatoryGaps.map((line) => line.reference));
   // A waiver is read live, so a line waived after the matrix was analysed reads
   // as waived here without the analysis being rerun.
@@ -999,24 +1132,48 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
         A matrix without an owner is a list, and a list is what reaches the day before return with three items nobody
         claimed. Bids are lost over one missing certificate on a price that was right.
       </p>
+      ${
+        position
+          ? html`<p style="padding:6px 17px 0;font-size:12.5px;margin:0" data-matrix-position>
+              ${position.summary}
+              ${position.untraced.length > 0
+                ? html`<br><span style="color:var(--text-3)">Not found in the documents, so check against the pack before relying on them: ${position.untraced.join(', ')}.</span>`
+                : ''}
+            </p>`
+          : ''
+      }
       ${table({
-        headers: ['Ref', 'Category', 'Requirement', 'Owner', 'Evidence required', 'On file', 'Weight', 'Due', 'Status'],
-        align: ['', '', '', '', '', '', 'num', '', ''],
-        rows: analysis.matrix.map((line) => [
-          html`${line.reference}${line.mandatory ? badge('mandatory', gapRefs.has(line.reference) ? 'bad' : '') : ''}`,
-          html`<span style="font-size:12px;color:var(--text-3)">${humanise(line.category)}</span>`,
-          line.requirement,
-          humanise(line.owner),
-          html`<span style="font-size:12px;color:var(--text-3)">${line.evidenceRequired}</span>`,
-          line.evidenceHeld
-            ? html`<span style="font-size:12px;color:var(--text-3)">${line.evidenceHeld}</span>`
-            : '—',
-          line.weightingPercent === undefined ? '—' : `${line.weightingPercent}%`,
-          line.dueBy ? date(line.dueBy) : '—',
-          waivedBy.has(line.reference)
-            ? html`${badge('waived', 'warn')}<br><span style="font-size:11px;color:var(--text-3)">Not answered on purpose, to ${date(waivedBy.get(line.reference).expiresOn)}</span>`
-            : html`${badge(humanise(line.status), MATRIX_TONE[line.status] ?? '')}<br><span style="font-size:11px;color:var(--text-3)">${MATRIX_MEANING[line.status] ?? ''}</span>`,
-        ]),
+        headers: ['Ref', 'Requirement', 'Where the tender says it', 'Threshold', 'Evidence required', 'Owner', 'Due', 'Position', 'Next action'],
+        rows: analysis.matrix.map((line) => {
+          const at = positionOf.get(line.reference);
+          return [
+            html`${line.reference}${line.mandatory ? badge('mandatory', gapRefs.has(line.reference) ? 'bad' : '') : ''}<br><span style="font-size:11px;color:var(--text-3)">${humanise(line.category)}</span>`,
+            line.requirement,
+            line.source?.located
+              ? html`<span style="font-size:11.5px;color:var(--text-3)">${at?.sourceText ?? line.source.document}${
+                  line.source.quote ? html`<br><q style="font-style:italic">${line.source.quote.length > 140 ? `${line.source.quote.slice(0, 139)}…` : line.source.quote}</q>` : ''
+                }</span>`
+              : line.source
+                ? badge('not found in the documents', 'warn')
+                : html`<span style="font-size:11.5px;color:var(--text-3)">Read before sources were kept</span>`,
+            html`<span style="font-size:12px">${at?.threshold ?? (line.mandatory ? 'Pass/fail' : line.weightingPercent === undefined ? '—' : `${line.weightingPercent}%`)}</span>`,
+            html`<span style="font-size:12px;color:var(--text-3)">${line.evidenceRequired}</span>`,
+            humanise(at?.owner ?? line.owner),
+            at?.due ? date(at.due) : line.dueBy ? date(line.dueBy) : '—',
+            waivedBy.has(line.reference)
+              ? html`${badge('waived', 'warn')}<br><span style="font-size:11px;color:var(--text-3)">Not answered on purpose, to ${date(waivedBy.get(line.reference).expiresOn)}</span>`
+              : at
+                ? html`${badge(POSITION_LABEL[at.status] ?? humanise(at.status), POSITION_TONE[at.status] ?? '')}<br><span style="font-size:11px;color:var(--text-3)">${at.basis}${
+                    at.setBy !== 'PLATFORM' && at.setAt ? ` — reviewed ${date(at.setAt)}` : ''
+                  }</span>`
+                : html`${badge(humanise(line.status), MATRIX_TONE[line.status] ?? '')}<br><span style="font-size:11px;color:var(--text-3)">${MATRIX_MEANING[line.status] ?? ''}</span>`,
+            html`<span style="font-size:12px">${at?.action ?? '—'}</span>${
+              at
+                ? html`<br><button class="btn quiet sm" data-command="review-requirement" data-reference="${line.reference}">Review</button>`
+                : ''
+            }`,
+          ];
+        }),
         empty: 'This analysis carries no requirements',
       })}
 
@@ -1417,7 +1574,7 @@ export async function pipeline(root) {
   // The reader is project-scoped: a reading is filed against the project the
   // tender is bid from, and it costs ACUs against that project's tenancy.
   const projectId = state.session?.projectId;
-  const [perception, evidence, ingestion, bidPacks, assurance, portalPort, submissions, flow, tenderDrafts] = projectId
+  const [perception, evidence, ingestion, bidPacks, assurance, portalPort, submissions, flow, tenderDrafts, register] = projectId
     ? await Promise.all([
         api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
         api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
@@ -1444,8 +1601,11 @@ export async function pipeline(root) {
         // The programme the buyer asks for with the return, drafted from the
         // measured bill and confirmed into the project's programme.
         api.read(`/v1/projects/${projectId}/programme/tender-drafts`, 'WORKPACKAGES_TASKS').catch((error) => ({ error })),
+        // The tender's documents and dates: what was read of each file, what
+        // the pack lists or refers to that is missing, and every date.
+        api.read(`/v1/projects/${projectId}/tender/register`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
       ])
-    : [null, null, null, null, null, null, null, null, null];
+    : [null, null, null, null, null, null, null, null, null, null];
 
   // The register carries counts; the findings themselves are what somebody acts
   // on, so the newest review is opened in full rather than left behind a click.
@@ -2048,9 +2208,9 @@ export async function pipeline(root) {
                       d.owner ? humanise(d.owner) : badge('none', d.mandatory ? 'warn' : ''),
                       d.internalDueBy ? date(d.internalDueBy) : badge('none', d.mandatory ? 'warn' : ''),
                       d.source?.document
-                        ? html`<span style="font-size:11.5px;color:var(--text-3)">${d.source.document}${
-                            d.source.clause ? `, ${d.source.clause}` : ''
-                          }</span>`
+                        ? html`<span style="font-size:11.5px;color:var(--text-3)" title="${d.source.quote ?? ''}">${d.source.document}${
+                            d.source.page !== undefined ? `, p. ${d.source.page}` : ''
+                          }${d.source.clause ? `, ${d.source.clause}` : ''}</span>`
                         : badge('none', d.mandatory ? 'warn' : ''),
                       html`<span style="font-size:11.5px;color:var(--text-3)">${d.format ?? '—'}${
                         d.signatureRequired ? ' · signed' : ''
@@ -2071,7 +2231,7 @@ export async function pipeline(root) {
               ${table({
                 headers: ['', 'What', 'Where it stands', ''],
                 rows: readiness.items.map((item) => [
-                  item.ready ? badge('in place', 'good') : badge('to do', 'warn'),
+                  item.ready ? badge('in place', 'ok') : badge('to do', 'warn'),
                   item.title,
                   html`<span style="font-size:12.5px">${item.detail}</span>`,
                   item.ready
@@ -2094,6 +2254,8 @@ export async function pipeline(root) {
         invitationOptions: scopedInvitationOptions,
         projectHasInvitation: focused,
       })}
+
+      ${registerCard(register)}
 
       <section class="card" style="margin-bottom:14px" aria-labelledby="pl-bid-h">
         <h2 id="pl-bid-h">Bid response packs</h2>
@@ -5052,7 +5214,7 @@ export async function pipeline(root) {
     open.disabled = true;
     open.textContent = 'Opening…';
     try {
-      const [analysis, waivers, addenda, coverage] = await Promise.all([
+      const [analysis, waivers, addenda, coverage, position] = await Promise.all([
         api.get(`/v1/pipeline/analyses/${analysisId}`),
         // Read separately rather than folded into the analysis: a waiver is a
         // decision made after the invitation was read, and putting it inside the
@@ -5063,8 +5225,10 @@ export async function pipeline(root) {
         // The held evidence read against this matrix, live, for the same reason:
         // a claim filed after the analysis still shows here without a re-analysis.
         api.read(`/v1/pipeline/analyses/${analysisId}/evidence-coverage`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
+        // Where each line stands — the five review positions, their basis and source.
+        api.read(`/v1/pipeline/analyses/${analysisId}/position`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
       ]);
-      render(detail, matrixDetail(analysis, waivers, addenda, coverage));
+      render(detail, matrixDetail(analysis, waivers, addenda, coverage, position));
       detail.dataset.analysis = analysisId;
       detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (error) {
@@ -6217,6 +6381,44 @@ export async function pipeline(root) {
       },
     };
 
+    const positionNow = await api
+      .read(`/v1/pipeline/analyses/${analysisId}/position`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3')
+      .catch(() => null);
+    const reviewing = (positionNow?.lines ?? []).find((line) => line.reference === button.dataset.reference);
+    specs['review-requirement'] = {
+      title: `Review ${button.dataset.reference ?? 'a requirement'}`,
+      intent:
+        'Say where this requirement stands and what that rests on. Assumed: what is assumed and why. Conflicting: the ' +
+        'documents and clauses that disagree. Decision required: who decides and by when. A gap on the company’s records ' +
+        'is cleared by recording the evidence there, not here; and a line nobody has checked is never counted as met.',
+      path: `/v1/pipeline/analyses/${analysisId}/reviews`,
+      submitLabel: 'Record the review',
+      fields: [
+        { name: 'reference', label: 'Requirement', type: 'select', value: button.dataset.reference,
+          options: analysis.matrix.map((line) => ({ value: line.reference, label: `${line.reference} — ${line.requirement.slice(0, 60)}` })) },
+        { name: 'status', label: 'Position', type: 'select', value: reviewing?.status,
+          options: Object.entries(POSITION_LABEL).map(([value, label]) => ({ value, label })) },
+        { name: 'basis', label: 'What it rests on', type: 'textarea', rows: 3,
+          hint: 'At least 10 characters: the evidence, the assumption, or the references that conflict.' },
+        { name: 'action', label: 'Next action (optional)', type: 'text' },
+        { name: 'owner', label: 'Who decides (for a decision)', type: 'select', value: '',
+          options: [{ value: '', label: '—' }, ...['OWNER', 'PROJECT_DIRECTOR', 'COMMERCIAL_MANAGER', 'QS', 'PM', 'EPC', 'PLANNER', 'SAFETY', 'QAQC'].map((role) => ({ value: role, label: humanise(role) }))] },
+        { name: 'decisionDue', label: 'Decided by (for a decision)', type: 'date',
+          hint: `On or before ${analysis.returnBy.slice(0, 10)}, when the tender returns.` },
+        { name: 'obtainable', label: 'For a missing pass/fail line: can it be obtained in time?', type: 'select', value: '',
+          options: [{ value: '', label: 'Not said' }, { value: 'yes', label: 'Yes' }, { value: 'no', label: 'No — we appear unable to meet it' }] },
+      ],
+      transform: (v) => ({
+        reference: v.reference,
+        status: v.status,
+        basis: v.basis,
+        ...(v.action ? { action: v.action } : {}),
+        ...(v.owner ? { owner: v.owner } : {}),
+        ...(v.decisionDue ? { decisionDue: v.decisionDue } : {}),
+        ...(v.obtainable === 'yes' ? { obtainable: true } : v.obtainable === 'no' ? { obtainable: false } : {}),
+      }),
+    };
+
     specs['assess-addendum'] = {
       title: 'Assess an addendum',
       intent:
@@ -6280,13 +6482,14 @@ export async function pipeline(root) {
     const spec = specs[button.dataset.command];
     if (!spec) return;
     if (await command(spec)) {
-      const [fresh, freshWaivers, freshAddenda, freshCoverage] = await Promise.all([
+      const [fresh, freshWaivers, freshAddenda, freshCoverage, freshPosition] = await Promise.all([
         api.get(`/v1/pipeline/analyses/${analysisId}`),
         api.read(`/v1/pipeline/analyses/${analysisId}/waivers`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
         api.read(`/v1/pipeline/analyses/${analysisId}/addenda`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
         api.read(`/v1/pipeline/analyses/${analysisId}/evidence-coverage`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
+        api.read(`/v1/pipeline/analyses/${analysisId}/position`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
       ]);
-      render(detail, matrixDetail(fresh, freshWaivers, freshAddenda, freshCoverage));
+      render(detail, matrixDetail(fresh, freshWaivers, freshAddenda, freshCoverage, freshPosition));
       detail.dataset.analysis = analysisId;
     }
   });

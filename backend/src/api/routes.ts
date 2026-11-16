@@ -176,6 +176,8 @@ import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
 import * as tenderpackcheck from '../domain/tenderpackcheck.ts';
 import * as tenderreading from '../domain/tenderreading.ts';
+import * as tenderregister from '../domain/tenderregister.ts';
+import * as matrixreview from '../domain/matrixreview.ts';
 import * as aiclearance from '../domain/aiclearance.ts';
 import * as tenderreadiness from '../domain/tenderreadiness.ts';
 import * as clarificationreview from '../domain/clarificationreview.ts';
@@ -5318,6 +5320,39 @@ export const ROUTES: Route[] = [
         tenantContext(platform, ctx),
         ctx.params.analysisId as string,
         body<{ addendum: string; reference: string; note: string }>(ctx),
+      ),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/pipeline/analyses/:analysisId/position',
+    readOnly: true,
+    description:
+      'Where every requirement stands — confirmed, assumed, conflicting, missing or a decision required — with its basis, where the tender states it, its threshold and the next action',
+    handler: (platform, ctx) => matrixreview.matrixPosition(tenantContext(platform, ctx), ctx.params.analysisId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/analyses/:analysisId/reviews',
+    description: "Record a person's review of one requirement: its status, what it rests on, and what happens next",
+    schema: {
+      type: 'object',
+      required: ['reference', 'status', 'basis'],
+      properties: {
+        reference: stringField,
+        status: { type: 'string', enum: [...matrixreview.REVIEW_STATUSES] },
+        basis: { type: 'string', minLength: 1, maxLength: 2000 },
+        action: { type: 'string', maxLength: 500 },
+        owner: { type: 'string' },
+        decisionDue: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        obtainable: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      matrixreview.reviewRequirement(
+        tenantContext(platform, ctx),
+        ctx.params.analysisId as string,
+        body<Parameters<typeof matrixreview.reviewRequirement>[2]>(ctx),
       ),
   },
   {
@@ -28327,6 +28362,14 @@ export const ROUTES: Route[] = [
         projectContext(platform, ctx),
         body<{ hash: string; filename?: string; invitationId?: string }>(ctx),
       ),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/register',
+    readOnly: true,
+    description:
+      'The tender documents and dates in one place: every upload with what was read of it, what the pack lists or refers to that is missing, precedence, evaluation and submission rules, and every date — binding or indicative — with the conflicts between them',
+    handler: (platform, ctx) => tenderregister.tenderRegister(projectContext(platform, ctx)),
   },
   {
     method: 'POST',

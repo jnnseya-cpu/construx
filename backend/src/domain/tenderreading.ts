@@ -2,6 +2,7 @@ import { DomainError } from '../core/errors.ts';
 import { authorise, currentPhase, type EngineContext } from '../engines/context.ts';
 import { confirm, extractFromText, PASTED_TEXT_MAX, PERCEPTION_TASKS, requireDraft, type ConfirmInput } from '../engines/perception.ts';
 import { packText } from '../evidence/pipeline.ts';
+import { embeddedInstructions } from '../ai/sourcematerial.ts';
 import { isDrawingNote, isEvaluationMethod } from './bidresponse.ts';
 import { registerOpportunity, type OpportunityStage } from './business.ts';
 import { recordInvitation, type SubmissionChannel } from './tenderintake.ts';
@@ -207,6 +208,17 @@ function normalise(text: string): string {
     .replace(/[‐-―−]/g, '-')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/** The pack text split back into its documents, by the heading `packText` puts on each. */
+function documentsOf(text: string): Array<{ document: string; text: string }> {
+  const heading = /^=== Document: (.+?) \([^)]*\) ===$/gm;
+  const marks = [...text.matchAll(heading)];
+  if (marks.length === 0) return [{ document: 'The document', text }];
+  return marks.map((mark, index) => ({
+    document: mark[1]!,
+    text: text.slice((mark.index ?? 0) + mark[0].length, marks[index + 1]?.index ?? text.length),
+  }));
 }
 
 const LOCAL_DATE_TIME = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2})?$/;
@@ -445,6 +457,77 @@ export function checkTenderReading(
         references: untracedReturns.map(({ line, index }) => ref(line, index)),
       });
     }
+  }
+
+  // What the tender says about itself.
+  const evaluation = (extraction.evaluation ?? {}) as Record<string, unknown>;
+  if (typeof evaluation.qualityPercent === 'number' && typeof evaluation.pricePercent === 'number') {
+    const split = evaluation.qualityPercent + evaluation.pricePercent;
+    if (Math.abs(split - 100) > 0.5) {
+      add({
+        id: 'EVALUATION_SPLIT',
+        severity: 'ATTENTION',
+        title: `Quality ${evaluation.qualityPercent}% and price ${evaluation.pricePercent}% add to ${split}%`,
+        detail: 'The split of the evaluation between quality and price should add to 100%. One of the two was misread, or there is a third element (social value) to record.',
+        references: [],
+      });
+    }
+  }
+  if (evaluation.qualificationsPermitted === false) {
+    add({
+      id: 'NO_QUALIFICATIONS',
+      severity: 'NOTE',
+      title: 'Qualified bids are not permitted',
+      detail: 'A bid that qualifies the terms may be rejected. Anything that cannot be accepted as written is a clarification, raised before the deadline for questions.',
+      references: [],
+    });
+  }
+  const awardOn = dateOnly(extraction.awardOn);
+  if (awardOn && returnLocal && awardOn < returnLocal.slice(0, 10)) {
+    add({
+      id: 'AWARD_BEFORE_RETURN',
+      severity: 'ATTENTION',
+      title: 'The award date read is before the tender return',
+      detail: `Award ${awardOn}, returns due ${returnLocal.slice(0, 10)}. One of the two was misread.`,
+      references: [],
+    });
+  }
+  if (awardOn && worksStart && awardOn > worksStart) {
+    add({
+      id: 'AWARD_AFTER_START',
+      severity: 'ATTENTION',
+      title: 'The award date read is after the works start',
+      detail: `Award ${awardOn}, works start ${worksStart}. Either a date was misread or the programme has no time to mobilise — a clarification for the buyer.`,
+      references: [],
+    });
+  }
+  const notSupplied = (Array.isArray(extraction.documentsNotSupplied) ? extraction.documentsNotSupplied : []) as Array<Record<string, unknown>>;
+  if (notSupplied.length > 0) {
+    add({
+      id: 'DOCUMENTS_NOT_SUPPLIED',
+      severity: 'ATTENTION',
+      title: `${notSupplied.length} document(s) the pack refers to are not in it`,
+      detail:
+        `${notSupplied.map((entry) => String(entry.title ?? '')).filter(Boolean).join('; ')}. Get them from the portal or ` +
+        'ask the buyer; until then, anything they say is missing from this reading.',
+      references: [],
+    });
+  }
+
+  // Text in the documents addressed to an AI. The request told the model not
+  // to follow it; this shows it to a person, whatever the model did.
+  for (const { document, text } of documentsOf(packTextValue)) {
+    const passages = embeddedInstructions(text);
+    if (passages.length === 0) continue;
+    add({
+      id: 'EMBEDDED_INSTRUCTION',
+      severity: 'ATTENTION',
+      title: `${document} contains text addressed to an AI`,
+      detail:
+        `${passages.map((entry) => `“${entry.passage}”`).join(' ')} It was read as part of the document and not ` +
+        'followed. Check whether the buyer really issued it, and that nothing in this reading came from it.',
+      references: [],
+    });
   }
 
   const attention = checks.filter((check) => check.severity === 'ATTENTION').length;

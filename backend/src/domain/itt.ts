@@ -1,4 +1,6 @@
 import { DomainError } from '../core/errors.ts';
+import type { QuoteSource } from './tendersource.ts';
+import type { TenderParticulars } from './tenderparticulars.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
@@ -100,6 +102,8 @@ export type ITTRequirement = {
   dueBy?: string;
   /** How long the answer may be, where the invitation says. */
   responseLimit?: ResponseLimit;
+  /** Where in the tender documents it is stated: file, page, clause and the passage. */
+  source?: QuoteSource;
 };
 
 /** Where the platform can already prove a requirement from its own records. */
@@ -321,6 +325,8 @@ export type MatrixLine = {
   dueBy?: string;
   /** Carried from the requirement, so the pack that answers it inherits it. */
   responseLimit?: ResponseLimit;
+  /** Where in the tender documents it is stated, found in code at confirmation. */
+  source?: QuoteSource;
 };
 
 /**
@@ -722,6 +728,10 @@ export function analyseITT(
     terms: CommercialTerms;
     /** Expected margin percentage, so exposure can be set against it. */
     targetMarginPercent?: number;
+    /** What the tender says about itself — documents, precedence, evaluation, dates — where it was read. */
+    particulars?: TenderParticulars;
+    /** People's reviews of lines on the matrix this one replaces, carried so a re-read does not lose them. */
+    reviews?: Array<{ reference: string }>;
   },
 ): ITTAnalysis {
   authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
@@ -762,6 +772,7 @@ export function analyseITT(
       status: probed.status,
       dueBy: requirement.dueBy,
       responseLimit: requirement.responseLimit,
+      ...(requirement.source ? { source: requirement.source } : {}),
     };
   });
 
@@ -839,6 +850,10 @@ export function analyseITT(
       committedCapacityMinor,
       clarifications,
       readyToPrice,
+      ...(input.particulars ? { particulars: input.particulars } : {}),
+      ...(input.reviews && input.reviews.length > 0
+        ? { reviews: input.reviews.filter((review) => matrix.some((line) => line.reference === review.reference)) }
+        : {}),
       analysedAt: new Date().toISOString(),
       analysedBy: ctx.auth.actorId,
     },
@@ -883,6 +898,7 @@ export function requirementsFromMatrix(matrix: MatrixLine[]): ITTRequirement[] {
     evidenceRequired: line.evidenceRequired,
     ...(line.dueBy !== undefined ? { dueBy: line.dueBy } : {}),
     ...(line.responseLimit !== undefined ? { responseLimit: line.responseLimit } : {}),
+    ...(line.source !== undefined ? { source: line.source } : {}),
   }));
 }
 
@@ -919,6 +935,8 @@ export function mergeRequirements(prior: ITTRequirement[], next: ITTRequirement[
               ? { responseLimit: earlier.responseLimit }
               : {}),
             ...(requirement.dueBy === undefined && earlier.dueBy !== undefined ? { dueBy: earlier.dueBy } : {}),
+            // A citation found in the documents is not replaced by one that was not.
+            ...(earlier.source?.located && !requirement.source?.located ? { source: earlier.source } : {}),
           }
         : requirement,
     );
@@ -991,6 +1009,8 @@ export type StoredITTAnalysis = ITTAnalysis & {
   sizedFrom?: 'ENTERED' | 'ESTIMATE' | 'NONE';
   /** The raw commercial terms, kept so the read can re-size them. */
   commercialTerms?: CommercialTerms;
+  /** What the tender says about itself, with the passages it was read from. */
+  particulars?: TenderParticulars;
   analysedAt: string;
   analysedBy: string;
   /** The project the analysis was run on, which is the tender's own project. */
@@ -1074,6 +1094,7 @@ function readAnalysis(record: EntityRecord): StoredITTAnalysis {
     ...(state.estimatedValueMinor === undefined ? {} : { estimatedValueMinor: Number(state.estimatedValueMinor) }),
     ...(state.durationWeeks === undefined ? {} : { durationWeeks: Number(state.durationWeeks) }),
     ...(state.commercialTerms ? { commercialTerms: state.commercialTerms as CommercialTerms } : {}),
+    ...(state.particulars ? { particulars: state.particulars as TenderParticulars } : {}),
     // The default; complianceMatrix overrides it to ESTIMATE when it sizes the
     // terms from the take-off.
     sizedFrom: state.estimatedValueMinor === undefined ? 'NONE' : 'ENTERED',

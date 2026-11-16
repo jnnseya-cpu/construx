@@ -1,4 +1,5 @@
 import { expertBriefing } from '../ai/expertise.ts';
+import { SOURCE_MATERIAL_RULE } from '../ai/sourcematerial.ts';
 import { lexicalVector, similarity } from '../evidence/ingest.ts';
 import { packText } from '../evidence/pipeline.ts';
 import { DomainError } from '../core/errors.ts';
@@ -868,7 +869,8 @@ async function draftSection(
               tenderDocumentsUse:
                 'The documents the buyer issued for this tender, each under a "=== Document:" heading. Use what ' +
                 'they say about this site, these works, this programme and this buyer, in their own terms, so the ' +
-                'answer is about this job. State nothing as fact about the job that they do not say.',
+                'answer is about this job. State nothing as fact about the job that they do not say. ' +
+                SOURCE_MATERIAL_RULE,
               ...(documents.omitted.length > 0 ? { tenderDocumentsOmitted: documents.omitted } : {}),
             },
           }
