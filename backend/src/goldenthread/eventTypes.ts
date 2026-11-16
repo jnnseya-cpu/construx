@@ -353,6 +353,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('MODULE_REVOKED', 'ModuleGrant', 'UPDATE', 'GOVERNANCE'),
   def('POLICY_UPDATED', 'PermissionPolicy', 'UPDATE', 'GOVERNANCE'),
   def('ACU_CAPS_SET', 'ACUWallet', 'UPDATE', 'GOVERNANCE'),
+  // A company owner clearing an AI provider to receive the company's own
+  // material above the server default, or withdrawing it. A human decision
+  // about where the company's data may go, never an agent's.
+  def('AI_PROVIDER_CLEARANCE_GRANTED', 'ProviderClearance', 'UPDATE', 'GOVERNANCE', { creates: true }),
+  def('AI_PROVIDER_CLEARANCE_WITHDRAWN', 'ProviderClearance', 'UPDATE', 'GOVERNANCE'),
   // Capacity bought is a commercial fact with money behind it, so it belongs on
   // the record rather than in a counter. Usage is measured from the volume and
   // is not an event: bytes on disk are a measurement, and an event asserting

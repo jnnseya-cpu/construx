@@ -1372,7 +1372,7 @@ function tenderAttention(board) {
 }
 
 export async function pipeline(root) {
-  const [criteria, summary, discipline, winRate, library, profile, radar, tenders, permissions, matrices, claimRegister, projectList, portfolioList, tradeCatalogue] = await Promise.all([
+  const [criteria, summary, discipline, winRate, library, profile, radar, tenders, permissions, matrices, claimRegister, projectList, portfolioList, tradeCatalogue, readiness] = await Promise.all([
     api.get('/v1/pipeline/criteria'),
     api.get('/v1/pipeline'),
     api.get('/v1/pipeline/discipline'),
@@ -1409,6 +1409,9 @@ export async function pipeline(root) {
     // from evidence can be asked about the trades this register actually knows
     // rather than typed into a box.
     api.get('/v1/supply-chain/trades').catch(() => ({ trades: [] })),
+    // What has to be in place before a tender starts, read before the work
+    // rather than met as a refusal halfway through it.
+    api.get('/v1/tender/readiness').catch(() => null),
   ]);
 
   // The reader is project-scoped: a reading is filed against the project the
@@ -2059,6 +2062,26 @@ export async function pipeline(root) {
             : ''
         }
       </div>
+
+      ${
+        readiness && Array.isArray(readiness.items)
+          ? html`<div class="card" style="margin-bottom:14px" data-readiness>
+              <h2>Ready to tender?</h2>
+              <p class="metric-sub" style="margin-bottom:10px">${readiness.summary}</p>
+              ${table({
+                headers: ['', 'What', 'Where it stands', ''],
+                rows: readiness.items.map((item) => [
+                  item.ready ? badge('in place', 'good') : badge('to do', 'warn'),
+                  item.title,
+                  html`<span style="font-size:12.5px">${item.detail}</span>`,
+                  item.ready
+                    ? ''
+                    : html`<button class="btn quiet sm" data-readiness-fix="${item.fix.screen}">${item.fix.label}</button>`,
+                ]),
+              })}
+            </div>`
+          : ''
+      }
 
       ${ittReadingPanel({
         perception,
@@ -4561,8 +4584,11 @@ export async function pipeline(root) {
         quoteWith: { repeat: remaining },
         intent:
           'Each answer is drafted on its own, against its question, its word limit and the tender documents, then ' +
-          'checked like any other draft. The estimate covers all of them. Each is charged as it is written; if one ' +
-          'is refused the run stops there, keeps what was written, and charges nothing more.',
+          'checked like any other draft. The estimate covers all of them as if every answer paid for the documents ' +
+          'in full — the most it can cost. The documents go first in every request, so from the second answer on ' +
+          'the provider usually serves them from its cache at a fraction of the price, and you are charged what it ' +
+          'actually bills. Each is charged as it is written; if one is refused the run stops there, keeps what was ' +
+          'written, and charges nothing more.',
       });
       if (!proceed) return;
       draftAll.disabled = true;
@@ -4983,6 +5009,19 @@ export async function pipeline(root) {
 
     // Switching to a project the platform will accept a tender analysis on,
     // through the console's own project switcher rather than a second one.
+    // A readiness item's fix: the company's facts are recorded on this screen,
+    // everything else on the screen that holds it.
+    const readinessFix = event.target.closest('[data-readiness-fix]');
+    if (readinessFix) {
+      if (readinessFix.dataset.readinessFix === 'pipeline') {
+        await recordCompanyFacts();
+        await draw();
+      } else {
+        goTo(readinessFix.dataset.readinessFix, state.session?.projectId);
+      }
+      return;
+    }
+
     const openProjectButton = event.target.closest('[data-open-project]');
     if (openProjectButton) {
       await openProject(openProjectButton.dataset.openProject);

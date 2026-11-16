@@ -84,6 +84,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   AddonGrant: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'COMMERCIAL_L3' },
   AddonSeat: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   AIRequest: { area: 'AI_EXECUTION' },
+  ProviderClearance: { area: 'AI_EXECUTION' },
   AIGatewayRequest: { area: 'AI_EXECUTION' },
 
   // Structure and setup

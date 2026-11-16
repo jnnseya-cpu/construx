@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { config } from '../../config.ts';
 import { secretFor } from '../../identity/credentials.ts';
 import { canonicalize } from '../../core/canonical.ts';
@@ -32,11 +33,49 @@ const PRICING: Record<string, PricingTable> = {
   'perception-large-context': { inputPerMillion: 125, outputPerMillion: 500 },
 };
 
-function priceFor(modelClass: string, inputTokens: number, outputTokens: number): number {
-  const table = PRICING[modelClass] ?? PRICING['reasoning-standard'];
-  const cost = (inputTokens / 1_000_000) * (table as PricingTable).inputPerMillion +
-    (outputTokens / 1_000_000) * (table as PricingTable).outputPerMillion;
+/**
+ * What a cached input token costs, as a share of an ordinary one, per vendor.
+ * Configuration on the same terms as `PRICING`: update it when a vendor's
+ * pricing moves. `read` is a token served from the vendor's prompt cache;
+ * `write` is a token written into it, which Anthropic charges above the
+ * ordinary rate and the others do not charge separately.
+ */
+const CACHE_RATES: Record<string, { read: number; write: number }> = {
+  OPENAI: { read: 0.1, write: 1 },
+  ANTHROPIC: { read: 0.1, write: 1.25 },
+  GEMINI: { read: 0.25, write: 1 },
+};
+
+/**
+ * The cost of one call. `inputTokens` is every input token the call carried;
+ * the cached and cache-write counts are the parts of it the vendor billed at
+ * other rates, as its own usage accounting reports them.
+ */
+export function priceFor(
+  modelClass: string,
+  inputTokens: number,
+  outputTokens: number,
+  cache: { provider?: string; cachedTokens?: number; cacheWriteTokens?: number } = {},
+): number {
+  const table = (PRICING[modelClass] ?? PRICING['reasoning-standard']) as PricingTable;
+  const rates = (cache.provider ? CACHE_RATES[cache.provider] : undefined) ?? { read: 1, write: 1 };
+  const cached = Math.max(0, Math.min(cache.cachedTokens ?? 0, inputTokens));
+  const written = Math.max(0, Math.min(cache.cacheWriteTokens ?? 0, inputTokens - cached));
+  const ordinary = inputTokens - cached - written;
+  const cost =
+    ((ordinary + cached * rates.read + written * rates.write) / 1_000_000) * table.inputPerMillion +
+    (outputTokens / 1_000_000) * table.outputPerMillion;
   return Math.max(1, Math.ceil(cost));
+}
+
+/** The shared material, first; then the task. Split so a vendor can cache the first part. */
+function sharedText(request: ProviderRequest): string | undefined {
+  return request.shared ? JSON.stringify({ shared: request.shared }) : undefined;
+}
+
+/** One key for every call that shares the same material, so the vendor routes them to one cache. */
+function cacheKeyOf(request: ProviderRequest): string {
+  return `shared-${createHash('sha256').update(sharedText(request) ?? '').digest('hex').slice(0, 32)}`;
 }
 
 /** Rough token estimate for pre-flight cost holds. 4 chars per token is the usual heuristic. */
@@ -134,6 +173,7 @@ function mediaTokens(request: ProviderRequest): number {
 export function requestInputTokens(request: ProviderRequest): number {
   return (
     estimateTokens({
+      shared: request.shared ?? null,
       task: request.task,
       payload: request.payload,
       schema: request.responseSchema ?? null,
@@ -154,8 +194,13 @@ export function requestInputTokens(request: ProviderRequest): number {
  */
 type ModelReply = {
   text: string;
+  /** Every input token the call carried, cached or not. */
   inputTokens: number;
   outputTokens: number;
+  /** Of those, the ones served from the vendor's prompt cache. */
+  cachedTokens?: number;
+  /** Of those, the ones written into it (Anthropic bills these above the ordinary rate). */
+  cacheWriteTokens?: number;
   /** The vendor's own word for why generation stopped, where it gives one. */
   stopReason?: string;
   /** The generation hit a ceiling or a filter, so what arrived is not the whole answer. */
@@ -277,28 +322,34 @@ const OPENAI_ENDPOINT: Endpoint = {
       },
       {
         role: 'user',
-        content: request.media
+        content: request.media || request.shared
           ? [
+              ...(request.shared ? [{ type: 'input_text', text: sharedText(request) }] : []),
               { type: 'input_text', text: JSON.stringify({ task: request.task, payload: request.payload }) },
               // A data URL either way, under the part type this API expects
               // for the kind of file it is. Audio is not accepted on this
               // endpoint, which is why the perception pipeline checks the
               // media type against the task before it gets here rather than
               // discovering it in a 400.
-              isDocument(request.media.contentType)
-                ? {
+              ...(!request.media
+                ? []
+                : isDocument(request.media.contentType)
+                ? [{
                     type: 'input_file',
                     // Named from the hash rather than invented. The API wants a
                     // filename and the platform does not keep one — the chain
                     // is over content, not over what a device called the file.
                     filename: `${(request.media.hash ?? 'document').replace(':', '-')}.pdf`,
                     file_data: `data:${request.media.contentType};base64,${request.media.base64}`,
-                  }
-                : { type: 'input_image', image_url: `data:${request.media.contentType};base64,${request.media.base64}` },
+                  }]
+                : [{ type: 'input_image', image_url: `data:${request.media.contentType};base64,${request.media.base64}` }]),
             ]
           : JSON.stringify({ task: request.task, payload: request.payload }),
       },
     ],
+    // The same key for every call that shares the same material, so the
+    // vendor routes them to the cache that already holds it.
+    ...(request.shared ? { prompt_cache_key: cacheKeyOf(request) } : {}),
     text: request.responseSchema
       ? { format: { type: 'json_schema', name: 'engine_output', schema: request.responseSchema, strict: false } }
       : { format: { type: 'json_object' } },
@@ -309,7 +360,7 @@ const OPENAI_ENDPOINT: Endpoint = {
       output?: Array<{ content?: Array<{ text?: string }> }>;
       status?: string;
       incomplete_details?: { reason?: string };
-      usage?: { input_tokens?: number; output_tokens?: number };
+      usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } };
     };
     /*
      * Every output item, not the first one.
@@ -339,6 +390,8 @@ const OPENAI_ENDPOINT: Endpoint = {
       text,
       inputTokens: body.usage?.input_tokens ?? 0,
       outputTokens: body.usage?.output_tokens ?? 0,
+      // Part of `input_tokens`, billed at the cached rate.
+      cachedTokens: body.usage?.input_tokens_details?.cached_tokens ?? 0,
       stopReason,
       cutShort: body.status === 'incomplete',
     };
@@ -355,6 +408,7 @@ const GEMINI_ENDPOINT: Endpoint = {
       {
         role: 'user',
         parts: [
+          ...(request.shared ? [{ text: sharedText(request) }] : []),
           { text: JSON.stringify({ task: request.task, payload: request.payload }) },
           // Native inline media. Base64 stringified into the text part would be
           // the same bytes charged at text rates and looked at by nothing.
@@ -373,7 +427,7 @@ const GEMINI_ENDPOINT: Endpoint = {
     const body = response as {
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>;
       promptFeedback?: { blockReason?: string };
-      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number };
     };
     const candidate = body.candidates?.[0];
     const finish = candidate?.finishReason;
@@ -386,6 +440,8 @@ const GEMINI_ENDPOINT: Endpoint = {
       text: candidate?.content?.parts?.[0]?.text ?? '',
       inputTokens: body.usageMetadata?.promptTokenCount ?? 0,
       outputTokens: body.usageMetadata?.candidatesTokenCount ?? 0,
+      // Part of `promptTokenCount`, billed at the cached rate.
+      cachedTokens: body.usageMetadata?.cachedContentTokenCount ?? 0,
       stopReason,
       cutShort: stopReason !== undefined,
     };
@@ -425,6 +481,9 @@ const ANTHROPIC_ENDPOINT: Endpoint = {
       {
         role: 'user',
         content: [
+          // Marked for the vendor's prompt cache: the next answer in the pack
+          // reads the same documents from it at the cached rate.
+          ...(request.shared ? [{ type: 'text', text: sharedText(request), cache_control: { type: 'ephemeral' } }] : []),
           {
             type: 'text',
             // The schema travels in the message because this API has no field
@@ -470,8 +529,17 @@ const ANTHROPIC_ENDPOINT: Endpoint = {
     const body = response as {
       content?: Array<{ type?: string; text?: string }>;
       stop_reason?: string;
-      usage?: { input_tokens?: number; output_tokens?: number };
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_read_input_tokens?: number;
+        cache_creation_input_tokens?: number;
+      };
     };
+    // Anthropic reports the cached and cache-written tokens beside
+    // `input_tokens`, not inside it; the call carried all three.
+    const read = body.usage?.cache_read_input_tokens ?? 0;
+    const written = body.usage?.cache_creation_input_tokens ?? 0;
     // `end_turn` is the model finishing. `max_tokens` is the 8,192 ceiling
     // above cutting it off mid-answer, which on a large take-off is the
     // likeliest failure of the lot.
@@ -481,8 +549,10 @@ const ANTHROPIC_ENDPOINT: Endpoint = {
       // The first text block. A response can carry more than one block, and
       // anything that is not text is not the engine's answer.
       text: body.content?.find((block) => block.type === 'text')?.text ?? '',
-      inputTokens: body.usage?.input_tokens ?? 0,
+      inputTokens: (body.usage?.input_tokens ?? 0) + read + written,
       outputTokens: body.usage?.output_tokens ?? 0,
+      cachedTokens: read,
+      cacheWriteTokens: written,
       stopReason: cutShort ? stop : undefined,
       cutShort,
     };
@@ -964,7 +1034,11 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
         provider: this.name,
         modelClass,
         output,
-        rawCostMinor: priceFor(modelClass, inputTokens, outputTokens),
+        rawCostMinor: priceFor(modelClass, inputTokens, outputTokens, {
+          provider: this.name,
+          cachedTokens: reply.cachedTokens ?? 0,
+          cacheWriteTokens: reply.cacheWriteTokens ?? 0,
+        }),
         latencyMs: Date.now() - started,
       };
     } catch (error) {

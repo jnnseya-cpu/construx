@@ -35,6 +35,13 @@ export type ProviderRequest = {
    */
   media?: ProviderMedia;
   /**
+   * Material identical across a run of calls — the tender documents each answer
+   * in a pack is drafted with. Sent first, ahead of the task, so the vendor's
+   * prompt cache can reuse it on the next call and bill it at its cached rate.
+   * Part of the request in every other respect: it is sized, held and charged.
+   */
+  shared?: Record<string, unknown>;
+  /**
    * Records the answer may cite, where the task is held to the AI Output
    * Standard.
    *
