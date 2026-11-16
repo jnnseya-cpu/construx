@@ -34603,3 +34603,19 @@ bills the lower rate. No provider can be called from this environment. The
 request shape follows each vendor's published caching contract, and the
 charge is computed from whatever the vendor reports, so if a vendor does not
 serve the cache the charge is simply the full price, never less than billed.
+
+### A meetings test that started failing with the calendar
+
+On 2026-11-16 `tests/meetings.test.ts` ("sorts the open action list by how far
+past its date it is") failed on `main` and on every branch, with no code change.
+`meetingPosition` lists the open actions of every meeting on the project, and
+the seeded demo meeting's actions carry fixed dates (originally due
+2026-07-24). They age a day a day; on 14 November the oldest passed the 82 days
+the test expected at the top of the list. The behaviour was right and the test
+was wrong: it now asserts the order of its own meeting's actions only, and adds
+an action raised last but furthest past its original date, which has to come
+first — the property the test is named for, independent of the date it runs on.
+
+**Recorded, not changed:** the demo seed's meeting dates are fixed, so the demo
+project's overdue figures grow with the calendar. Nothing else in the suite
+depends on them today.

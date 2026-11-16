@@ -191,6 +191,7 @@ describe('site meeting · refuses a meeting nobody was at', () => {
 
 describe('site meeting · a carried action keeps the date it was originally given', () => {
   let meetingId: string;
+  let carriedReference: string;
 
   before(() => {
     meetingId = openProgressMeeting();
@@ -216,6 +217,7 @@ describe('site meeting · a carried action keeps the date it was originally give
     // which is exactly how registers full of overdue actions report themselves
     // as clean.
     assert.equal(carried.daysOverdue, 82);
+    carriedReference = carried.reference;
 
     const position = meetings.meetingPosition(asPM(), HELD_ON);
     const open = position.openActions.find((action) => action.reference === carried.reference);
@@ -223,17 +225,38 @@ describe('site meeting · a carried action keeps the date it was originally give
   });
 
   it('sorts the open action list by how far past its date it is, not by when it was raised', () => {
-    meetings.recordAction(asPlanner(), meetingId, {
+    const pour = meetings.recordAction(asPlanner(), meetingId, {
       what: 'Book the concrete pour inspection',
       owner: 'S. Iqbal',
       ownerOrganisation: 'Construx Build Ltd',
       by: daysAgo(-35).slice(0, 10),
     });
+    // Raised last of the three, and the furthest past its original date.
+    const oldest = meetings.recordAction(asPlanner(), meetingId, {
+      what: 'Return the signed temporary works design check certificate',
+      owner: 'D. Whyte',
+      ownerOrganisation: 'Meridian Design',
+      by: daysAgo(-14).slice(0, 10),
+      raisedAtMeeting: 'PROGRESS-001',
+      originallyDue: daysAgo(230).slice(0, 10),
+    });
 
     const position = meetings.meetingPosition(asPM(), HELD_ON);
     const overdue = position.openActions.map((action) => action.daysOverdue);
     assert.deepEqual([...overdue].sort((a, b) => b - a), overdue);
-    assert.equal(position.openActions[0]?.daysOverdue, 82);
+
+    // Only this meeting's actions: the project's other meetings carry their own
+    // dates, which age with the calendar and must not decide this assertion.
+    const prefix = `${pour.reference.split('/')[0]}/`;
+    const ours = position.openActions.filter((action) => action.reference.startsWith(prefix));
+    assert.deepEqual(
+      ours.map((action) => [action.reference, action.daysOverdue]),
+      [
+        [oldest.reference, 200],
+        [carriedReference, 82],
+        [pour.reference, 0],
+      ],
+    );
   });
 });
 
