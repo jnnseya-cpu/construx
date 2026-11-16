@@ -16,6 +16,7 @@ import { scoreRisk } from '../src/engines/maths/risk.ts';
 import { write } from '../src/engines/context.ts';
 import { ulid } from '../src/core/ids.ts';
 import * as structure from '../src/domain/structure.ts';
+import * as pricecheck from '../src/domain/pricecheck.ts';
 import * as tender from '../src/engines/tender.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -1113,5 +1114,68 @@ describe('One job, one package — a same-looking name never splits the bill', (
       () => tender.supersedeItems(ctx, { boqItemIds: stale, reason: 'Trying to retire what is already retired.' }),
       'NOTHING_TO_SUPERSEDE',
     );
+  });
+});
+
+describe('the price, checked', () => {
+  const terms = {
+    payment: {
+      applicationIntervalDays: 30,
+      certificationDays: 14,
+      paymentDays: 28,
+      retentionPercent: 5,
+      retentionReleasedAtCompletionPercent: 50,
+      defectsLiabilityWeeks: 52,
+    },
+    supply: {
+      subcontractorPaymentDays: 30,
+      materialSupplierPaymentDays: 30,
+      materialsDepositPercent: 25,
+      materialsDepositLeadWeeks: 4,
+      plantPaymentDays: 30,
+    },
+    vat: { ratePercent: 20, reverseCharge: true, returnIntervalWeeks: 13, settlementLagWeeks: 5 },
+  };
+
+  it('says how overhead and profit are applied — as markups on cost, and as a margin on the price', () => {
+    const ctx = qsCtx();
+    const built = tender.buildEstimate(ctx, { packageId: 'PKG-PRICECHECK', ...complete(), basisOfEstimate: 'Rates', assumptions: [] });
+    const check = pricecheck.priceCheck(ctx);
+    assert.equal(check.priced, true);
+    assert.equal(check.totalMinor, built.totalMinor);
+    const margin = complete().margin;
+    const onCost = ((1 + margin.overheadPercent / 100) * (1 + margin.profitPercent / 100) - 1) * 100;
+    assert.equal(check.markup?.onCostPercent, Math.round(onCost * 100) / 100);
+    const record = ctx.ledger.require({ refType: 'Estimate', refId: built.estimateId }).state;
+    const profit = (record.heads as Array<{ head: string; amountMinor: number }>).find((head) => head.head === 'PROFIT')!.amountMinor;
+    assert.equal(check.markup?.marginOnPricePercent, Math.round((profit / built.totalMinor) * 10_000) / 100);
+    assert.match(check.markup!.statement, /both markups on cost/);
+    assert.ok(!check.provisional.some((entry) => /Not priced in the estimate/.test(entry.reason)), 'every head priced');
+  });
+
+  it('turns the weekly cash into months, with every modelled duration as a scenario', () => {
+    const ctx = qsCtx();
+    const built = tender.buildEstimate(ctx, { packageId: 'PKG-PRICECHECK-2', ...complete(), basisOfEstimate: 'Rates', assumptions: [] });
+    const funding = tender.modelTenderFunding(ctx, built.estimateId, { ...terms, availableWorkingCapitalMinor: 50_000_00 });
+    tender.modelTenderFunding(ctx, built.estimateId, { ...terms, durationWeeks: 52 });
+    const check = pricecheck.priceCheck(ctx);
+    const months = check.cash!.months;
+    assert.ok(ctx.ledger.require({ refType: 'FundingModel', refId: funding.fundingId }));
+    const latest = ctx.ledger.list(ctx.projectId, 'FundingModel').at(-1)!.state;
+    const latestNet = (latest.periods as Array<{ netMinor: number }>).reduce((sum, period) => sum + period.netMinor, 0);
+    const weeks = (latest.periods as unknown[]).length;
+    assert.ok(Math.abs(months.length - weeks / 4.345) <= 1.5, `${months.length} months for ${weeks} weeks, the defects tail included`);
+    assert.equal(months.reduce((sum, row) => sum + row.netMinor, 0), latestNet, 'the months add to the weeks');
+    assert.equal(months.at(-1)!.cumulativeMinor, (latest.periods as Array<{ cumulativeMinor: number }>).at(-1)!.cumulativeMinor);
+    assert.ok(check.cash!.scenarios.some((scenario) => scenario.durationWeeks === 52));
+    assert.ok(check.cash!.scenarios.some((scenario) => scenario.durationWeeks === 40));
+  });
+
+  it('reports an estimate with a head left unpriced as provisional, saying which', () => {
+    const ctx = qsCtx();
+    tender.buildEstimate(ctx, { packageId: 'PKG-PRICECHECK-3', ...complete({ fees: [] }), basisOfEstimate: 'Rates', assumptions: [] });
+    const check = pricecheck.priceCheck(ctx);
+    assert.equal(check.status, 'PROVISIONAL');
+    assert.ok(check.provisional.some((entry) => /Not priced in the estimate/.test(entry.reason)), JSON.stringify(check.provisional));
   });
 });

@@ -178,6 +178,10 @@ import * as tenderpackcheck from '../domain/tenderpackcheck.ts';
 import * as tenderreading from '../domain/tenderreading.ts';
 import * as bidreview from '../domain/bidreview.ts';
 import * as buyerquestions from '../domain/buyerquestions.ts';
+import * as answercheck from '../domain/answercheck.ts';
+import * as pricecheck from '../domain/pricecheck.ts';
+import * as tenderbrief from '../domain/tenderbrief.ts';
+import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
 import * as tenderregister from '../domain/tenderregister.ts';
 import * as matrixreview from '../domain/matrixreview.ts';
@@ -508,7 +512,8 @@ export type Route = {
      * than named in the path — the whole tender pack. The quote sizes the
      * estimate from it, so the price shown is the price of what is sent.
      */
-    quoteInputText?: (ctx: EngineContext) => string | undefined;
+    /** The text the run will send, to size its estimate — `query` carries what the path names, such as a batch. */
+    quoteInputText?: (ctx: EngineContext, query?: URLSearchParams) => string | undefined;
   };
   /**
    * A control that never belongs on a handset, and which control it is.
@@ -16490,15 +16495,46 @@ export const ROUTES: Route[] = [
       type: 'object',
       required: ['payment', 'supply', 'vat'],
       properties: {
+        // The fields the funding engine reads (`PaymentTerms`, `SupplyTerms`, `VatTreatment`). The
+        // schema used to require four payment fields the engine never read and none it did, so a
+        // caller that followed it got a cash model built from missing numbers.
         payment: {
           type: 'object',
-          required: ['applicationDayOfMonth', 'paymentNoticeDays', 'payLessNoticeDaysBeforeFinal', 'finalDateDays'],
+          required: ['applicationIntervalDays', 'certificationDays', 'paymentDays', 'retentionPercent', 'retentionReleasedAtCompletionPercent', 'defectsLiabilityWeeks'],
+          properties: {
+            applicationIntervalDays: { type: 'integer', minimum: 1 },
+            certificationDays: { type: 'integer', minimum: 0 },
+            paymentDays: { type: 'integer', minimum: 0 },
+            retentionPercent: { type: 'number', minimum: 0, maximum: 100 },
+            retentionReleasedAtCompletionPercent: { type: 'number', minimum: 0, maximum: 100 },
+            defectsLiabilityWeeks: { type: 'integer', minimum: 0 },
+            advancePaymentPercent: { type: 'number', minimum: 0, maximum: 100 },
+          },
+          additionalProperties: false,
         },
         supply: {
           type: 'object',
           required: ['subcontractorPaymentDays', 'materialSupplierPaymentDays', 'materialsDepositPercent', 'materialsDepositLeadWeeks', 'plantPaymentDays'],
+          properties: {
+            subcontractorPaymentDays: { type: 'integer', minimum: 0 },
+            materialSupplierPaymentDays: { type: 'integer', minimum: 0 },
+            materialsDepositPercent: { type: 'number', minimum: 0, maximum: 100 },
+            materialsDepositLeadWeeks: { type: 'integer', minimum: 0 },
+            plantPaymentDays: { type: 'integer', minimum: 0 },
+          },
+          additionalProperties: false,
         },
-        vat: { type: 'object', required: ['ratePercent', 'reverseCharge', 'returnIntervalWeeks', 'settlementLagWeeks'] },
+        vat: {
+          type: 'object',
+          required: ['ratePercent', 'reverseCharge', 'returnIntervalWeeks', 'settlementLagWeeks'],
+          properties: {
+            ratePercent: { type: 'number', minimum: 0, maximum: 100 },
+            reverseCharge: { type: 'boolean' },
+            returnIntervalWeeks: { type: 'integer', minimum: 1 },
+            settlementLagWeeks: { type: 'integer', minimum: 0 },
+          },
+          additionalProperties: false,
+        },
         // Spent before anybody is productive: hoarding, cabins, bonds, deposits.
         mobilisationMinor: { type: 'integer', minimum: 0 },
         availableWorkingCapitalMinor: { type: 'integer', minimum: 0 },
@@ -27944,7 +27980,7 @@ export const ROUTES: Route[] = [
       const heldFile = ingestionId || input.hash
         ? ingestion.ingestedFiles(engineCtx).find((file) => (ingestionId ? file.ingestionId === ingestionId : file.hash === input.hash))
         : undefined;
-      const inputText = heldFile?.extraction.text || matched.route.ai.quoteInputText?.(engineCtx);
+      const inputText = heldFile?.extraction.text || matched.route.ai.quoteInputText?.(engineCtx, new URLSearchParams(input.path.split('?')[1] ?? ''));
       const passes = (matched.route.ai.passes ?? 1) * (input.repeat ?? 1);
 
       return platform.orchestrator.quote({
@@ -28401,6 +28437,45 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'GET',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/answer-check',
+    readOnly: true,
+    description:
+      'Each drafted answer against the sub-questions and scoring criteria of its question and its limit, and every date, duration and social-value commitment in the answers against the programme, the estimate and the contract dates',
+    handler: (platform, ctx) => answercheck.answerCheck(projectContext(platform, ctx), ctx.params.packId as string),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/brief',
+    readOnly: true,
+    description:
+      'The executive brief: the recommendation, the binding deadlines, the decision drivers and the approvals; the nine outputs of the bid review, each Ready for Review, In Draft or Blocked with what stands in the way; and the submission manifest',
+    handler: (platform, ctx) => tenderbrief.tenderBrief(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/price-check',
+    readOnly: true,
+    description:
+      'Whether the price can be approved or is still provisional and why, how overhead and profit are applied (markup on cost and margin on price), whether the buyer’s schedule adds to the internal total, and the cash month by month with each modelled scenario',
+    handler: (platform, ctx) => pricecheck.priceCheck(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/scope',
+    readOnly: true,
+    description:
+      'Who designs, supplies, installs and tests each part of the work and where it is priced, with the gaps and interfaces flagged; and every place two documents disagree, each side cited',
+    handler: (platform, ctx) => tenderscope.scopeReview(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/scope/send-to-review',
+    description: 'Put the scope read from the pack onto the tender review’s gap-and-overlap map, each element with the document that imposes it and the package that prices it',
+    schema: { type: 'object', properties: { edition: { type: 'string', maxLength: 120 } }, additionalProperties: false },
+    handler: (platform, ctx) => tenderscope.sendScopeToReview(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
     pattern: '/v1/projects/:projectId/tender/bid-review',
     readOnly: true,
     description:
@@ -28480,12 +28555,18 @@ export const ROUTES: Route[] = [
       engine: 'TENDER',
       taskType: perception.textTaskType('ITT_REQUIREMENTS', 'TENDER_PACK'),
       capability: 'REASONING',
-      quoteInputText: (engineCtx) => tenderreading.packText(engineCtx).text || undefined,
+      // A batch is quoted from that batch's documents alone.
+      quoteInputText: (engineCtx, query) => {
+        const batch = Number(query?.get('batch'));
+        if (!batch) return tenderreading.packText(engineCtx).text || undefined;
+        const files = tenderreading.packBatches(engineCtx).batches.find((entry) => entry.index === batch)?.files ?? [];
+        return tenderreading.packText(engineCtx, { only: files.map((file) => file.ingestionId) }).text || undefined;
+      },
     },
     description:
       'Read every tender document on the project together, in one run, into one draft: the invitation facts, the requirements matrix and the returns, with the checks run on it in code',
-    schema: { type: 'object', properties: {}, additionalProperties: false },
-    handler: (platform, ctx) => tenderreading.readTenderPack(projectContext(platform, ctx)),
+    schema: { type: 'object', properties: { batch: { type: 'integer', minimum: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => tenderreading.readTenderPack(projectContext(platform, ctx), body<{ batch?: number }>(ctx)),
   },
   {
     method: 'POST',

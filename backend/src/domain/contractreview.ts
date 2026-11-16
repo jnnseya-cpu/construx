@@ -280,6 +280,39 @@ export function contractReviewForProject(ctx: EngineContext): ContractReview & {
   return { ...reviewContract(particulars), ...(analysisId ? { analysisId } : {}) };
 }
 
+/**
+ * The project's open tender review, or one opened from the pack: the form and
+ * edition it names, the edition supplied where it names none. One rule for every
+ * part of the reading that goes onto the review — the contract, the scope.
+ */
+export function tenderReviewForPack(
+  ctx: EngineContext,
+  particulars: TenderParticulars | undefined,
+  edition: string | undefined,
+  title: string,
+): { reviewId: string; reference: string; opened: boolean } {
+  const open = ctx.ledger
+    .list(ctx.projectId, 'TenderReview')
+    .map((record) => record.state)
+    .filter((state) => state.status === 'OPEN')
+    .at(-1);
+  if (open) return { reviewId: String(open.id), reference: String(open.reference), opened: false };
+  const contract = particulars?.contract;
+  const named = (edition ?? contract?.edition ?? '').trim();
+  if (!contract?.form || !named) {
+    throw new DomainError(
+      'CONTRACT_FORM_REQUIRED',
+      contract?.form
+        ? `The pack names ${contract.form} but not its edition. Give the edition — it changes what the clauses say.`
+        : 'The pack does not name the form of contract. Ask the buyer, or open the tender review by hand with the form and edition.',
+      422,
+      [{ field: 'edition', message: 'the edition, e.g. 2016 or June 2017 (amended January 2023)' }],
+    );
+  }
+  const created = openReview(ctx, { title, form: { suite: contract.form, edition: named, amendmentsStated: contract.amendmentsStated === true } });
+  return { reviewId: created.reviewId, reference: created.reference, opened: true };
+}
+
 const CATEGORY: Record<ClauseTopic, ContractObligation['category']> = {
   PAYMENT_CERTIFICATION: 'PAYMENT',
   RETENTION_RELEASE: 'PAYMENT',
@@ -326,41 +359,7 @@ export function draftContractReview(
       409,
     );
   }
-  const open = ctx.ledger
-    .list(ctx.projectId, 'TenderReview')
-    .map((record) => record.state)
-    .filter((state) => state.status === 'OPEN')
-    .at(-1);
-  let reviewId: string;
-  let reference: string;
-  let opened = false;
-  if (open) {
-    reviewId = String(open.id);
-    reference = String(open.reference);
-  } else {
-    const edition = (input.edition ?? contract.edition ?? '').trim();
-    if (!contract.form || !edition) {
-      throw new DomainError(
-        'CONTRACT_FORM_REQUIRED',
-        contract.form
-          ? `The pack names ${contract.form} but not its edition. Give the edition — it changes what the clauses say.`
-          : 'The pack does not name the form of contract. Ask the buyer, or open the tender review by hand with the form and edition.',
-        422,
-        [{ field: 'edition', message: 'the edition, e.g. 2016 or June 2017 (amended January 2023)' }],
-      );
-    }
-    const created = openReview(ctx, {
-      title: 'Contract review, from the tender reading',
-      form: {
-        suite: contract.form,
-        edition,
-        amendmentsStated: contract.amendmentsStated === true,
-      },
-    });
-    reviewId = created.reviewId;
-    reference = created.reference;
-    opened = true;
-  }
+  const { reviewId, reference, opened } = tenderReviewForPack(ctx, particulars, input.edition, 'Contract review, from the tender reading');
 
   const existing = ((ctx.ledger.require({ refType: 'TenderReview', refId: reviewId }).state.obligations as ContractObligation[] | undefined) ?? []).map(
     (obligation) => obligation.reference,

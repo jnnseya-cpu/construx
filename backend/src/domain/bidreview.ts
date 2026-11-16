@@ -5,6 +5,7 @@ import { matrixPosition } from './matrixreview.ts';
 import { companyProfile } from './radar.ts';
 import { deadlineInForce, type ZonedInstant } from './tenderintake.ts';
 import { projectTender, tenderRegister } from './tenderregister.ts';
+import { scopeReview } from './tenderscope.ts';
 
 /**
  * The bid recommendation, and the risks the tender carries.
@@ -72,6 +73,9 @@ const LABEL: Record<Recommendation, string> = {
   HOLD: 'Hold',
   NO_BID: 'No bid',
 };
+
+/** Money as a person reads it: £74,190.70. */
+const pounds = (minor: number): string => (minor / 100).toLocaleString('en-GB', { style: 'currency', currency: 'GBP' });
 
 const slug = (text: string): string =>
   text
@@ -214,7 +218,42 @@ export function bidReview(ctx: EngineContext): BidReview {
       bearing: 'CONDITION',
     });
   }
-  if (missingDocuments.length === 0 && register.conflicts.length === 0 && position.untraced.length === 0) {
+  // The scope: elements priced nowhere, and documents that disagree.
+  const scope = scopeReview(ctx);
+  for (const row of scope.rows.filter((entry) => entry.pricing === 'NOT_PRICED')) {
+    factors.push({ area: 'SCOPE_CERTAINTY', finding: `${row.description} (${row.reference}) is priced nowhere in the documents.`, bearing: 'CONDITION' });
+    conditions.push({
+      id: `COND-SCOPE-${slug(row.reference)}`,
+      condition: `Price ${row.description} (${row.reference}), or confirm with the buyer that it is excluded.`,
+      owner: who('QS'),
+      deadline: questionsDay,
+      ifUnresolved: 'Price it: it will be built whether or not anybody priced it.',
+    });
+  }
+  for (const discrepancy of scope.discrepancies.filter((entry) => entry.clarification?.status !== 'ANSWERED')) {
+    factors.push({ area: 'SCOPE_CERTAINTY', finding: `The documents disagree on ${discrepancy.subject.toLowerCase()}.`, bearing: 'CONDITION' });
+    conditions.push({
+      id: `COND-${discrepancy.id}`,
+      condition: discrepancy.clarification
+        ? `${discrepancy.clarification.reference} answered by the buyer: ${discrepancy.subject}.`
+        : `Raise a clarification on ${discrepancy.subject.toLowerCase()}.`,
+      owner: who('QS'),
+      deadline: questionsDay,
+      ifUnresolved: 'Price and programme on the stricter reading, and state it.',
+    });
+    risks.push({
+      id: `RISK-${discrepancy.id}`,
+      title: `The documents disagree on ${discrepancy.subject.toLowerCase()}`,
+      cause: discrepancy.consequence ?? discrepancy.statements.map((statement) => `${statement.document}: ${statement.says}`).join(' / '),
+      category: 'DESIGN',
+      allocation: 'SHARED',
+      source: `${discrepancy.id} — ${discrepancy.statements.map((statement) => statement.sourceText).join('; ')}`,
+      decisionDue: questionsDay,
+      registered: false,
+    });
+  }
+
+  if (missingDocuments.length === 0 && register.conflicts.length === 0 && position.untraced.length === 0 && scope.counts.unpriced === 0 && scope.counts.discrepancies === 0) {
     factors.push({ area: 'SCOPE_CERTAINTY', finding: 'Every listed document is held and read, and the dates agree.', bearing: 'CLEAR' });
   }
 
@@ -296,13 +335,13 @@ export function bidReview(ctx: EngineContext): BidReview {
     managementDecisions.push('State the working capital available to this job, so the peak funding requirement can be tested against it.');
     factors.push({
       area: 'WORKING_CAPITAL',
-      finding: `Peak funding £${(Number(funding.peakFundingRequirementMinor) / 100).toLocaleString('en-GB')}; available working capital not stated.`,
+      finding: `Peak funding ${pounds(Number(funding.peakFundingRequirementMinor))}; available working capital not stated.`,
       bearing: 'NOT_KNOWN',
     });
   } else if (Number(funding.headroomMinor) < 0) {
     factors.push({
       area: 'WORKING_CAPITAL',
-      finding: `Peak funding £${(Number(funding.peakFundingRequirementMinor) / 100).toLocaleString('en-GB')} exceeds the working capital available by £${(Math.abs(Number(funding.headroomMinor)) / 100).toLocaleString('en-GB')}.`,
+      finding: `Peak funding ${pounds(Number(funding.peakFundingRequirementMinor))} exceeds the working capital available by ${pounds(Math.abs(Number(funding.headroomMinor)))}.`,
       bearing: 'NO_BID',
     });
   } else {

@@ -86,6 +86,30 @@ export type ContractParticulars = {
   source?: QuoteSource;
 };
 
+/** Who does each part of a work package: design, supply, install, test or approve. */
+export const RESPONSIBLE_PARTIES = ['CONTRACTOR', 'CLIENT', 'SPECIALIST', 'NOMINATED', 'FREE_ISSUE', 'OTHERS', 'NOT_STATED'] as const;
+export type ResponsibleParty = (typeof RESPONSIBLE_PARTIES)[number];
+
+export type ScopeLine = {
+  reference: string;
+  workPackage: string;
+  description: string;
+  design: ResponsibleParty;
+  supply: ResponsibleParty;
+  install: ResponsibleParty;
+  testApprove: ResponsibleParty;
+  /** Where it is priced, as the pack says: a bill item, the preliminaries, a provisional sum — or nowhere. */
+  pricedIn?: string;
+  source?: QuoteSource;
+};
+
+export type Discrepancy = {
+  subject: string;
+  /** What each document says, each cited — the competing references. */
+  statements: Array<{ document: string; clause?: string; says: string; source?: QuoteSource }>;
+  consequence?: string;
+};
+
 export type TenderParticulars = {
   documentsListed: ListedDocument[];
   /** Referred to but not in the pack — on the portal only, or to follow. */
@@ -101,6 +125,8 @@ export type TenderParticulars = {
   worksPeriodDays?: number;
   milestones: Milestone[];
   contract?: ContractParticulars;
+  scope?: ScopeLine[];
+  discrepancies?: Discrepancy[];
 };
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -185,6 +211,47 @@ export function particularsFromReading(extraction: Record<string, unknown>, docu
     worksStartOn: date(extraction.worksStartOn),
     worksCompletionOn: date(extraction.worksCompletionOn),
     worksPeriodDays: number(extraction.worksPeriodDays),
+    scope: ((): ScopeLine[] | undefined => {
+      const party = (value: unknown): ResponsibleParty =>
+        RESPONSIBLE_PARTIES.includes(value as ResponsibleParty) ? (value as ResponsibleParty) : 'NOT_STATED';
+      const lines = list(extraction.scope)
+        .filter((entry) => text(entry.workPackage) && text(entry.description))
+        .map((entry, index) =>
+          defined<ScopeLine>({
+            reference: text(entry.reference) ?? `S${index + 1}`,
+            workPackage: text(entry.workPackage)!,
+            description: text(entry.description)!,
+            design: party(entry.design),
+            supply: party(entry.supply),
+            install: party(entry.install),
+            testApprove: party(entry.testApprove),
+            pricedIn: text(entry.pricedIn),
+            source: cite(entry.sourceQuote, undefined, entry.reference),
+          }),
+        );
+      return lines.length > 0 ? lines : undefined;
+    })(),
+    discrepancies: ((): Discrepancy[] | undefined => {
+      const found = list(extraction.discrepancies)
+        .filter((entry) => text(entry.subject))
+        .map((entry) => ({
+          subject: text(entry.subject)!,
+          statements: list(entry.statements)
+            .filter((statement) => text(statement.says))
+            .map((statement) =>
+              defined({
+                document: text(statement.document) ?? 'not named',
+                clause: text(statement.clause),
+                says: text(statement.says)!,
+                source: cite(statement.sourceQuote, undefined, statement.clause),
+              }),
+            ),
+          ...(text(entry.consequence) ? { consequence: text(entry.consequence)! } : {}),
+        }))
+        // A discrepancy is two documents saying different things; one statement is not one.
+        .filter((entry) => entry.statements.length >= 2);
+      return found.length > 0 ? found : undefined;
+    })(),
     contract: ((): ContractParticulars | undefined => {
       const contract = record(extraction.contract);
       if (!contract) return undefined;
@@ -253,6 +320,11 @@ export function mergeParticulars(prior: TenderParticulars | undefined, next: Ten
     worksCompletionOn: next.worksCompletionOn ?? prior.worksCompletionOn,
     worksPeriodDays: next.worksPeriodDays ?? prior.worksPeriodDays,
     milestones: byKey(prior.milestones, next.milestones, (entry) => `${entry.label.toLowerCase()}|${entry.date}`),
+    scope: prior.scope || next.scope ? byKey(prior.scope ?? [], next.scope ?? [], (entry) => entry.reference.toLowerCase()) : undefined,
+    discrepancies:
+      prior.discrepancies || next.discrepancies
+        ? byKey(prior.discrepancies ?? [], next.discrepancies ?? [], (entry) => entry.subject.toLowerCase())
+        : undefined,
     contract:
       prior.contract || next.contract
         ? defined<ContractParticulars>({
@@ -286,7 +358,14 @@ export const PARTICULARS_PROMPT =
   'adjustment or inflation, design liability, liability cap, indemnities, insurance, bonds and guarantees, ' +
   'warranties, termination, defects, insolvency), its clause number, what it says, any figure it states as `value` ' +
   'with its `unit` (days, weeks, months, %, GBP), and a `sourceQuote`. Use null or an empty list for anything it ' +
-  'does not state.';
+  'does not state. Then the scope: in `scope`, one entry per work package or element the documents describe, with ' +
+  'who designs it, who supplies it, who installs it and who tests or approves it — each one of CONTRACTOR, CLIENT, ' +
+  'SPECIALIST, NOMINATED, FREE_ISSUE, OTHERS, or NOT_STATED where the documents do not say — and where it is priced ' +
+  '(the bill item, the preliminaries, a provisional sum) as `pricedIn`, null where nothing prices it; and in ' +
+  '`discrepancies`, every place two documents say different things about the same matter — the specification against ' +
+  'a drawing, the bill against the specification, the preliminaries against the contract — each with `statements`: ' +
+  'what each document says, its clause and a `sourceQuote`, and the practical `consequence`. Report a discrepancy only ' +
+  'where both sides are stated in the documents.';
 
 const QUOTE = { type: ['string', 'null'] };
 const NULLABLE_TEXT = { type: ['string', 'null'] };
@@ -345,6 +424,43 @@ export const PARTICULARS_SCHEMA: Record<string, unknown> = {
       type: 'object',
       properties: { label: { type: 'string' }, date: { type: 'string' }, mandatory: { type: 'boolean' }, sourceQuote: QUOTE },
       required: ['label', 'date', 'mandatory'],
+    },
+  },
+  scope: {
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: {
+        reference: NULLABLE_TEXT,
+        workPackage: { type: 'string' },
+        description: { type: 'string' },
+        design: { type: 'string', enum: [...RESPONSIBLE_PARTIES] },
+        supply: { type: 'string', enum: [...RESPONSIBLE_PARTIES] },
+        install: { type: 'string', enum: [...RESPONSIBLE_PARTIES] },
+        testApprove: { type: 'string', enum: [...RESPONSIBLE_PARTIES] },
+        pricedIn: NULLABLE_TEXT,
+        sourceQuote: QUOTE,
+      },
+      required: ['workPackage', 'description', 'design', 'supply', 'install', 'testApprove'],
+    },
+  },
+  discrepancies: {
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: {
+        subject: { type: 'string' },
+        consequence: NULLABLE_TEXT,
+        statements: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { document: { type: 'string' }, clause: NULLABLE_TEXT, says: { type: 'string' }, sourceQuote: QUOTE },
+            required: ['document', 'says'],
+          },
+        },
+      },
+      required: ['subject', 'statements'],
     },
   },
   contract: {

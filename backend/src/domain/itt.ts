@@ -104,6 +104,10 @@ export type ITTRequirement = {
   responseLimit?: ResponseLimit;
   /** Where in the tender documents it is stated: file, page, clause and the passage. */
   source?: QuoteSource;
+  /** Each distinct thing a scored question asks, in its own words. */
+  subQuestions?: string[];
+  /** What the buyer says earns the marks, where it says. */
+  scoringCriteria?: string;
 };
 
 /** Where the platform can already prove a requirement from its own records. */
@@ -327,6 +331,8 @@ export type MatrixLine = {
   responseLimit?: ResponseLimit;
   /** Where in the tender documents it is stated, found in code at confirmation. */
   source?: QuoteSource;
+  subQuestions?: string[];
+  scoringCriteria?: string;
 };
 
 /**
@@ -773,6 +779,8 @@ export function analyseITT(
       dueBy: requirement.dueBy,
       responseLimit: requirement.responseLimit,
       ...(requirement.source ? { source: requirement.source } : {}),
+      ...(requirement.subQuestions ? { subQuestions: requirement.subQuestions } : {}),
+      ...(requirement.scoringCriteria ? { scoringCriteria: requirement.scoringCriteria } : {}),
     };
   });
 
@@ -899,6 +907,8 @@ export function requirementsFromMatrix(matrix: MatrixLine[]): ITTRequirement[] {
     ...(line.dueBy !== undefined ? { dueBy: line.dueBy } : {}),
     ...(line.responseLimit !== undefined ? { responseLimit: line.responseLimit } : {}),
     ...(line.source !== undefined ? { source: line.source } : {}),
+    ...(line.subQuestions !== undefined ? { subQuestions: line.subQuestions } : {}),
+    ...(line.scoringCriteria !== undefined ? { scoringCriteria: line.scoringCriteria } : {}),
   }));
 }
 
@@ -937,6 +947,8 @@ export function mergeRequirements(prior: ITTRequirement[], next: ITTRequirement[
             ...(requirement.dueBy === undefined && earlier.dueBy !== undefined ? { dueBy: earlier.dueBy } : {}),
             // A citation found in the documents is not replaced by one that was not.
             ...(earlier.source?.located && !requirement.source?.located ? { source: earlier.source } : {}),
+            ...(requirement.subQuestions === undefined && earlier.subQuestions !== undefined ? { subQuestions: earlier.subQuestions } : {}),
+            ...(requirement.scoringCriteria === undefined && earlier.scoringCriteria !== undefined ? { scoringCriteria: earlier.scoringCriteria } : {}),
           }
         : requirement,
     );

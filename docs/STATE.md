@@ -34873,3 +34873,164 @@ only — **impact, urgency, owner and how it is priced meanwhile**, shown in a
 (`shared/vocabulary.js` `RISK_CATEGORY`) offers `GROUND` and `LABOUR`, which the
 engine's `RiskCategory` type does not name (it has `GROUND_CONDITIONS`), and its
 register form sends a fixed 400-day project duration to the scoring.
+
+## 2026-11 the tender process, group C: scope, answers, price, the brief, batches
+
+The output stages of the owner's tender process (stages 3, 6, 7 and 8, and the
+output format), built on groups A and B.
+
+### Scope, responsibilities and discrepancies (stage 3)
+
+`domain/tenderscope.ts`, `GET /tender/scope`, `POST /tender/scope/send-to-review`.
+The reading takes, per work package or element, **who designs, supplies,
+installs and tests or approves it** (us, client, specialist, nominated, free
+issue, others, or not stated) and **where it is priced**; and **every place two
+documents disagree**, each side with its passage and the consequence.
+
+- Flags in code: a responsibility not stated (clarify it), free issue and
+  nominated items (interfaces to agree), contractor's design (design liability
+  and PI), work by others (a programme dependency), and an element priced
+  nowhere (a gap). A bill item named as "priced in" is matched to the project's
+  bill by cost code or item number.
+- A discrepancy is only one where **both sides are stated**, and it is marked
+  verified only where each side's passage is found in the documents. Each is
+  `DISC-…` (stable), with a "Raise a clarification" button that drafts a neutral
+  ambiguity from the two statements; once raised it carries the TQ, and the
+  answer settles it.
+- "Send the scope to the tender review" puts each cited element on the existing
+  gap-and-overlap map (`tenderreview.mapScope`): priced nowhere is a gap there,
+  priced in two packages an overlap. The review is opened from the pack where
+  none is open (one shared helper, `tenderReviewForPack`, used by the contract
+  review too).
+- Scope feeds the recommendation: an unpriced element and an unresolved
+  discrepancy are conditions with owners and fallbacks, and a discrepancy is a
+  proposed risk.
+
+### The answers against the question and against the bid (stage 7)
+
+`domain/answercheck.ts`, `GET /bid-responses/:packId/answer-check`, "Check the
+answers" on each response pack. The reading now takes, per scored question, its
+**sub-questions** and the buyer's **scoring criteria**, carried on the matrix line.
+
+- Each answer: which sub-questions it evidently addresses (half or more of a
+  sub-question's own words appear in it), its length against the limit, the
+  criteria, and the change that would most improve it. **This is coverage, not a
+  mark** — said on the screen — because the published scoring rules are the
+  buyer's to apply.
+- Commitments: a start or completion date (one sentence can give both) and a
+  duration in weeks are checked against the confirmed tender programme, else the
+  contract dates in the pack or the estimate's duration; social-value figures are
+  listed for somebody to confirm are measurable, owned, costed and approved.
+
+### The price (stage 6)
+
+`domain/pricecheck.ts`, `GET /tender/price-check`, "The price" card.
+
+- **Provisional, and why**, or ready for approval: a cost head the estimate left
+  unpriced, an element priced nowhere, an unresolved discrepancy, a document
+  missing from the pack, a critical or high question unanswered (with how it was
+  priced meanwhile), a severe clause — each with what clears it.
+- **Markup and margin, both stated** from the cost model's own rule: overhead is
+  a markup on cost and profit a markup on cost plus overhead; profit is also given
+  as a margin on the selling price (the figure the estimate calls its margin), and
+  overhead with profit as a share of the price. Fixed and provisional sums sit
+  outside.
+- **The buyer's schedule reconciled** to the internal total.
+- **Cash month by month** from the funding model's weekly series (calendar months
+  from the programme start or the works start, else month numbers), the peak and
+  its month, the headroom, and **every funding model on the project shown as a
+  scenario**. "Model the cash" — the funding model had **no console door until
+  now** — opens a form with the payment days, retention and defects period the
+  pack states filled in, and every other term left to the person.
+- **Fixed, a defect found on the way**: the funding route's schema required four
+  payment fields the funding engine never reads (`applicationDayOfMonth`, …) and
+  none it does, so a caller that followed it got a cash model built from missing
+  numbers. It now requires exactly the engine's `PaymentTerms`, `SupplyTerms` and
+  `VatTreatment`, typed.
+
+### The executive brief, the nine outputs, the manifest (stage 8 and the output format)
+
+`domain/tenderbrief.ts`, `GET /tender/brief`, the "Executive brief" card at the
+top of the tender on Pipeline & Bids.
+
+- **The brief**: the recommendation, the binding deadlines (with their zones),
+  what decides it, and five approvals with their state — the bid decision, the
+  commercial approval of the price (an approved or issued quotation on this job's
+  estimate), the programme (a confirmed tender programme), the contract sign-off
+  (every clause on the tender review signed), and the signatory (the response
+  pack issued).
+- **The nine outputs**, D1 to D9, each **Ready for Review, In Draft or Blocked**
+  with exactly what stands in the way — read from the record each output already
+  is, so the brief cannot disagree with the screen beneath it.
+- **The submission manifest**: every return the invitation lists, what produces it
+  on the platform (the response pack, the pricing schedule, the tender programme,
+  the quotation — or prepared outside and uploaded), its version, owner, status,
+  and the portal location — which the platform cannot see, so it is always shown as
+  not verified, and portal-only checks are listed as pending.
+- **Ready for Authorised Submission** only when the recommendation is to bid,
+  every output is ready, every approval is recorded and every return is verified.
+
+### Packs too large for one reading
+
+`packBatches`, `readTenderPack(…, { batch })`, `POST /tender/read-pack {batch}`.
+A pack over one reading is split into batches of **whole documents**, in reading
+order; each batch is quoted from its own text (`?batch=k` on the quote) and read
+and confirmed on its own into the same matrix. A document larger than any batch
+is named, to be read from its own row. The register's **coverage log** says, per
+file, which reading took it in (the whole pack, or batch k of n) and whether that
+reading was confirmed; a file counts as read once a confirmed reading — or the
+latest one awaiting confirmation — includes it. "Read the whole pack" is disabled
+on a pack that needs batches, with the reason.
+
+### Verified
+
+- Tests: `tenderreading` (33: scope and discrepancies and the review map, the
+  answer check with sub-questions and a completion date that disagrees with the
+  pack, the brief's nine labels, approvals and manifest), `estimating` (63: markup
+  and margin, months adding to the weeks across scenarios, an unpriced head making
+  the price provisional), `packbatches` (5). Full suite green.
+- In the browser on the stand-in model: the brief read Hold with its deadlines,
+  drivers, five pending approvals, the nine labelled outputs and the manifest; the
+  scope card flagged the two unstated responsibilities, the unpriced wash-bay
+  drainage and the uPVC/cast-iron discrepancy, which was raised as TQ-001 from its
+  button and then shown against it; sending the scope opened TR-001 with one gap;
+  the price card listed eight reasons the price is provisional and the
+  markup/margin statement; "Model the cash" opened with 45 days' payment and 5%
+  retention filled from the pack, modelled the cash, and the recommendation turned
+  to No bid on peak funding over the working capital; "Check the answers" showed
+  both of Q2's sub-questions unaddressed with the buyer's criteria; a 500k-character
+  pack showed as two batches, batch 1 was quoted from its own text and read, and
+  the register recorded it. No page errors. The walk found and fixed: the cash
+  could only be modelled on a complete estimate (it is a decision input while the
+  price is provisional too), cost heads shown as codes, headroom shown as a
+  negative number, and whole-pack reading offered on a pack too large for it.
+
+**Not verified, and cannot be here:** how well a real model reads scope,
+discrepancies, sub-questions and contract clauses from a real pack. Every check,
+citation and comparison on them is in code and does not depend on it.
+
+**Fixed along the way:** an issued response pack's badge used the missing `good`
+tone.
+
+### The owner's process, where each part now lives
+
+| Stage | Where |
+|---|---|
+| Rules: source material | `ai/sourcematerial.ts`, every outside-document request and the reading check |
+| Rules: citations, five statuses, no invention, internal vs buyer | `tendersource.ts`, `matrixreview.ts`, the drafting gates already built, `buyerquestions.ts` |
+| Rules: never send, sign or submit | unchanged: human-only events; the platform sends nothing to a buyer |
+| 1 Register and deadlines | `tenderregister.ts`, `tenderparticulars.ts` |
+| 2 Eligibility and matrix | `matrixreview.ts` on the existing matrix |
+| 3 Scope, site, delivery | `tenderscope.ts`, the existing tender review's scope map, the tender programme |
+| 4 Contract, risk, decision | `contractreview.ts`, the risk register's source and decision date, `bidreview.ts`, the existing decision |
+| 5 Clarifications | the existing register with the internal log, `buyerquestions.ts` |
+| 6 Price | `pricecheck.ts`, the existing estimate, schedule and funding model |
+| 7 Responses | the existing response packs and gates, `answercheck.ts` |
+| 8 QA and manifest | `tenderbrief.ts`, the existing completeness gates, red team and submission receipt |
+| Output: brief, labels, IDs, batches | `tenderbrief.ts`; IDs `D1–D9`, `A1–A5`, `COND-…`, `RISK-…`, `DISC-…`, `TQ-`/`CQ-n`, `R…`; `packBatches` |
+
+**Still not built, stated:** an indicative *score* per published criterion (the
+platform reports coverage instead, and the red team's findability); the buyer's
+portal location for each file (not visible to the platform); a single
+"sign-off set" record for commercial, programme and signatory approval (the brief
+reads each from the record it already lives on).

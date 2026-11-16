@@ -1,6 +1,7 @@
 import { authorise, type EngineContext } from '../engines/context.ts';
 import { packText, type IngestedFileState } from '../evidence/pipeline.ts';
 import { DRAFTING_PACK_MAX } from './bidresponse.ts';
+import { packBatches } from './tenderreading.ts';
 import { deadlineInForce, type ZonedInstant } from './tenderintake.ts';
 import type { ListedDocument, TenderParticulars } from './tenderparticulars.ts';
 import { describeQuoteSource, type QuoteSource } from './tendersource.ts';
@@ -33,8 +34,10 @@ export type RegisterRow = {
   status: RegisterStatus;
   /** How much of it was read, in words a person checks against the file. */
   coverage: string;
-  /** In the latest reading of the pack. */
+  /** In a confirmed reading of the pack, or in the latest one awaiting confirmation. */
   inReading: boolean;
+  /** Every reading that took this file in — the whole pack, or a batch of it — and whether it was confirmed. */
+  readIn: string[];
   /** In the text each drafted answer is given. */
   inDrafting: boolean;
   /** Another upload with the same content, or the same document at another revision. */
@@ -64,6 +67,8 @@ export type TenderRegister = {
   conflicts: string[];
   /** Whether the pack has been read and an invitation recorded from it. */
   read: boolean;
+  /** Where the pack is too large for one reading: the batches it is read in, and any document too large for one. */
+  batches?: { list: Array<{ index: number; files: string[]; read: boolean }>; oversize: string[] };
   summary: string;
 };
 
@@ -145,13 +150,23 @@ export function tenderRegister(ctx: EngineContext): TenderRegister {
   const { invitation, analysisId, particulars } = projectTender(ctx);
   const listed = particulars?.documentsListed ?? [];
 
-  // The latest reading of the whole pack, and the files it took in.
-  const reading = ctx.ledger
+  // Every reading of the pack — whole, or a batch of it — and the files each took in.
+  const readings = ctx.ledger
     .list(ctx.projectId, 'PerceptionDraft')
     .map((record) => record.state)
-    .filter((state) => state.task === 'ITT_REQUIREMENTS' && Array.isArray(state.packFiles))
-    .at(-1);
-  const readIds = new Set(((reading?.packFiles as Array<{ ingestionId: string }> | undefined) ?? []).map((file) => file.ingestionId));
+    .filter((state) => state.task === 'ITT_REQUIREMENTS' && Array.isArray(state.packFiles));
+  const filesOfReading = (state: Record<string, unknown>): string[] =>
+    ((state.packFiles as Array<{ ingestionId: string }> | undefined) ?? []).map((file) => file.ingestionId);
+  const latestReading = readings.at(-1);
+  const readIds = new Set([
+    ...readings.filter((state) => state.status === 'CONFIRMED').flatMap(filesOfReading),
+    ...(latestReading && latestReading.status === 'DRAFT' ? filesOfReading(latestReading) : []),
+  ]);
+  const readingName = (state: Record<string, unknown>): string => {
+    const label = String(state.textLabel ?? '');
+    const batch = label.match(/^Batch \d+ of \d+/)?.[0];
+    return `${batch ?? 'The whole pack'} · ${String(state.status ?? '').toLowerCase()}`;
+  };
   const drafting = packText(ctx, { maxCharacters: DRAFTING_PACK_MAX });
   const draftIds = new Set(drafting.files.map((file) => file.ingestionId));
 
@@ -179,6 +194,7 @@ export function tenderRegister(ctx: EngineContext): TenderRegister {
       status,
       coverage: coverageOf(file),
       inReading: readIds.has(file.ingestionId),
+      readIn: readings.filter((state) => filesOfReading(state).includes(file.ingestionId)).map(readingName),
       inDrafting: draftIds.has(file.ingestionId),
       ...(duplicateOf ? { duplicateOf } : {}),
     };
@@ -257,8 +273,8 @@ export function tenderRegister(ctx: EngineContext): TenderRegister {
     files.length === 0
       ? 'No tender document has been uploaded to this project.'
       : [
-          `${rows.length} document(s) uploaded, ${rows.filter((row) => row.status === 'READ').length} in the latest reading`,
-          notRead > 0 ? `${notRead} uploaded since — read the pack again to take them in` : undefined,
+          `${rows.length} document(s) uploaded, ${rows.filter((row) => row.status === 'READ').length} read into the matrix`,
+          notRead > 0 ? `${notRead} not yet read — read the pack again, or its batch, to take them in` : undefined,
           unreadable > 0 ? `${unreadable} could not be read` : undefined,
           listedNotUploaded.length > 0 ? `${listedNotUploaded.length} listed in the pack but not uploaded` : undefined,
           notSupplied.length > 0 ? `${notSupplied.length} referred to but not supplied` : undefined,
@@ -267,8 +283,21 @@ export function tenderRegister(ctx: EngineContext): TenderRegister {
           .filter(Boolean)
           .join('; ') + '.';
 
+  const split = packBatches(ctx);
+  const batches = split.needed
+    ? {
+        list: split.batches.map((batch) => ({
+          index: batch.index,
+          files: batch.files.map((file) => file.filename),
+          read: batch.files.every((file) => readIds.has(file.ingestionId)),
+        })),
+        oversize: split.oversize.map((file) => file.filename),
+      }
+    : undefined;
+
   return {
     rows,
+    ...(batches ? { batches } : {}),
     listedNotUploaded,
     notSupplied,
     ...(particulars?.precedence ? { precedence: { order: particulars.precedence.order, source: cited(particulars.precedence.source) } } : {}),

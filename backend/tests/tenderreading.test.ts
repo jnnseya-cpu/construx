@@ -13,6 +13,9 @@ import * as structure from '../src/domain/structure.ts';
 import * as tenderintake from '../src/domain/tenderintake.ts';
 import * as tenderregister from '../src/domain/tenderregister.ts';
 import * as contractreview from '../src/domain/contractreview.ts';
+import * as tenderscope from '../src/domain/tenderscope.ts';
+import * as answercheck from '../src/domain/answercheck.ts';
+import * as tenderbrief from '../src/domain/tenderbrief.ts';
 import * as bidreview from '../src/domain/bidreview.ts';
 import * as buyerquestions from '../src/domain/buyerquestions.ts';
 import * as matrixreview from '../src/domain/matrixreview.ts';
@@ -95,7 +98,10 @@ const ITT_DOCX = docxOf(
     paragraph('Quality submission') +
     paragraph('2.3 Table 1 – Quality Criteria. The Contractors proposed approach and methodology for the delivery of the proposed work. 30%') +
     paragraph('3.2 The Contractor notifies a compensation event within eight weeks of becoming aware that the event has happened.') +
-    paragraph('3.4 The Contractor is liable for design to the standard of fitness for purpose.'),
+    paragraph('3.4 The Contractor is liable for design to the standard of fitness for purpose.') +
+    paragraph('4.1 Soil nails: designed by the Employer’s engineer, supplied and installed by the Contractor, tested by the Contractor and witnessed by the Engineer.') +
+    paragraph('4.2 The facing masonry shall be natural stone to match the existing.') +
+    paragraph('4.3 Drawing ERCF-02 shows the facing as reconstituted stone blocks.'),
 );
 
 /** Volume 2, the questionnaire: the seven scored questions and their limit. */
@@ -165,6 +171,7 @@ function conwyReading(): Record<string, unknown> {
         wordLimit: 1000,
         evidenceRequired: 'A written answer',
         sourceQuote: text,
+        ...(reference === 'Q2' ? { subQuestions: ['Key staff and their duties', 'Management and co-ordination of sub-contractors'] } : {}),
       })),
     ],
     deliverables: RETURNS.map(([reference, title]) => ({
@@ -195,6 +202,21 @@ function conwyReading(): Record<string, unknown> {
     tenderValidityDays: null,
     awardOn: '2026-12-14',
     milestones: [{ label: 'Notice published', date: '2026-10-22', mandatory: false, sourceQuote: '22/10/2026 Notice published on sell2wales.gov.wales.' }],
+    scope: [
+      { reference: '4.1', workPackage: 'Retaining wall', description: 'Soil nails', design: 'CLIENT', supply: 'CONTRACTOR', install: 'CONTRACTOR', testApprove: 'CONTRACTOR', pricedIn: '990.1', sourceQuote: 'Soil nails: designed by the Employer’s engineer, supplied and installed by the Contractor' },
+      { reference: '4.2', workPackage: 'Retaining wall', description: 'Masonry facing', design: 'NOT_STATED', supply: 'CONTRACTOR', install: 'CONTRACTOR', testApprove: 'NOT_STATED', pricedIn: null, sourceQuote: 'The facing masonry shall be natural stone to match the existing.' },
+    ],
+    discrepancies: [
+      {
+        subject: 'Facing stone',
+        consequence: 'Natural stone costs several times reconstituted block.',
+        statements: [
+          { document: 'Volume 1', clause: '4.2', says: 'Natural stone to match the existing.', sourceQuote: 'The facing masonry shall be natural stone to match the existing.' },
+          { document: 'Drawing ERCF-02', clause: '4.3', says: 'Reconstituted stone blocks.', sourceQuote: 'Drawing ERCF-02 shows the facing as reconstituted stone blocks.' },
+        ],
+      },
+      { subject: 'One-sided', statements: [{ document: 'Volume 1', says: 'Only one side.' }] },
+    ],
     contract: {
       form: 'NEC4 Engineering and Construction Short Contract',
       edition: null,
@@ -577,6 +599,36 @@ describe('confirming the reading records the invitation, the matrix and the retu
     assert.equal(contractreview.draftContractReview(ctx('owner'), {}).recorded, 0);
   });
 
+  it('maps who does what and where it is priced, and registers where the documents disagree', () => {
+    const scope = tenderscope.scopeReview(ctx('qs'));
+    const nails = scope.rows.find((row) => row.reference === '4.1')!;
+    assert.equal(nails.pricing, 'ITEM');
+    assert.ok(nails.flags.some((flag) => /Done by others/.test(flag)), 'the client designs them: a dependency');
+    const facing = scope.rows.find((row) => row.reference === '4.2')!;
+    assert.equal(facing.pricing, 'NOT_PRICED');
+    assert.ok(facing.flags.some((flag) => /Who designs it is not stated/.test(flag)));
+    assert.ok(facing.flags.some((flag) => /a gap/.test(flag)));
+    assert.equal(scope.discrepancies.length, 1, 'a single statement is not a discrepancy');
+    const stone = scope.discrepancies[0]!;
+    assert.equal(stone.id, 'DISC-FACING-STONE');
+    assert.equal(stone.verified, true, 'both sides found in the documents');
+    assert.match(stone.action, /Raise a clarification/);
+
+    // Raised against it, the discrepancy carries the reference.
+    const raised = tenderintel.raiseTenderClarification(ctx('qs'), {
+      side: 'CLIENT',
+      subject: 'Facing stone',
+      question: 'Please confirm whether the facing is natural stone or reconstituted block.',
+      links: { scopeItem: stone.id, document: 'Volume 1' },
+    });
+    assert.equal(tenderscope.scopeReview(ctx('qs')).discrepancies[0]!.clarification?.reference, raised.reference);
+
+    // Onto the tender review's map: the unpriced facing is a gap there.
+    const sent = tenderscope.sendScopeToReview(ctx('qs'), { edition: 'June 2017' });
+    assert.deepEqual(sent.gaps.map((gap) => gap.reference), ['4.2']);
+    assert.equal(sent.overlaps.length, 0);
+  });
+
   it('recommends from everything on the record, with conditions, and proposes the risks the tender carries', () => {
     const review = bidreview.bidReview(ctx('qs'));
     assert.equal(review.read, true);
@@ -718,6 +770,59 @@ describe('confirming the reading records the invitation, the matrix and the retu
     const extra = await bidresponse.writeNextSection(ctx('qs'), { packId: pack.id });
     assert.equal(extra.written, null);
     assert.equal(requests.length, before + 7);
+
+    // The answers checked against their questions and the rest of the bid.
+    const first = answercheck.answerCheck(ctx('qs'), pack.id);
+    const q2 = first.sections.find((section) => section.key === 'Q2')!;
+    assert.equal(q2.coverage, '0 of 2 sub-questions evidently addressed');
+    assert.ok(q2.improve.some((line) => /Key staff/.test(line)));
+    bidresponse.reviseSection(ctx('qs'), {
+      packId: pack.id,
+      key: 'Q2',
+      body: [
+        'Our key staff are a contracts manager and a site manager, with clear duties for each.',
+        'We will start on site on 18/01/2027 and complete by 2 April 2027, a programme of 10 weeks on site.',
+      ],
+    });
+    const second = answercheck.answerCheck(ctx('qs'), pack.id);
+    assert.equal(second.sections.find((section) => section.key === 'Q2')!.coverage, '1 of 2 sub-questions evidently addressed');
+    const start = second.commitments.find((entry) => entry.kind === 'START')!;
+    assert.equal(start.value, '2027-01-18');
+    assert.equal(start.agrees, true, 'the works start in the pack');
+    const completion = second.commitments.find((entry) => entry.kind === 'COMPLETION')!;
+    assert.equal(completion.agrees, false, '2 April against 9 April in the pack');
+    assert.equal(completion.against?.value, '2027-04-09');
+    assert.equal(second.disagreements, 1);
+  });
+
+  it('briefs the bid on one page: nine outputs labelled, approvals, and a manifest of every return', () => {
+    const brief = tenderbrief.tenderBrief(ctx('qs'));
+    assert.equal(brief.read, true);
+    assert.deepEqual(brief.deliverables.map((entry) => entry.id), ['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9']);
+    const byId = new Map(brief.deliverables.map((entry) => [entry.id, entry]));
+    assert.equal(byId.get('D1')!.label, 'BLOCKED');
+    assert.ok(byId.get('D1')!.items.some((item) => /Volume 3/.test(item)));
+    assert.equal(byId.get('D4')!.label, 'BLOCKED', 'no tender programme confirmed');
+    assert.equal(byId.get('D7')!.label, 'BLOCKED', 'not priced');
+    assert.equal(byId.get('D9')!.label, 'IN_DRAFT');
+    assert.ok(byId.get('D9')!.items.some((item) => /Portal-only checks/.test(item)));
+    assert.deepEqual(brief.approvals.map((approval) => [approval.id, approval.status]), [
+      ['A1', 'PENDING'],
+      ['A2', 'PENDING'],
+      ['A3', 'PENDING'],
+      ['A4', 'PENDING'],
+      ['A5', 'PENDING'],
+    ]);
+    const producedBy = new Map(brief.manifest.map((row) => [row.id, row.producedBy]));
+    assert.equal(producedBy.get('R1'), 'Pricing schedule from the priced estimate');
+    assert.equal(producedBy.get('R2'), 'Quotation');
+    assert.equal(producedBy.get('R3'), 'Tender programme');
+    assert.equal(producedBy.get('R4'), 'Prepared outside the platform and uploaded to the portal');
+    assert.equal(producedBy.get('R6'), 'Bid response pack');
+    assert.ok(brief.manifest.every((row) => row.status === 'PENDING'));
+    assert.ok(brief.deadlines.some((row) => row.label === 'Tender return'));
+    assert.equal(brief.readyForAuthorisedSubmission, false);
+    assert.match(brief.summary, /Not yet ready for authorised submission/);
   });
 
   it('quotes each answer from the documents it sends', () => {

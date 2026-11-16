@@ -1,6 +1,6 @@
 import { api, isRoleDenial } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
-import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, resolveHtml, table, time, toast } from '../lib/ui.js';
+import { badge, date, html, humanise, money, notice, pct, positionReport, raw, reading, render, resolveHtml, table, time, toast } from '../lib/ui.js';
 import { donutChart } from '../lib/charts.js';
 import { flowPanel, loadFlow } from '../lib/flow.js';
 import { insightPanel } from '../lib/insight.js';
@@ -224,10 +224,32 @@ function registerCard(register) {
         row.listedAs ?? html`<span style="color:var(--text-3)">—</span>`,
         [row.revision ? `rev ${row.revision}` : '', row.issuedOn ? date(row.issuedOn) : ''].filter(Boolean).join(' · ') || '—',
         badge(REGISTER_LABEL[row.status] ?? humanise(row.status), REGISTER_TONE[row.status] ?? ''),
-        html`<span style="font-size:12px">${row.coverage}</span>`,
+        html`<span style="font-size:12px">${row.coverage}</span>${
+          (row.readIn ?? []).length > 0 ? html`<br><span style="font-size:11px;color:var(--text-3)">${row.readIn.join('; ')}</span>` : ''
+        }`,
         row.inDrafting ? 'yes' : row.status === 'READ' || row.status === 'NOT_READ' ? badge('left out — too long', 'warn') : '—',
       ]),
     })}
+    ${
+      register.batches
+        ? html`<h3 style="margin-top:14px">Too large for one reading: read it in ${register.batches.list.length} batches</h3>
+            <p class="metric-sub">Whole documents only, in the order the pack is read. Each batch is quoted and confirmed on its own, into the same matrix.${
+              register.batches.oversize.length > 0
+                ? ` Too large for any batch, to be read from its own row: ${register.batches.oversize.join(', ')}.`
+                : ''
+            }</p>
+            ${table({
+              headers: ['Batch', 'Documents', ''],
+              rows: register.batches.list.map((batch) => [
+                `${batch.index} of ${register.batches.list.length}`,
+                html`<span style="font-size:12.5px">${batch.files.join(', ')}</span>`,
+                batch.read
+                  ? badge('read', 'ok')
+                  : html`<button class="btn quiet sm" data-read-batch="${batch.index}">Read batch ${batch.index}</button>`,
+              ]),
+            })}`
+        : ''
+    }
     ${
       register.listedNotUploaded.length > 0 || register.notSupplied.length > 0
         ? html`<h3 style="margin-top:14px">Missing from the pack</h3>
@@ -299,6 +321,79 @@ const BEARING = {
   NOT_KNOWN: ['not known', ''],
 };
 
+const PARTY_LABEL = {
+  CONTRACTOR: 'us',
+  CLIENT: 'client',
+  SPECIALIST: 'specialist',
+  NOMINATED: 'nominated',
+  FREE_ISSUE: 'free issue',
+  OTHERS: 'others',
+  NOT_STATED: 'not stated',
+};
+const PRICING_LABEL = { ITEM: 'bill item', PRELIMINARIES: 'preliminaries', PROVISIONAL_SUM: 'provisional sum', NOT_PRICED: 'nowhere' };
+const party = (value) => (value === 'NOT_STATED' ? badge('not stated', 'warn') : PARTY_LABEL[value] ?? humanise(value));
+
+/** Who does what, where it is priced, and where the documents disagree. */
+function scopeCard(scope) {
+  if (!scope) return '';
+  if (scope.error) {
+    return html`<section class="card" style="margin-bottom:14px">${notice(`The scope could not be read: ${scope.error.message}`, 'err')}</section>`;
+  }
+  if (scope.rows.length === 0 && scope.discrepancies.length === 0) return '';
+  return html`<section class="card" style="margin-bottom:14px" aria-labelledby="pl-scope-h" data-tender-scope>
+    <h2 id="pl-scope-h">Scope, responsibilities and discrepancies</h2>
+    <p class="metric-sub">${scope.summary}</p>
+    ${table({
+      headers: ['Ref', 'Package · element', 'Designs', 'Supplies', 'Installs', 'Tests / approves', 'Priced in', 'To settle'],
+      rows: scope.rows.map((row) => [
+        row.reference,
+        html`${row.workPackage}<br><span style="font-size:12.5px">${row.description}</span><br><span style="font-size:11px;color:var(--text-3)">${row.sourceText}</span>`,
+        party(row.design),
+        party(row.supply),
+        party(row.install),
+        party(row.testApprove),
+        row.pricing === 'NOT_PRICED'
+          ? badge('nowhere', 'bad')
+          : html`${PRICING_LABEL[row.pricing]}${row.pricedIn ? html`<br><span style="font-size:11px;color:var(--text-3)">${row.pricedIn}</span>` : ''}${
+              row.billItem ? html`<br><span style="font-size:11px;color:var(--text-3)">on the bill: ${row.billItem.costCode}</span>` : ''
+            }`,
+        row.flags.length > 0 ? html`<ul style="margin:0 0 0 14px;font-size:12px">${row.flags.map((flag) => html`<li>${flag}</li>`)}</ul>` : '—',
+      ]),
+      empty: 'No scope was read from the pack.',
+    })}
+    ${
+      scope.discrepancies.length > 0
+        ? html`<h3 style="margin-top:14px">Where the documents disagree</h3>
+            ${table({
+              headers: ['ID', 'Matter', 'What each document says', 'Consequence', 'Next'],
+              rows: scope.discrepancies.map((row) => [
+                html`<span style="font-size:11.5px">${row.id}</span>`,
+                row.subject,
+                html`<ul style="margin:0 0 0 14px;font-size:12px">${row.statements.map(
+                  (statement) =>
+                    html`<li>${statement.document}${statement.clause ? ` ${statement.clause}` : ''}: ${statement.says} ${
+                      statement.located ? html`<span style="color:var(--text-3)">(${statement.sourceText})</span>` : badge('not found in the documents', 'warn')
+                    }</li>`,
+                )}</ul>`,
+                html`<span style="font-size:12px">${row.consequence ?? '—'}</span>`,
+                html`<span style="font-size:12px">${row.action}</span>${
+                  !row.clarification && row.verified
+                    ? html`<br><button class="btn quiet sm" data-command="raise-discrepancy" data-discrepancy="${row.id}">Raise a clarification</button>`
+                    : ''
+                }`,
+              ]),
+            })}`
+        : ''
+    }
+    ${
+      scope.rows.length > 0
+        ? html`<div class="actions" style="margin-top:10px"><button class="btn quiet" data-command="send-scope-to-review"
+            title="Each element goes onto the tender review’s gap-and-overlap map with the document that imposes it and the package that prices it.">Send the scope to the tender review</button></div>`
+        : ''
+    }
+  </section>`;
+}
+
 /** The contract as the pack states it, clause by clause. A denial is shown as a denial. */
 function contractCard(review) {
   if (!review) return '';
@@ -340,6 +435,142 @@ function contractCard(review) {
       review.rows.length > 0
         ? html`<div class="actions" style="margin-top:10px"><button class="btn quiet" data-command="draft-contract-review"
             title="Each clause found in the documents goes onto the tender review with the contract’s own wording, for a legal or commercial owner to accept or reject.">Send to the tender review for sign-off</button></div>`
+        : ''
+    }
+  </section>`;
+}
+
+const OUTPUT_LABEL = {
+  READY_FOR_REVIEW: ['ready for review', 'ok'],
+  IN_DRAFT: ['in draft', 'warn'],
+  BLOCKED: ['blocked', 'bad'],
+};
+
+/** The one page a director reads: recommendation, deadlines, drivers, approvals, the nine outputs and the manifest. */
+function briefCard(brief) {
+  if (!brief) return '';
+  if (brief.error) {
+    return html`<section class="card" style="margin-bottom:14px">${notice(`The executive brief could not be read: ${brief.error.message}`, 'err')}</section>`;
+  }
+  if (!brief.read) return '';
+  const [recommendation, tone] = RECOMMENDATION[brief.recommendation] ?? [brief.recommendation, ''];
+  return html`<section class="card" style="margin-bottom:14px" aria-labelledby="pl-brief-h" data-tender-brief>
+    <h2 id="pl-brief-h">Executive brief ${badge(recommendation, tone)} ${
+      brief.readyForAuthorisedSubmission ? badge('ready for authorised submission', 'ok') : badge('not ready for submission', 'warn')
+    }</h2>
+    <p class="metric-sub">${brief.summary}</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:8px">
+      <div>
+        <h3>Binding deadlines</h3>
+        <ul style="margin:6px 0 0 18px;font-size:13px">${brief.deadlines.map(
+          (row) => html`<li><strong>${row.when.replace('T', ' ')}</strong>${row.timeZone ? ` ${row.timeZone}` : ''} — ${row.label}</li>`,
+        )}</ul>
+      </div>
+      <div>
+        <h3>What decides it</h3>
+        <ul style="margin:6px 0 0 18px;font-size:13px">${brief.drivers.map((driver) => html`<li>${driver}</li>`)}</ul>
+      </div>
+      <div>
+        <h3>Approvals</h3>
+        <ul style="margin:6px 0 0 18px;font-size:13px">${brief.approvals.map(
+          (approval) => html`<li>${approval.id} ${approval.what}: ${badge(approval.status.toLowerCase(), approval.status === 'RECORDED' ? 'ok' : 'warn')} <span style="color:var(--text-3)">${approval.detail}</span></li>`,
+        )}</ul>
+      </div>
+    </div>
+    <h3 style="margin-top:14px">The nine outputs</h3>
+    ${table({
+      headers: ['', 'Output', 'Label', 'What stands in the way'],
+      rows: brief.deliverables.map((entry) => {
+        const [text, labelTone] = OUTPUT_LABEL[entry.label] ?? [entry.label, ''];
+        return [
+          entry.id,
+          entry.title,
+          badge(text, labelTone),
+          entry.items.length === 0
+            ? '—'
+            : html`<details><summary style="cursor:pointer;font-size:12.5px">${entry.items.length} item(s)</summary><ul style="margin:4px 0 0 16px;font-size:12px">${entry.items.map(
+                (item) => html`<li>${item}</li>`,
+              )}</ul></details>`,
+        ];
+      }),
+    })}
+    ${
+      brief.manifest.length > 0
+        ? html`<h3 style="margin-top:14px">Submission manifest</h3>
+            ${table({
+              headers: ['Return', 'File', 'Produced by', 'Version', 'Owner', 'Portal', 'Status'],
+              rows: brief.manifest.map((row) => [
+                row.id,
+                html`${row.file}<br><span style="font-size:11px;color:var(--text-3)">${row.purpose}</span>`,
+                html`<span style="font-size:12px">${row.producedBy}</span>`,
+                row.version ?? '—',
+                row.owner ? humanise(row.owner) : '—',
+                html`<span style="font-size:11.5px;color:var(--text-3)">${row.portalLocation}</span>`,
+                html`${badge(row.status === 'VERIFIED' ? 'verified' : 'pending', row.status === 'VERIFIED' ? 'ok' : 'warn')}<br><span style="font-size:11.5px">${row.detail}</span>`,
+              ]),
+            })}`
+        : ''
+    }
+  </section>`;
+}
+
+/** The price: provisional or ready, how overhead and profit are applied, the buyer's total, and the cash by month. */
+function priceCheckCard(check) {
+  if (!check) return '';
+  if (check.error) {
+    return html`<section class="card" style="margin-bottom:14px">${notice(`The price check could not be read: ${check.error.message}`, 'err')}</section>`;
+  }
+  if (!check.priced) return '';
+  const tone = check.status === 'READY_FOR_APPROVAL' ? 'ok' : 'warn';
+  return html`<section class="card" style="margin-bottom:14px" aria-labelledby="pl-price-h" data-price-check>
+    <h2 id="pl-price-h">The price ${badge(check.status === 'READY_FOR_APPROVAL' ? 'ready for approval' : 'provisional', tone)}</h2>
+    <p class="metric-sub">${money(check.totalMinor)} — ${check.summary}</p>
+    ${
+      check.provisional.length > 0
+        ? table({
+            headers: ['Why it is provisional', 'What clears it'],
+            rows: check.provisional.map((entry) => [html`<span style="font-size:12.5px">${entry.reason}</span>`, html`<span style="font-size:12.5px">${entry.clears}</span>`]),
+          })
+        : ''
+    }
+    ${check.markup ? html`<p style="font-size:13px;margin-top:10px"><strong>Overhead and profit:</strong> ${check.markup.statement}</p>` : ''}
+    ${check.reconciliation ? html`<p style="font-size:13px"><strong>The buyer’s schedule:</strong> ${check.reconciliation.statement}</p>` : ''}
+    ${
+      check.cash
+        ? html`<h3 style="margin-top:12px">Cash, month by month</h3>
+            <p class="metric-sub">Peak funding ${money(check.cash.peakMinor)}, reached in ${check.cash.peakMonth}${
+              check.cash.headroomMinor === undefined
+                ? ' · working capital available not stated'
+                : check.cash.headroomMinor < 0
+                  ? ` · short of the working capital available by ${money(-check.cash.headroomMinor)}`
+                  : ` · ${money(check.cash.headroomMinor)} to spare`
+            }.</p>
+            ${table({
+              headers: ['Month', 'In', 'Out', 'Net', 'Cumulative'],
+              align: ['', 'num', 'num', 'num', 'num'],
+              rows: check.cash.months.map((row) => [row.month, money(row.inMinor), money(row.outMinor), money(row.netMinor), money(row.cumulativeMinor)]),
+            })}
+            ${
+              check.cash.scenarios.length > 1
+                ? html`<h3 style="margin-top:12px">Scenarios modelled</h3>
+                    ${table({
+                      headers: ['Duration', 'Peak funding', 'Headroom', 'Verdict'],
+                      align: ['num', 'num', 'num', ''],
+                      rows: check.cash.scenarios.map((row) => [
+                        `${row.durationWeeks} weeks`,
+                        money(row.peakMinor),
+                        row.headroomMinor === undefined ? '—' : money(row.headroomMinor),
+                        humanise(row.verdict),
+                      ]),
+                    })}`
+                : ''
+            }`
+        : html`<p class="metric-sub" style="margin-top:10px">The cash this job needs before it earns has not been modelled.</p>`
+    }
+    ${
+      check.estimateId
+        ? html`<div class="actions" style="margin-top:10px"><button class="btn quiet" data-command="model-cash"
+            title="Model the cash from the priced estimate, on the payment, supply and VAT terms you give. Each model is kept as a scenario.">${check.cash ? 'Model another scenario' : 'Model the cash'}</button></div>`
         : ''
     }
   </section>`;
@@ -405,7 +636,7 @@ function bidReviewCard(review) {
   </section>`;
 }
 
-function ittReadingPanel({ perception, evidence, ingestion, projectId, projectName, blocked, tenderProjects, invitationOptions, projectHasInvitation }) {
+function ittReadingPanel({ perception, evidence, ingestion, projectId, projectName, blocked, tenderProjects, invitationOptions, projectHasInvitation, batchesNeeded = false }) {
   // Three separate reasons this cannot run, and they need different sentences.
   // Collapsing them into one "unavailable" is how somebody spends an afternoon
   // fixing the wrong thing.
@@ -462,9 +693,14 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                 <button class="btn ${textAvailable && textDocuments > 0 ? 'quiet' : ''}" data-upload-tender>Upload a tender document</button>
                 ${
                   textAvailable && textDocuments > 0
-                    ? html`<button class="btn" data-read-pack>
-                        Read all ${textDocuments} document${textDocuments === 1 ? '' : 's'} together
-                      </button>`
+                    ? batchesNeeded
+                      ? html`<button class="btn" disabled
+                          title="Too large for one reading — read it in batches from the document register below.">
+                          Too large to read together — read it in batches below
+                        </button>`
+                      : html`<button class="btn" data-read-pack>
+                          Read all ${textDocuments} document${textDocuments === 1 ? '' : 's'} together
+                        </button>`
                     : ''
                 }
                 <button class="btn quiet" data-paste-tender>Paste the invitation instead</button>
@@ -1694,7 +1930,7 @@ export async function pipeline(root) {
   // The reader is project-scoped: a reading is filed against the project the
   // tender is bid from, and it costs ACUs against that project's tenancy.
   const projectId = state.session?.projectId;
-  const [perception, evidence, ingestion, bidPacks, assurance, portalPort, submissions, flow, tenderDrafts, register, bidReview, contractReview] = projectId
+  const [perception, evidence, ingestion, bidPacks, assurance, portalPort, submissions, flow, tenderDrafts, register, bidReview, contractReview, scope, priceCheck, brief] = projectId
     ? await Promise.all([
         api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
         api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
@@ -1727,8 +1963,11 @@ export async function pipeline(root) {
         // The recommendation, its conditions and the risks; and the contract clause by clause.
         api.read(`/v1/projects/${projectId}/tender/bid-review`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
         api.read(`/v1/projects/${projectId}/tender/contract-review`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
+        api.read(`/v1/projects/${projectId}/tender/scope`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
+        api.read(`/v1/projects/${projectId}/tender/price-check`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
+        api.read(`/v1/projects/${projectId}/tender/brief`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
       ])
-    : [null, null, null, null, null, null, null, null, null, null, null, null];
+    : [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null];
 
   // The register carries counts; the findings themselves are what somebody acts
   // on, so the newest review is opened in full rather than left behind a click.
@@ -2376,10 +2615,14 @@ export async function pipeline(root) {
         tenderProjects,
         invitationOptions: scopedInvitationOptions,
         projectHasInvitation: focused,
+        batchesNeeded: Boolean(register?.batches),
       })}
 
+      ${briefCard(brief)}
       ${registerCard(register)}
+      ${scopeCard(scope)}
       ${contractCard(contractReview)}
+      ${priceCheckCard(priceCheck)}
       ${bidReviewCard(bidReview)}
 
       <section class="card" style="margin-bottom:14px" aria-labelledby="pl-bid-h">
@@ -2658,13 +2901,14 @@ export async function pipeline(root) {
                               <span>
                                 <b>${pack.reference}</b> · ${pack.clientName} —
                                 ${sections.filter((s) => s.status === 'DRAFTED').length} of ${sections.length} written
-                                ${pack.status === 'ISSUED' ? badge('issued · read-only', 'good') : ''}
+                                ${pack.status === 'ISSUED' ? badge('issued · read-only', 'ok') : ''}
                               </span>
                               ${
                                 sections.some((s) => s.status === 'DRAFTED' && (s.body ?? []).length > 0)
                                   ? html`<span style="flex:none;display:flex;gap:7px;flex-wrap:wrap">
                                       <button class="btn sm" data-download-pack="${pack.id}">Download submission (PDF)</button>
                                       <button class="btn quiet sm" data-copy-pack="${pack.id}">Copy all answers</button>
+                                      <button class="btn quiet sm" data-answer-check="${pack.id}" title="Each answer against the sub-questions and scoring criteria of its question, and every date, duration and social-value commitment against the programme, the estimate and the contract dates.">Check the answers</button>
                                     </span>`
                                   : ''
                               }
@@ -4906,6 +5150,30 @@ export async function pipeline(root) {
       return;
     }
 
+    const readBatch = event.target.closest('[data-read-batch]');
+    if (readBatch) {
+      const batch = Number(readBatch.dataset.readBatch);
+      const proceed = await confirmCost({
+        title: `Read batch ${batch} of the tender pack`,
+        path: `/v1/projects/${projectId}/tender/read-pack?batch=${batch}`,
+        runLabel: `Read batch ${batch}`,
+        intent:
+          'Sends the text of this batch’s documents to an AI provider, in one request. The estimate is sized from this batch alone; ' +
+          'nothing is charged unless you press the button. Confirm it like any reading — it goes into the same matrix.',
+      });
+      if (!proceed) return;
+      readBatch.disabled = true;
+      readBatch.textContent = 'Reading…';
+      try {
+        const reading = await api.post(`/v1/projects/${projectId}/tender/read-pack`, { batch });
+        toast(`Batch ${batch} read — check it below`, reading.checks?.summary ?? 'The reading is below, awaiting a person.', reading.checks?.attention > 0 ? 'warn' : 'ok');
+      } catch (error) {
+        toast('Not read', error.message, 'err');
+      }
+      await draw();
+      return;
+    }
+
     const readPack = event.target.closest('[data-read-pack]');
     if (readPack) {
       const proceed = await confirmCost({
@@ -5719,6 +5987,61 @@ export async function pipeline(root) {
       return;
     }
 
+    const answerCheckBtn = event.target.closest('[data-answer-check]');
+    if (answerCheckBtn) {
+      let check;
+      try {
+        check = await api.read(
+          `/v1/projects/${state.session.projectId}/bid-responses/${answerCheckBtn.dataset.answerCheck}/answer-check`,
+          'ESTIMATE_TENDER',
+          'COMMERCIAL_L3',
+        );
+      } catch (error) {
+        toast('Could not check the answers', error?.message ?? 'The check could not be read.', 'err');
+        return;
+      }
+      const verdict = (agrees) => (agrees === true ? badge('agrees', 'ok') : agrees === false ? badge('disagrees', 'bad') : badge('to confirm', 'warn'));
+      await reading({
+        title: 'The answers, checked',
+        intent:
+          'Coverage, not a mark: a sub-question is counted as addressed where its own words appear in the answer, which says it is named, ' +
+          'not that it is answered well. Commitments are checked against the confirmed programme, the priced estimate and the contract dates.',
+        content: html`<div data-answer-check-result>
+          <p class="metric-sub">${check.summary}</p>
+          ${table({
+            headers: ['Question', 'Words', 'Sub-questions', 'Scoring criteria', 'What would improve it'],
+            rows: check.sections.map((section) => [
+              html`<b>${section.key}</b><br><span style="font-size:12px">${section.title}</span>`,
+              html`${section.words}${section.limit ? ` / ${section.limit}` : ''}${section.overLimit ? html` ${badge('over', 'bad')}` : ''}`,
+              section.subQuestions.length > 0
+                ? html`<ul style="margin:0 0 0 14px;font-size:12px">${section.subQuestions.map(
+                    (entry) => html`<li>${entry.addressed ? '✓' : '✗'} ${entry.text}</li>`,
+                  )}</ul>`
+                : html`<span style="font-size:12px;color:var(--text-3)">none recorded</span>`,
+              html`<span style="font-size:12px">${section.scoringCriteria ?? '—'}</span>`,
+              section.improve.length > 0 ? html`<ul style="margin:0 0 0 14px;font-size:12px">${section.improve.map((line) => html`<li>${line}</li>`)}</ul>` : '—',
+            ]),
+          })}
+          ${
+            check.commitments.length > 0
+              ? html`<h3 style="margin-top:14px">Commitments in the answers</h3>
+                  ${table({
+                    headers: ['Answer', 'What', 'Says', 'Against', ''],
+                    rows: check.commitments.map((entry) => [
+                      entry.section,
+                      humanise(entry.kind),
+                      html`<span style="font-size:12px">${entry.statement}</span>`,
+                      entry.against ? html`<span style="font-size:12px">${entry.against.value} — ${entry.against.what}</span>` : '—',
+                      verdict(entry.agrees),
+                    ]),
+                  })}`
+              : ''
+          }
+        </div>`,
+      });
+      return;
+    }
+
     const downloadPackBtn = event.target.closest('[data-download-pack]');
     if (downloadPackBtn) {
       try {
@@ -6450,8 +6773,131 @@ export async function pipeline(root) {
   // The contract review and the risks the tender carries. Both read the tender
   // on the project in focus; each refusal is shown as the platform states it.
   root.addEventListener('click', async (event) => {
-    const button = event.target.closest('[data-command="draft-contract-review"], [data-command="register-tender-risk"]');
+    const button = event.target.closest(
+      '[data-command="draft-contract-review"], [data-command="register-tender-risk"], [data-command="send-scope-to-review"], [data-command="raise-discrepancy"], [data-command="model-cash"]',
+    );
     if (!button || !projectId) return;
+    if (button.dataset.command === 'model-cash') {
+      const check = await api.read(`/v1/projects/${projectId}/tender/price-check`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null);
+      if (!check?.estimateId) return;
+      const stated = check.statedTerms ?? {};
+      const from = (value, what) => (value === undefined ? undefined : `${what} in the tender pack.`);
+      const done = await command({
+        title: 'Model the cash this job needs',
+        intent:
+          'From the priced estimate: labour weekly, materials on supplier terms, packages on subcontract terms, against the client’s ' +
+          'payment terms. Where the pack states a term it is filled in from it; every other term is yours — none is assumed. ' +
+          'Each model is kept, so a different duration or terms is another scenario beside it.',
+        path: `/v1/projects/${projectId}/tender/estimate/${check.estimateId}/funding`,
+        submitLabel: 'Model it',
+        fields: [
+          { name: 'applicationIntervalDays', label: 'Days between applications', type: 'number', min: 1, hint: 'Monthly is 30.' },
+          { name: 'certificationDays', label: 'Days from application to the due date', type: 'number', min: 0 },
+          { name: 'paymentDays', label: 'Days from the due date to payment', type: 'number', min: 0, value: stated.paymentDays ?? '', hint: from(stated.paymentDays, 'As stated') },
+          { name: 'retentionPercent', label: 'Retention %', type: 'number', min: 0, step: '0.5', value: stated.retentionPercent ?? '', hint: from(stated.retentionPercent, 'As stated') },
+          { name: 'retentionReleasedAtCompletionPercent', label: 'Share of retention released at completion %', type: 'number', min: 0 },
+          { name: 'defectsLiabilityWeeks', label: 'Defects period (weeks)', type: 'number', min: 0, value: stated.defectsLiabilityWeeks ?? '', hint: from(stated.defectsLiabilityWeeks, 'From the defects period') },
+          { name: 'subcontractorPaymentDays', label: 'Days to pay subcontractors', type: 'number', min: 0 },
+          { name: 'materialSupplierPaymentDays', label: 'Days to pay material suppliers', type: 'number', min: 0 },
+          { name: 'materialsDepositPercent', label: 'Materials deposit %', type: 'number', min: 0 },
+          { name: 'materialsDepositLeadWeeks', label: 'Weeks the deposit falls ahead of the spend', type: 'number', min: 0 },
+          { name: 'plantPaymentDays', label: 'Days to pay plant hire', type: 'number', min: 0 },
+          { name: 'vatRatePercent', label: 'VAT rate %', type: 'number', min: 0 },
+          { name: 'reverseCharge', label: 'Domestic reverse charge applies', type: 'select', options: [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }] },
+          { name: 'returnIntervalWeeks', label: 'Weeks between VAT returns', type: 'number', min: 1, hint: 'A quarter is 13.' },
+          { name: 'settlementLagWeeks', label: 'Weeks to settle a VAT return', type: 'number', min: 0 },
+          { name: 'mobilisation', label: 'Spent before anybody is productive (£)', type: 'number', money: true, required: false },
+          { name: 'workingCapital', label: 'Working capital available to this job (£)', type: 'number', money: true, required: false,
+            hint: 'Without it the peak cannot be tested — the recommendation lists it for management.' },
+          { name: 'durationWeeks', label: 'A different duration (weeks), for a scenario', type: 'number', min: 1, required: false },
+        ],
+        transform: (v) => ({
+          payment: {
+            applicationIntervalDays: Number(v.applicationIntervalDays),
+            certificationDays: Number(v.certificationDays),
+            paymentDays: Number(v.paymentDays),
+            retentionPercent: Number(v.retentionPercent),
+            retentionReleasedAtCompletionPercent: Number(v.retentionReleasedAtCompletionPercent),
+            defectsLiabilityWeeks: Number(v.defectsLiabilityWeeks),
+          },
+          supply: {
+            subcontractorPaymentDays: Number(v.subcontractorPaymentDays),
+            materialSupplierPaymentDays: Number(v.materialSupplierPaymentDays),
+            materialsDepositPercent: Number(v.materialsDepositPercent),
+            materialsDepositLeadWeeks: Number(v.materialsDepositLeadWeeks),
+            plantPaymentDays: Number(v.plantPaymentDays),
+          },
+          vat: {
+            ratePercent: Number(v.vatRatePercent),
+            reverseCharge: v.reverseCharge === 'yes',
+            returnIntervalWeeks: Number(v.returnIntervalWeeks),
+            settlementLagWeeks: Number(v.settlementLagWeeks),
+          },
+          ...(v.mobilisation !== undefined && v.mobilisation !== '' && v.mobilisation !== null ? { mobilisationMinor: Number(v.mobilisation) } : {}),
+          ...(v.workingCapital !== undefined && v.workingCapital !== '' && v.workingCapital !== null ? { availableWorkingCapitalMinor: Number(v.workingCapital) } : {}),
+          ...(v.durationWeeks ? { durationWeeks: Number(v.durationWeeks) } : {}),
+        }),
+        report: (res) => ({
+          title: `Peak funding ${money(res.peakFundingRequirementMinor)}`,
+          message:
+            res.headroomMinor === undefined || res.headroomMinor === null
+              ? 'Working capital available not given, so the peak is not tested.'
+              : res.headroomMinor < 0
+                ? `Short of the working capital available by ${money(-res.headroomMinor)}.`
+                : `Within the working capital available, with ${money(res.headroomMinor)} to spare.`,
+          tone: res.headroomMinor !== undefined && res.headroomMinor !== null && res.headroomMinor < 0 ? 'warn' : 'ok',
+        }),
+      });
+      if (done) await draw();
+      return;
+    }
+    if (button.dataset.command === 'send-scope-to-review') {
+      const done = await command({
+        title: 'Send the scope to the tender review',
+        intent:
+          'Each element read from the pack goes onto the tender review’s gap-and-overlap map, with the document that imposes it ' +
+          'and the package that prices it. One priced nowhere is a gap; one priced in two packages is an overlap.',
+        path: `/v1/projects/${projectId}/tender/scope/send-to-review`,
+        submitLabel: 'Send',
+        fields: [{ name: 'edition', label: 'Edition of the contract (if no review is open and the pack does not name it)', type: 'text', required: false }],
+        transform: (v) => (String(v.edition ?? '').trim() ? { edition: v.edition } : {}),
+        report: (res) => ({
+          title: `On ${res.reference}: ${res.gaps.length} gap(s), ${res.overlaps.length} overlap(s)`,
+          message: res.skipped.length > 0 ? `Not sent, no passage found: ${res.skipped.join('; ')}.` : 'Every element is on the map.',
+          tone: res.gaps.length + res.overlaps.length > 0 ? 'warn' : 'ok',
+        }),
+      });
+      if (done) await draw();
+      return;
+    }
+    if (button.dataset.command === 'raise-discrepancy') {
+      const scopeNow = await api.read(`/v1/projects/${projectId}/tender/scope`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null);
+      const row = (scopeNow?.discrepancies ?? []).find((entry) => entry.id === button.dataset.discrepancy);
+      if (!row) return;
+      const ambiguity = row.statements.map((statement) => `${statement.document}${statement.clause ? ` ${statement.clause}` : ''} states: ${statement.says}`).join(' ');
+      const done = await command({
+        title: `Raise a clarification: ${row.subject}`,
+        intent: 'The ambiguity is stated neutrally from what each document says; the question asks for a ruling. It goes on the clarification register and the buyer’s copy — it is not sent from here.',
+        path: `/v1/projects/${projectId}/tender-clarifications`,
+        submitLabel: 'Raise',
+        fields: [
+          { name: 'ambiguity', label: 'The ambiguity, stated neutrally', type: 'textarea', rows: 3, value: ambiguity },
+          { name: 'question', label: 'The question', type: 'textarea', rows: 2, value: `Please confirm which applies to ${row.subject.toLowerCase()}, and issue a corrected document if one is in error.` },
+          { name: 'interimTreatment', label: 'How it is priced meanwhile (internal)', type: 'text', required: false, value: 'On the stricter reading.' },
+        ],
+        transform: (v) => ({
+          side: 'CLIENT',
+          subject: row.subject,
+          ambiguity: v.ambiguity,
+          question: v.question,
+          links: { scopeItem: row.id, document: row.statements[0]?.document ?? '' },
+          urgency: 'HIGH',
+          ...(v.interimTreatment ? { interimTreatment: v.interimTreatment } : {}),
+        }),
+      });
+      if (done) await draw();
+      return;
+    }
     if (button.dataset.command === 'draft-contract-review') {
       const done = await command({
         title: 'Send the contract review for sign-off',

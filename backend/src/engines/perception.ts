@@ -500,7 +500,9 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       'Report no limit where none is stated rather than a conventional one. Where the document has a quality ' +
       'questionnaire or method-statement questions that the evaluator marks, list each question as its own ' +
       'requirement: its reference as numbered (e.g. "Q1"), the full question text verbatim, its own weighting, and ' +
-      'its word or page limit — these are the answers the bid is scored on, so none may be missed or merged. A ' +
+      'its word or page limit — these are the answers the bid is scored on, so none may be missed or merged — with ' +
+      '`subQuestions`, each distinct thing the question asks in its own words, and `scoringCriteria`, what the document ' +
+      'says earns the marks for it, where it says. A ' +
       'weighting is the marks for that one question, never the overall quality/price split; the split and the ' +
       'scoring rules are not questions and carry no weighting. Notes printed on drawings (dimensions in metres, ' +
       'read in conjunction with…) are not requirements; leave them out. Separately list every deliverable that must be ' +
@@ -565,6 +567,8 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
               pageLimit: { type: ['number', 'null'] },
               limitStatedAs: { type: ['string', 'null'] },
               sourceQuote: { type: ['string', 'null'] },
+              subQuestions: { type: 'array', items: { type: 'string' } },
+              scoringCriteria: { type: ['string', 'null'] },
             },
             required: ['reference', 'category', 'requirement', 'mandatory', 'evidenceRequired'],
           },
@@ -1670,6 +1674,12 @@ export async function confirm(
         clause: requirement.reference,
       }),
       reference: String(requirement.reference ?? ''),
+      ...(Array.isArray(requirement.subQuestions) && requirement.subQuestions.length > 0
+        ? { subQuestions: (requirement.subQuestions as unknown[]).map(String).filter((entry) => entry.trim() !== '') }
+        : {}),
+      ...(typeof requirement.scoringCriteria === 'string' && requirement.scoringCriteria.trim() !== ''
+        ? { scoringCriteria: requirement.scoringCriteria.trim() }
+        : {}),
       category: String(requirement.category ?? 'SUBMISSION') as ITTRequirement['category'],
       requirement: String(requirement.requirement ?? ''),
       mandatory: requirement.mandatory === true,

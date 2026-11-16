@@ -26,7 +26,58 @@ import { recordInvitation, type SubmissionChannel } from './tenderintake.ts';
 /** The text the reader is given: see `packText` in the evidence pipeline, its one home. */
 export { packText };
 
-export async function readTenderPack(ctx: EngineContext, options: { today?: string } = {}) {
+/** The heading and separator `packText` puts around each document, so a batch is sized as it will be sent. */
+const HEADING_ALLOWANCE = 120;
+
+export type PackBatch = { index: number; files: Array<{ ingestionId: string; filename: string; characters: number }>; characters: number };
+
+/**
+ * A pack too large for one reading, split into batches that each fit — whole
+ * documents only, in the order the pack is read, so a batch never cuts a
+ * document in half. A document larger than one reading on its own cannot be in
+ * any batch; it is named, to be read from its own row.
+ */
+export function packBatches(ctx: EngineContext): { batches: PackBatch[]; oversize: Array<{ filename: string; characters: number }>; needed: boolean } {
+  const { files, text } = packText(ctx);
+  const batches: PackBatch[] = [];
+  const oversize: Array<{ filename: string; characters: number }> = [];
+  let current: PackBatch | undefined;
+  for (const file of files) {
+    const size = file.characters + file.filename.length + HEADING_ALLOWANCE;
+    if (size > PASTED_TEXT_MAX) {
+      oversize.push({ filename: file.filename, characters: file.characters });
+      continue;
+    }
+    if (!current || current.characters + size > PASTED_TEXT_MAX) {
+      current = { index: batches.length + 1, files: [], characters: 0 };
+      batches.push(current);
+    }
+    current.files.push(file);
+    current.characters += size;
+  }
+  return { batches, oversize, needed: text.length > PASTED_TEXT_MAX };
+}
+
+export async function readTenderPack(ctx: EngineContext, options: { today?: string; batch?: number } = {}) {
+  if (options.batch !== undefined) {
+    const { batches } = packBatches(ctx);
+    const batch = batches.find((entry) => entry.index === options.batch);
+    if (!batch) {
+      throw new DomainError('BATCH_NOT_FOUND', `The pack has ${batches.length} batch(es); there is no batch ${options.batch}.`, 404, [
+        { field: 'batch', message: `1 to ${batches.length}` },
+      ]);
+    }
+    const { text, files } = packText(ctx, { only: batch.files.map((file) => file.ingestionId) });
+    const today = (options.today ?? new Date().toISOString()).slice(0, 10);
+    return extractFromText(ctx, {
+      task: 'ITT_REQUIREMENTS',
+      text,
+      source: 'TENDER_PACK',
+      label: `Batch ${batch.index} of ${batches.length} — ${files.length} document${files.length === 1 ? '' : 's'}: ${files.map((file) => file.filename).join(', ')}`,
+      packFiles: files,
+      check: (extraction) => checkTenderReading(extraction, text, { today }),
+    });
+  }
   const { text, files } = packText(ctx);
   if (files.length === 0) {
     throw new DomainError(
@@ -37,17 +88,16 @@ export async function readTenderPack(ctx: EngineContext, options: { today?: stri
     );
   }
   if (text.length > PASTED_TEXT_MAX) {
+    const { batches, oversize } = packBatches(ctx);
     throw new DomainError(
       'PACK_TOO_LARGE',
       `The pack is ${Math.round(text.length / 1000)}k characters across ${files.length} documents and one reading takes ` +
-        `${Math.round(PASTED_TEXT_MAX / 1000)}k. Read the largest documents one at a time from their own rows: ` +
-        files
-          .slice()
-          .sort((a, b) => b.characters - a.characters)
-          .slice(0, 3)
-          .map((file) => `${file.filename} (${Math.round(file.characters / 1000)}k)`)
-          .join(', ') +
-        '.',
+        `${Math.round(PASTED_TEXT_MAX / 1000)}k. Read it in ${batches.length} batches — each confirmed into the same matrix, ` +
+        'and the document register records which batch read each file.' +
+        (oversize.length > 0
+          ? ` ${oversize.map((file) => `${file.filename} (${Math.round(file.characters / 1000)}k)`).join(', ')} ` +
+            `${oversize.length === 1 ? 'is' : 'are'} too large for any batch: read ${oversize.length === 1 ? 'it' : 'them'} from ${oversize.length === 1 ? 'its' : 'their'} own row.`
+          : ''),
       413,
     );
   }
