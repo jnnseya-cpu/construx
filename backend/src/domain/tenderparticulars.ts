@@ -39,6 +39,53 @@ export type SubmissionRules = {
   source?: QuoteSource;
 };
 
+/** The clauses a contract review reads, in the order a bid reviewer reads them. */
+export const CLAUSE_TOPICS = [
+  'PAYMENT_CERTIFICATION',
+  'RETENTION_RELEASE',
+  'SET_OFF',
+  'LIQUIDATED_DAMAGES',
+  'SECTIONAL_COMPLETION',
+  'EXTENSION_OF_TIME',
+  'NOTICES',
+  'VARIATIONS_COMPENSATION_EVENTS',
+  'PRICE_ADJUSTMENT',
+  'DESIGN_LIABILITY',
+  'LIABILITY_CAP',
+  'INDEMNITIES',
+  'INSURANCE',
+  'BONDS_GUARANTEES',
+  'WARRANTIES',
+  'TERMINATION',
+  'DEFECTS',
+  'INSOLVENCY',
+] as const;
+export type ClauseTopic = (typeof CLAUSE_TOPICS)[number];
+
+export type ContractClause = {
+  topic: ClauseTopic;
+  /** The clause number as the contract numbers it. */
+  clause?: string;
+  /** What it says, in the reader's words — the passage is kept beside it. */
+  stated: string;
+  /** A figure where the clause states one: 14 (days), 12 (months), 100 (% of the contract sum). */
+  value?: number;
+  unit?: string;
+  source?: QuoteSource;
+};
+
+export type ContractParticulars = {
+  form?: string;
+  edition?: string;
+  options: string[];
+  /** The pack says the standard form is amended. */
+  amendmentsStated?: boolean;
+  /** The amendments themselves are in the pack. */
+  amendmentsSupplied?: boolean;
+  clauses: ContractClause[];
+  source?: QuoteSource;
+};
+
 export type TenderParticulars = {
   documentsListed: ListedDocument[];
   /** Referred to but not in the pack — on the portal only, or to follow. */
@@ -53,6 +100,7 @@ export type TenderParticulars = {
   worksCompletionOn?: string;
   worksPeriodDays?: number;
   milestones: Milestone[];
+  contract?: ContractParticulars;
 };
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -75,8 +123,8 @@ function defined<T extends Record<string, unknown>>(value: T): T {
 
 /** The particulars a reading found, each cited to the documents where its passage is found. */
 export function particularsFromReading(extraction: Record<string, unknown>, documents: SourceDocument[]): TenderParticulars {
-  const cite = (quote: unknown, fallback?: unknown): QuoteSource | undefined =>
-    text(quote) || text(fallback) ? locateQuote(documents, { quote, fallback }) : undefined;
+  const cite = (quote: unknown, fallback?: unknown, clause?: unknown): QuoteSource | undefined =>
+    text(quote) || text(fallback) ? locateQuote(documents, { quote, fallback, clause }) : undefined;
 
   const evaluation = record(extraction.evaluation);
   const submission = record(extraction.submissionRules);
@@ -137,6 +185,35 @@ export function particularsFromReading(extraction: Record<string, unknown>, docu
     worksStartOn: date(extraction.worksStartOn),
     worksCompletionOn: date(extraction.worksCompletionOn),
     worksPeriodDays: number(extraction.worksPeriodDays),
+    contract: ((): ContractParticulars | undefined => {
+      const contract = record(extraction.contract);
+      if (!contract) return undefined;
+      const clauses = list(contract.clauses)
+        .filter((entry) => CLAUSE_TOPICS.includes(entry.topic as ClauseTopic) && text(entry.stated))
+        .map((entry) =>
+          defined<ContractClause>({
+            topic: entry.topic as ClauseTopic,
+            clause: text(entry.clause),
+            stated: text(entry.stated)!,
+            value: number(entry.value),
+            unit: text(entry.unit),
+            source: cite(entry.sourceQuote, undefined, entry.clause),
+          }),
+        );
+      const options = Array.isArray(contract.options)
+        ? (contract.options as unknown[]).map(text).filter((entry): entry is string => Boolean(entry))
+        : [];
+      const parsed = defined<ContractParticulars>({
+        form: text(contract.form),
+        edition: text(contract.edition),
+        options,
+        amendmentsStated: flag(contract.amendmentsStated),
+        amendmentsSupplied: flag(contract.amendmentsSupplied),
+        clauses,
+        source: cite(contract.sourceQuote),
+      });
+      return parsed.form || parsed.clauses.length > 0 ? parsed : undefined;
+    })(),
     milestones: list(extraction.milestones)
       .filter((entry) => text(entry.label) && date(entry.date))
       .map((entry) =>
@@ -176,6 +253,16 @@ export function mergeParticulars(prior: TenderParticulars | undefined, next: Ten
     worksCompletionOn: next.worksCompletionOn ?? prior.worksCompletionOn,
     worksPeriodDays: next.worksPeriodDays ?? prior.worksPeriodDays,
     milestones: byKey(prior.milestones, next.milestones, (entry) => `${entry.label.toLowerCase()}|${entry.date}`),
+    contract:
+      prior.contract || next.contract
+        ? defined<ContractParticulars>({
+            ...(prior.contract ?? { options: [], clauses: [] }),
+            ...(next.contract ?? {}),
+            options: [...new Set([...(prior.contract?.options ?? []), ...(next.contract?.options ?? [])])],
+            // The newer reading of a topic replaces the older one; topics it is silent on are kept.
+            clauses: byKey(prior.contract?.clauses ?? [], next.contract?.clauses ?? [], (entry) => `${entry.topic}|${entry.clause ?? ''}`),
+          })
+        : undefined,
   });
 }
 
@@ -192,7 +279,14 @@ export const PARTICULARS_PROMPT =
   'signature requirements and whether appendices are permitted; `tenderValidityDays` — how long the tender must ' +
   'remain open for acceptance, in days, with `validitySourceQuote`; `awardOn` — the anticipated award date ' +
   '(YYYY-MM-DD); and `milestones` — every other dated event it states, with `mandatory` true only where the date is ' +
-  'binding rather than indicative. Use null or an empty list for anything it does not state.';
+  'binding rather than indicative; and `contract` — the form, its edition, the options chosen, whether it says the ' +
+  'standard form is amended and whether the amendments are supplied, and in `clauses` each material clause it states, ' +
+  'one entry per clause with its `topic` (payment and certification, retention and release, set-off, liquidated ' +
+  'damages, sectional completion, extension of time, notices and time bars, variations or compensation events, price ' +
+  'adjustment or inflation, design liability, liability cap, indemnities, insurance, bonds and guarantees, ' +
+  'warranties, termination, defects, insolvency), its clause number, what it says, any figure it states as `value` ' +
+  'with its `unit` (days, weeks, months, %, GBP), and a `sourceQuote`. Use null or an empty list for anything it ' +
+  'does not state.';
 
 const QUOTE = { type: ['string', 'null'] };
 const NULLABLE_TEXT = { type: ['string', 'null'] };
@@ -251,6 +345,32 @@ export const PARTICULARS_SCHEMA: Record<string, unknown> = {
       type: 'object',
       properties: { label: { type: 'string' }, date: { type: 'string' }, mandatory: { type: 'boolean' }, sourceQuote: QUOTE },
       required: ['label', 'date', 'mandatory'],
+    },
+  },
+  contract: {
+    type: ['object', 'null'],
+    properties: {
+      form: NULLABLE_TEXT,
+      edition: NULLABLE_TEXT,
+      options: { type: 'array', items: { type: 'string' } },
+      amendmentsStated: { type: ['boolean', 'null'] },
+      amendmentsSupplied: { type: ['boolean', 'null'] },
+      sourceQuote: QUOTE,
+      clauses: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            topic: { type: 'string', enum: [...CLAUSE_TOPICS] },
+            clause: NULLABLE_TEXT,
+            stated: { type: 'string' },
+            value: { type: ['number', 'null'] },
+            unit: NULLABLE_TEXT,
+            sourceQuote: QUOTE,
+          },
+          required: ['topic', 'stated'],
+        },
+      },
     },
   },
 };

@@ -104,17 +104,16 @@ function coverageOf(file: IngestedFileState): string {
 
 const cited = (source: QuoteSource | undefined): string => (source ? describeQuoteSource(source) : 'as recorded on the invitation');
 
-export function tenderRegister(ctx: EngineContext): TenderRegister {
-  authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
-
-  const files = ctx.ledger
-    .list(ctx.projectId, 'IngestedFile')
-    .map((record) => record.state as unknown as IngestedFileState)
-    .sort((a, b) => a.ingestedAt.localeCompare(b.ingestedAt));
-
-  // The invitation on this project and the matrix bound to it.
-  // Filed at the company, against the pursuit linked to this project — found the
-  // way confirming a reading finds it.
+/**
+ * The tender on this project: its invitation, filed at the company against the
+ * pursuit linked to this project — found the way confirming a reading finds it —
+ * and the matrix bound to it with what the pack says about itself.
+ */
+export function projectTender(ctx: EngineContext): {
+  invitation?: Record<string, unknown>;
+  analysisId?: string;
+  particulars?: TenderParticulars;
+} {
   const pursuits = new Set(
     ctx.ledger
       .listByTenant(ctx.tenantId, 'Opportunity')
@@ -127,9 +126,23 @@ export function tenderRegister(ctx: EngineContext): TenderRegister {
     .map((record) => record.state)
     .filter((state) => pursuits.has(String(state.opportunityId ?? '')))
     .at(-1);
-  const analysisId = invitation?.analysisId as string | undefined;
+  if (!invitation) return {};
+  const analysisId = invitation.analysisId as string | undefined;
   const analysis = analysisId ? ctx.ledger.get({ refType: 'ITTAnalysis', refId: analysisId }) : undefined;
-  const particulars = (analysis && analysis.tenantId === ctx.tenantId ? analysis.state.particulars : undefined) as TenderParticulars | undefined;
+  if (!analysisId || !analysis || analysis.tenantId !== ctx.tenantId) return { invitation };
+  return { invitation, analysisId, ...(analysis.state.particulars ? { particulars: analysis.state.particulars as TenderParticulars } : {}) };
+}
+
+export function tenderRegister(ctx: EngineContext): TenderRegister {
+  authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const files = ctx.ledger
+    .list(ctx.projectId, 'IngestedFile')
+    .map((record) => record.state as unknown as IngestedFileState)
+    .sort((a, b) => a.ingestedAt.localeCompare(b.ingestedAt));
+
+  // The invitation on this project and the matrix bound to it.
+  const { invitation, analysisId, particulars } = projectTender(ctx);
   const listed = particulars?.documentsListed ?? [];
 
   // The latest reading of the whole pack, and the files it took in.
@@ -264,7 +277,7 @@ export function tenderRegister(ctx: EngineContext): TenderRegister {
     ...(particulars?.tenderValidityDays !== undefined ? { validity: { days: particulars.tenderValidityDays, source: cited(particulars.validitySource) } } : {}),
     dates,
     conflicts,
-    read: Boolean(invitation && analysis),
+    read: Boolean(invitation && analysisId),
     summary,
   };
 }

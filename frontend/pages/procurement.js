@@ -2,7 +2,7 @@ import { api, entityBundle, isWithheld } from '../lib/api.js';
 import { barChart, boxPlot, funnelChart, ganttChart, radarChart, scatterPlot } from '../lib/charts.js';
 import { command, commandBar } from '../lib/command.js';
 import { CONTRACT_FORM, METHOD_OF_MEASUREMENT, PRICING_BASIS, today } from '../lib/enums.js';
-import { badge, date, days, drillable, exact, html, humanise, money, pct, positionReport, raw, render, resolveHtml, statusTone, table, toast } from '../lib/ui.js';
+import { badge, date, days, drillable, exact, html, humanise, money, pct, positionReport, raw, reading, render, resolveHtml, statusTone, table, toast } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { flowPanel, loadFlow } from '../lib/flow.js';
 import { insightPanel } from '../lib/insight.js';
@@ -1289,11 +1289,16 @@ export async function procurement(root) {
           : html`<div class="card pad0" style="margin-bottom:14px">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 17px 0">
                 <h2 style="padding:0">Clarification register</h2>
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
                 ${
                   toSendToClient.length > 0
-                    ? html`<button class="btn quiet sm" data-copy-clarifications="1" title="Put every open client-side question on your clipboard, numbered, to paste into the buyer’s portal.">Copy all ${toSendToClient.length} question${toSendToClient.length === 1 ? '' : 's'} to send</button>`
+                    ? html`<button class="btn quiet sm" data-copy-clarifications="1" title="Put every open client-side question on your clipboard in the buyer’s form — CQ-n, reference, document and clause, the ambiguity and the question — to paste into the buyer’s portal. Nothing internal goes with them.">Copy all ${toSendToClient.length} question${toSendToClient.length === 1 ? '' : 's'} to send</button>
+                      <button class="btn quiet sm" data-download-questions="PDF" title="The same questions as a branded document for the buyer’s channel.">PDF for the buyer</button>
+                      <button class="btn quiet sm" data-download-questions="DOCX">Word</button>`
                     : ''
                 }
+                <button class="btn quiet sm" data-extension-request="1" title="Drafted only where missing information threatens the return date — for you to approve and send.">Draft an extension request</button>
+                </div>
               </div>
               ${
                 intel.clarificationStanding && (intel.clarificationStanding.overdue > 0 || intel.clarificationStanding.dueSoon > 0)
@@ -1314,17 +1319,25 @@ export async function procurement(root) {
                 distribution and the reads are the record — not the answer.
               </div></div>
               ${table({
-                headers: ['Ref', 'Side', 'Subject', 'About', 'Due', 'Issued', 'Sent to', 'Read', 'State', 'Outcome'],
-                align: ['', '', '', '', '', '', 'num', 'num', '', ''],
+                headers: ['Ref', 'Side', 'Subject', 'About', 'For us', 'Due', 'Issued', 'Sent to', 'Read', 'State', 'Outcome'],
+                align: ['', '', '', '', '', '', '', 'num', 'num', '', ''],
                 rows: intel.clarifications.map((c) => [
                   c.reference,
                   badge(String(c.side).toLowerCase(), c.side === 'BIDDER' ? 'info' : 'neutral'),
                   c.confidentiality === 'COMMERCIAL_IN_CONFIDENCE'
                     ? html`${c.subject} ${badge('in confidence', 'warn')}`
                     : c.subject,
-                  [c.links?.document, c.links?.clause && `cl. ${c.links.clause}`, c.links?.drawing, c.links?.package, c.links?.scopeItem]
+                  [c.links?.document, c.links?.clause && `cl. ${c.links.clause}`, c.links?.drawing, c.links?.package, c.links?.scopeItem, c.links?.requirement && `item ${c.links.requirement}`]
                     .filter(Boolean)
                     .join(' · ') || '—',
+                  // The internal log — never on the buyer's copy.
+                  c.urgency || c.owner || c.impact || c.interimTreatment
+                    ? html`${c.urgency ? badge(c.urgency.toLowerCase(), c.urgency === 'CRITICAL' ? 'bad' : c.urgency === 'HIGH' ? 'warn' : '') : ''}${
+                        c.owner ? html` <span style="font-size:12px">${c.owner}</span>` : ''
+                      }${c.impact ? html`<br><span style="font-size:11.5px;color:var(--text-3)">At stake: ${c.impact}</span>` : ''}${
+                        c.interimTreatment ? html`<br><span style="font-size:11.5px;color:var(--text-3)">Meanwhile: ${c.interimTreatment}</span>` : ''
+                      }`
+                    : '—',
                   c.responseDeadline ? date(c.responseDeadline) : '—',
                   c.issuedAt ? date(c.issuedAt) : '—',
                   c.recipients || '—',
@@ -4355,12 +4368,27 @@ export async function procurement(root) {
             { value: 'BIDDER', label: 'From a firm pricing one of our packages' },
           ] },
         { name: 'subject', label: 'Subject', type: 'text' },
-        { name: 'question', label: 'The question', type: 'textarea', rows: 3 },
+        { name: 'ambiguity', label: 'The ambiguity, stated neutrally (goes to the buyer)', type: 'textarea', rows: 2, required: false,
+          hint: 'What the documents say, side by side — not what we would like them to say.' },
+        { name: 'question', label: 'The question', type: 'textarea', rows: 3,
+          hint: 'Answerable: ask for a ruling, a corrected document, a confirmation of responsibility, a quantity or the missing information.' },
         { name: 'document', label: 'Document', type: 'text', required: false },
         { name: 'clause', label: 'Clause', type: 'text', required: false },
         { name: 'drawing', label: 'Drawing', type: 'text', required: false },
         { name: 'package', label: 'Package', type: 'text', required: false },
         { name: 'scopeItem', label: 'Scope item', type: 'text', required: false },
+        { name: 'requirement', label: 'Compliance matrix line (e.g. Q3)', type: 'text', required: false,
+          hint: 'The answer is then traced back to that line, its drafted answer and its risks.' },
+        { name: 'urgency', label: 'Urgency (internal)', type: 'select', required: false,
+          options: [
+            { value: '', label: '—' },
+            { value: 'CRITICAL', label: 'Critical — eligibility or a compliant price depends on it' },
+            { value: 'HIGH', label: 'High — material to the price, design responsibility or the programme' },
+            { value: 'NORMAL', label: 'Normal' },
+          ] },
+        { name: 'impact', label: 'What is at stake if unanswered (internal)', type: 'text', required: false },
+        { name: 'owner', label: 'Who chases it (internal)', type: 'text', required: false },
+        { name: 'interimTreatment', label: 'How it is priced or programmed meanwhile (internal)', type: 'text', required: false },
         { name: 'responseDeadline', label: 'Answer needed by', type: 'date', required: false },
         { name: 'confidentiality', label: 'Confidentiality', type: 'select', required: false,
           options: [
@@ -4371,10 +4399,10 @@ export async function procurement(root) {
           hint: 'Required for a question from a bidder',
           options: (suppliers.suppliers ?? []).map((sup) => ({ value: sup.id, label: sup.name })) },
       ],
-      transform: ({ document, clause, drawing, package: pkg, scopeItem, ...rest }) => ({
-        ...rest,
+      transform: ({ document, clause, drawing, package: pkg, scopeItem, requirement, ...rest }) => ({
+        ...Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== '' && value !== undefined && value !== null)),
         links: Object.fromEntries(
-          Object.entries({ document, clause, drawing, package: pkg, scopeItem }).filter(([, value]) => String(value ?? '').trim()),
+          Object.entries({ document, clause, drawing, package: pkg, scopeItem, requirement }).filter(([, value]) => String(value ?? '').trim()),
         ),
       }),
     },
@@ -4517,7 +4545,14 @@ export async function procurement(root) {
         ...rest,
         ...(String(answeredOn ?? '').trim() ? { answeredOn } : {}),
       }),
-      report: (res) => ({ title: `${res.reference} answered`, message: 'The client’s answer is on the record; the question is closed.', tone: 'ok' }),
+      report: (res) => ({
+        title: `${res.reference} answered`,
+        message:
+          (res.impacts ?? []).length > 0
+            ? `On the record. Now: ${(res.impacts ?? []).map((impact) => impact.action).join(' ')}`
+            : 'The client’s answer is on the record; the question is closed.',
+        tone: 'ok',
+      }),
     },
     'close-tender': {
       title: 'Close the tender',
@@ -4833,17 +4868,17 @@ export async function procurement(root) {
         toast('Nothing to copy', 'No open question is waiting to go to the client.', 'warn');
         return;
       }
-      const lines = toSendToClient.map((c, i) => {
-        const about = [c.links?.document, c.links?.clause && `clause ${c.links.clause}`, c.links?.drawing, c.links?.package, c.links?.scopeItem]
-          .filter(Boolean)
-          .join(', ');
-        return `${i + 1}. [${c.reference}] ${c.question}${about ? ` (re: ${about})` : ''}`;
-      });
-      const text = [
-        `Tender clarification questions — ${intel.projectName ?? 'this tender'}`,
-        '',
-        ...lines,
-      ].join('\n');
+      // The buyer's form, made on the server from the register: CQ-n, the tender
+      // reference, the document and clause, the ambiguity and the question —
+      // and nothing of the internal log.
+      let schedule;
+      try {
+        schedule = await api.read(`/v1/projects/${projectId}/tender/buyer-questions`, 'PROCUREMENT_AWARD', 'COMMERCIAL_L3');
+      } catch (error) {
+        toast('Not copied', error?.message ?? 'The questions could not be read.', 'err');
+        return;
+      }
+      const text = [`Tender clarification questions${schedule.tenderReference ? ` — ${schedule.tenderReference}` : ''}`, '', schedule.text].join('\n');
       try {
         await navigator.clipboard.writeText(text);
         toast(
@@ -4853,6 +4888,51 @@ export async function procurement(root) {
         );
       } catch {
         toast('Not copied', 'This browser would not write to the clipboard. The questions are listed in the register below to copy by hand.', 'warn');
+      }
+      return;
+    }
+
+    const downloadQuestions = event.target.closest('[data-download-questions]');
+    if (downloadQuestions) {
+      const format = downloadQuestions.dataset.downloadQuestions;
+      try {
+        await api.download(`/v1/projects/${projectId}/tender/buyer-questions.pdf`, { format });
+        toast('Downloaded', `The buyer’s questions as ${format === 'DOCX' ? 'a Word document' : 'a PDF'}. Send it through the buyer’s own channel — the platform sends nothing.`, 'ok');
+      } catch (error) {
+        toast('Could not download', error?.message ?? 'The questions could not be produced.', 'err');
+      }
+      return;
+    }
+
+    const extension = event.target.closest('[data-extension-request]');
+    if (extension) {
+      const drafted = await command({
+        title: 'Draft an extension request',
+        intent:
+          'Drafted only where information still missing threatens the return date: a critical or high question unanswered, a ' +
+          'document referred to and not issued, one listed and not received. You approve it and send it through the buyer’s ' +
+          'channel; the platform sends nothing.',
+        path: `/v1/projects/${projectId}/tender/extension-request`,
+        submitLabel: 'Draft it',
+        fields: [{ name: 'proposedLocal', label: 'The return date you propose', type: 'datetime-local', required: false }],
+        transform: (v) => (v.proposedLocal ? { proposedLocal: v.proposedLocal } : {}),
+        report: (res) => ({
+          title: res.warranted ? 'Drafted — for your approval' : 'No extension warranted',
+          message: res.warranted ? 'Shown next, and copied to your clipboard. It has not been sent.' : res.summary,
+          tone: res.warranted ? 'ok' : 'warn',
+        }),
+      });
+      if (drafted?.warranted && drafted.text) {
+        try {
+          await navigator.clipboard.writeText(drafted.text);
+        } catch {
+          // Shown below to copy by hand.
+        }
+        await reading({
+          title: 'Extension request — draft for your approval',
+          intent: 'Not sent. Check it, then send it through the buyer’s own channel before the deadline for questions.',
+          content: html`<pre style="white-space:pre-wrap;font:inherit;font-size:13px" data-extension-text>${drafted.text}</pre>`,
+        });
       }
       return;
     }

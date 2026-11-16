@@ -64,6 +64,8 @@ export type LinePosition = {
   source?: QuoteSource;
   sourceText: string;
   waived: boolean;
+  /** A buyer's answer recorded on this line since it was last reviewed: the clarification and its answer. */
+  answered?: { reference: string; answer: string; answeredOn: string };
 };
 
 export type MatrixPosition = {
@@ -105,6 +107,11 @@ export function matrixPosition(ctx: EngineContext, analysisId: string): MatrixPo
   const reviews = reviewsOf(state);
   const waived = new Set(liveWaivers(ctx, analysisId).map((waiver) => waiver.reference));
   const particulars = state.particulars as { evaluation?: { minimumQualityScore?: string | null } } | undefined;
+  // Answers the buyer has given to questions about a line, on the tender's own project.
+  const answers = ctx.ledger
+    .list(record.projectId, 'Clarification')
+    .map((entry) => entry.state)
+    .filter((entry) => entry.status === 'ANSWERED' && (entry.links as { requirement?: string } | undefined)?.requirement);
   const minimum = particulars?.evaluation?.minimumQualityScore ?? undefined;
 
   const lines = analysis.matrix.map((line): LinePosition => {
@@ -132,8 +139,13 @@ export function matrixPosition(ctx: EngineContext, analysisId: string): MatrixPo
       basis = 'Not checked: the platform cannot test this against the company’s records, so it is not treated as met until a person reviews it.';
     }
 
-    const action =
-      review?.action && setBy !== 'PLATFORM'
+    const answer = answers
+      .filter((entry) => (entry.links as { requirement?: string }).requirement === line.reference)
+      .filter((entry) => !review || String(entry.answeredOn ?? '') >= review.reviewedAt.slice(0, 10))
+      .at(-1);
+    const action = answer
+      ? `The buyer answered ${String(answer.reference)}: review this line against the answer`
+      : review?.action && setBy !== 'PLATFORM'
         ? review.action
         : status === 'CONFIRMED'
           ? '—'
@@ -166,6 +178,9 @@ export function matrixPosition(ctx: EngineContext, analysisId: string): MatrixPo
       ...(line.source ? { source: line.source } : {}),
       sourceText: describeQuoteSource(line.source),
       waived: waived.has(line.reference),
+      ...(answer
+        ? { answered: { reference: String(answer.reference), answer: String(answer.answer ?? ''), answeredOn: String(answer.answeredOn ?? '') } }
+        : {}),
     };
   });
 

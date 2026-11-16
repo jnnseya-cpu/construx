@@ -176,6 +176,9 @@ import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
 import * as tenderpackcheck from '../domain/tenderpackcheck.ts';
 import * as tenderreading from '../domain/tenderreading.ts';
+import * as bidreview from '../domain/bidreview.ts';
+import * as buyerquestions from '../domain/buyerquestions.ts';
+import * as contractreview from '../domain/contractreview.ts';
 import * as tenderregister from '../domain/tenderregister.ts';
 import * as matrixreview from '../domain/matrixreview.ts';
 import * as aiclearance from '../domain/aiclearance.ts';
@@ -21960,6 +21963,9 @@ export const ROUTES: Route[] = [
         mitigations: { type: 'array', items: { type: 'object' } },
         projectValueMinor: { type: 'integer', minimum: 0 },
         projectDurationDays: { type: 'integer', minimum: 1 },
+        // Where it comes from, and when the decision on it is due — a tender's risk register asks both.
+        source: { type: 'string', maxLength: 500 },
+        decisionDue: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
       },
       additionalProperties: false,
     },
@@ -25957,12 +25963,18 @@ export const ROUTES: Route[] = [
             drawing: { type: 'string' },
             package: { type: 'string' },
             scopeItem: { type: 'string' },
+            requirement: { type: 'string' },
           },
           additionalProperties: false,
         },
         responseDeadline: { type: 'string' },
         confidentiality: { type: 'string', enum: [...tenderintel.CONFIDENTIALITY] },
         bidderPartyId: { type: 'string' },
+        ambiguity: { type: 'string', maxLength: 2000 },
+        impact: { type: 'string', maxLength: 1000 },
+        urgency: { type: 'string', enum: [...tenderintel.CLARIFICATION_URGENCY] },
+        owner: { type: 'string', maxLength: 120 },
+        interimTreatment: { type: 'string', maxLength: 1000 },
       },
       additionalProperties: false,
     },
@@ -26114,11 +26126,15 @@ export const ROUTES: Route[] = [
       properties: { answer: stringField, answeredOn: { type: 'string' } },
       additionalProperties: false,
     },
-    handler: (platform, ctx) =>
-      tenderintel.recordClientAnswer(projectContext(platform, ctx), {
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      const recorded = tenderintel.recordClientAnswer(engineCtx, {
         clarificationId: ctx.params.clarificationId as string,
         ...body<{ answer: string; answeredOn?: string }>(ctx),
-      }),
+      });
+      // What the answer reaches — the matrix line, the drafted answers, the risks, the price — returned with it.
+      return { ...recorded, impacts: buyerquestions.answerImpacts(engineCtx, recorded.clarificationId) };
+    },
   },
   {
     method: 'POST',
@@ -28362,6 +28378,89 @@ export const ROUTES: Route[] = [
         projectContext(platform, ctx),
         body<{ hash: string; filename?: string; invitationId?: string }>(ctx),
       ),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/contract-review',
+    readOnly: true,
+    description:
+      'The contract as the pack states it, clause by clause: what each does to cost, programme, cash, insurance or liability, which need legal, insurance or finance review, what the pack does not state, and what cannot be compared',
+    handler: (platform, ctx) => contractreview.contractReviewForProject(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/contract-review/draft',
+    description:
+      'Put the clauses read from the pack into the tender review, each with the contract’s own wording, for a legal or commercial owner to accept or reject',
+    schema: {
+      type: 'object',
+      properties: { edition: { type: 'string', maxLength: 120 }, owner: { type: 'string', maxLength: 120 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => contractreview.draftContractReview(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/bid-review',
+    readOnly: true,
+    description:
+      'The bid recommendation — bid, conditional bid, hold or no bid — from the matrix, the documents, the contract, the open questions, the margin and the cash, with each condition’s owner, deadline and fallback, and the risks the tender carries',
+    handler: (platform, ctx) => bidreview.bidReview(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/buyer-questions',
+    readOnly: true,
+    description: 'The open questions for the buyer in the buyer’s form — CQ-n, tender reference, document and clause, the ambiguity and the question — with nothing internal on it',
+    handler: (platform, ctx) => buyerquestions.buyerSchedule(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/buyer-questions.pdf',
+    binary: true,
+    description: 'The buyer’s questions as a branded document (PDF or DOCX), for the buyer’s channel — nothing internal on it',
+    schema: {
+      type: 'object',
+      properties: { format: { type: 'string', enum: ['PDF', 'DOCX'] } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const projectId = ctx.params.projectId as string;
+      const actor = auth(ctx);
+      const chosen: RenderableFormat = body<{ format?: RenderableFormat }>(ctx).format ?? 'PDF';
+      const schedule = buyerquestions.buyerSchedule(projectContext(platform, ctx));
+      if (schedule.rows.length === 0) {
+        throw new DomainError('NO_OPEN_QUESTIONS', 'There is no open question for the buyer to put in a schedule.', 409);
+      }
+      const document = platform.exports.document(actor, projectId, {
+        title: 'Tender Clarification Questions',
+        subtitle: schedule.tenderReference,
+        // Addressed to the buyer, not to the business issuing it.
+        ...(schedule.buyer ? { preparedFor: schedule.buyer } : {}),
+        blocks: buyerquestions.buyerScheduleBlocks(schedule),
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+      });
+      return renderAndCharge(
+        platform.spendingWalletFor(actor, projectId).wallet,
+        document,
+        { format: chosen, projectId, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/extension-request',
+    description:
+      'Draft a reasoned request to extend the return date, only where missing information threatens it — for a person to approve and send; writes nothing and sends nothing',
+    schema: {
+      type: 'object',
+      properties: { proposedLocal: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}(?:[T ]\\d{2}:\\d{2})?$' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => buyerquestions.extensionRequestDraft(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'GET',

@@ -34740,3 +34740,136 @@ have, so their badges rendered without colour; they use `ok`.
 not carried when the pack is read again — the new matrix starts without them
 (reviews now are carried). `frontend/pages/bidon.js` uses the same missing
 `good` badge tone for a won bid.
+
+## 2026-11 the tender process, group B: contract, risk, recommendation, buyer questions
+
+The decision stages of the owner's tender process (stages 4 and 5), built on
+the records group A produces and on what already existed, rather than beside
+them.
+
+### The contract, clause by clause
+
+`domain/contractreview.ts`, `GET /v1/projects/:id/tender/contract-review`,
+`POST …/contract-review/draft`. The reading now also takes the contract form,
+edition, options, whether it is amended and whether the amendments are
+supplied, and each material clause it states — payment and certification,
+retention, set-off, damages, sectional completion, extension of time, notices,
+variations or compensation events, price adjustment, design liability,
+liability caps, indemnities, insurance, bonds, warranties, termination,
+defects, insolvency — with its clause number, any figure and its passage, cited
+like a requirement (`particulars.contract`).
+
+- Each clause is put in plain language with what it affects (cost, programme,
+  cash, insurance, liability), a severity, and which review it needs (legal,
+  insurance, finance), **by rule, written down so it can be argued with**:
+  payment beyond 30/60 days, retention above 3/5%, a notice period under 28
+  days, fitness for purpose, unlimited liability, a broad indemnity, a fixed
+  price, a defects period beyond 12 months (`tests/contractreview.test.ts`).
+- It says what the pack does not state, and what cannot be compared: no form
+  named, a form without its edition, amendments stated but not supplied, and —
+  always — that the standard form's own wording is not held on the platform.
+- **The sign-off is the existing tender review** (`tenderreview.ts`, TR-nnn).
+  "Send to the tender review for sign-off" opens it from the pack (asking for
+  the edition where the pack gives none) and records each clause found in the
+  documents as a draft obligation **with the contract's own wording, verbatim**,
+  for a legal or commercial owner to accept or reject. A clause whose passage
+  was not found is not sent — there is no wording to carry — and says so.
+  Nothing is added twice.
+
+### The risks the tender carries
+
+The risk register (`safety.registerRisk`) takes two optional fields a tender
+risk register asks for: **source** and **decision due**. The bid review
+proposes the risks the tender carries — a pass/fail line that cannot be met, a
+conflict between documents, a document missing from the pack, a severe clause —
+each with its cause, allocation, source and decision date. **Registering one is
+the existing risk form, pre-filled**: the probability and the three-point
+impact are the person's, and the platform invents none. A proposal reads as on
+the register once a risk citing its source is there; each proposal's source
+names the thing it concerns, so two missing documents cited to the same ITT
+are two risks. The risk register screen shows the source and the decide-by
+date.
+
+### The recommendation: bid, conditional bid, hold or no bid
+
+`domain/bidreview.ts`, `GET /v1/projects/:id/tender/bid-review`. Read from the
+record, never typed in: the matrix's pass/fail lines and reviews, the document
+register, the contract review, the open questions to the buyer, the margin of
+the latest complete estimate against the company's own minimum, the funding
+model's headroom against the working capital available, and the opportunity's
+qualification for capacity.
+
+- **No bid** where a pass/fail line cannot be met, the margin is below the
+  business's minimum, the peak funding exceeds the working capital, or the
+  qualification says so; **hold** where a document is missing or two dates
+  cannot both be right; **conditional bid** where there are conditions; **bid**
+  otherwise. Each factor is shown with its bearing; one not yet known (no
+  estimate, no funding model, no qualification) is said to be not known.
+- **Every condition has an owner, a deadline and what happens if it is not
+  resolved**, with a stable ID: missing evidence for a pass/fail line (no bid
+  if unresolved), a severe clause (price it or qualify — or, where qualified
+  bids are not permitted, no bid or accept it as written), a missing document,
+  a date conflict, a conflicting or assumed line, a decision, an open question
+  (what it was priced as meanwhile).
+- Thresholds come from the company's records; where one is not set (minimum
+  margin, working capital available, qualification), it is listed for
+  management to decide rather than assumed.
+- **It recommends; it never decides.** The decision is the existing bid/no-bid
+  decision on the opportunity (bid, no bid, or conditional with owner, spend cap
+  and kill date), taken by a person, with any divergence from the
+  recommendation recorded there.
+
+### Questions to the buyer: the internal log and the buyer's copy
+
+The clarification register (`tenderintel.ts`, TQ-nnn, on Procurement) is the
+internal log. It now also carries, optionally: the **ambiguity stated
+neutrally** (for the buyer), the **matrix line** it concerns, and — internal
+only — **impact, urgency, owner and how it is priced meanwhile**, shown in a
+"For us" column.
+
+`domain/buyerquestions.ts`:
+
+- **The buyer's copy** (`GET /tender/buyer-questions`, and as a branded PDF or
+  Word document addressed to the buyer): CQ-n — numbered in the order raised,
+  answered and withdrawn ones keeping their numbers — the tender reference, the
+  document, clause and drawing, the ambiguity and the question. Nothing of the
+  internal log goes on it (tested). "Copy all questions to send" now copies this
+  form rather than the internal references.
+- **An extension request**, drafted only where it is warranted — a critical or
+  high question unanswered, a document referred to and not issued, one listed
+  and not received — naming each reason and the date proposed, shown for a
+  person to approve. **Nothing is sent**: the platform does not transmit to a
+  buyer.
+- **After an answer**: recording the client's answer returns what it reaches —
+  the matrix line it was raised against, the drafted answers to that line, the
+  risks citing it, and the price where it was priced on an assumption meanwhile —
+  and the matrix line itself now reads "The buyer answered TQ-n: review this line
+  against the answer" until it is reviewed again.
+
+### Verified
+
+- Tests: `contractreview` (6), and on the Conwy fixture in `tenderreading`
+  (31): the contract review and its draft into the tender review with verbatim
+  wording; the recommendation (hold, for a document listed and not uploaded)
+  with every condition owned, dated and with a fallback; a proposed risk
+  registered with its source reading as registered; the buyer's copy carrying
+  nothing internal; an extension drafted with its reasons; an answer traced to
+  its matrix line and its interim price.
+- In the browser on the stand-in model, three test documents: the
+  recommendation read Hold with the two missing documents, the severe unlimited
+  liability and the unpriced margin; the contract card showed 45-day payment and
+  5% retention as material for finance and unlimited liability as severe for
+  legal; "Send to the tender review" opened TR-001 with three clauses awaiting
+  sign-off; a proposed risk was registered through the pre-filled form; a
+  critical question was raised with its internal log and showed in "For us"; the
+  buyer's schedule held CQ-1 with nothing internal; the extension draft named the
+  unanswered question and both missing documents; recording the answer returned
+  "Review Q1 … revisit the price". The buyer's PDF and Word documents were
+  produced (PDF read back: CQ-2, document and clause, ambiguity, question). No
+  page errors. The walk found two defects, both fixed and tested: registering one
+  risk marked two as registered (sources not unique), and a doubled full stop.
+
+**Recorded, not changed:** the risk screen's category list
+(`shared/vocabulary.js` `RISK_CATEGORY`) offers `GROUND` and `LABOUR`, which the
+engine's `RiskCategory` type does not name (it has `GROUND_CONDITIONS`), and its
+register form sends a fixed 400-day project duration to the scoring.

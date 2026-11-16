@@ -12,6 +12,12 @@ import * as business from '../src/domain/business.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tenderintake from '../src/domain/tenderintake.ts';
 import * as tenderregister from '../src/domain/tenderregister.ts';
+import * as contractreview from '../src/domain/contractreview.ts';
+import * as bidreview from '../src/domain/bidreview.ts';
+import * as buyerquestions from '../src/domain/buyerquestions.ts';
+import * as matrixreview from '../src/domain/matrixreview.ts';
+import * as tenderintel from '../src/domain/tenderintel.ts';
+import * as safety from '../src/engines/safety.ts';
 import { checkPriceListReading, checkTenderReading, confirmReading, packText, readTenderPack, type InvitationFromReading } from '../src/domain/tenderreading.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import * as perception from '../src/engines/perception.ts';
@@ -87,7 +93,9 @@ const ITT_DOCX = docxOf(
     paragraph('Signed Freedom of Information Declaration;') +
     paragraph('Evidence of membership to a Safety Schemes in Procurement assessment scheme') +
     paragraph('Quality submission') +
-    paragraph('2.3 Table 1 – Quality Criteria. The Contractors proposed approach and methodology for the delivery of the proposed work. 30%'),
+    paragraph('2.3 Table 1 – Quality Criteria. The Contractors proposed approach and methodology for the delivery of the proposed work. 30%') +
+    paragraph('3.2 The Contractor notifies a compensation event within eight weeks of becoming aware that the event has happened.') +
+    paragraph('3.4 The Contractor is liable for design to the standard of fitness for purpose.'),
 );
 
 /** Volume 2, the questionnaire: the seven scored questions and their limit. */
@@ -187,6 +195,18 @@ function conwyReading(): Record<string, unknown> {
     tenderValidityDays: null,
     awardOn: '2026-12-14',
     milestones: [{ label: 'Notice published', date: '2026-10-22', mandatory: false, sourceQuote: '22/10/2026 Notice published on sell2wales.gov.wales.' }],
+    contract: {
+      form: 'NEC4 Engineering and Construction Short Contract',
+      edition: null,
+      options: [],
+      amendmentsStated: true,
+      amendmentsSupplied: false,
+      clauses: [
+        { topic: 'NOTICES', clause: '3.2', stated: 'A compensation event is notified within eight weeks.', value: 8, unit: 'weeks', sourceQuote: 'notifies a compensation event within eight weeks of becoming aware' },
+        { topic: 'DESIGN_LIABILITY', clause: '3.4', stated: 'Design liability is fitness for purpose.', sourceQuote: 'liable for design to the standard of fitness for purpose' },
+        { topic: 'LIABILITY_CAP', clause: '8.1', stated: 'Liability is unlimited.', sourceQuote: 'The Contractor’s liability is unlimited' },
+      ],
+    },
     omitted: [],
   };
 }
@@ -525,6 +545,104 @@ describe('confirming the reading records the invitation, the matrix and the retu
     assert.equal(particulars.evaluation.source.document, 'ERCF2509N 05 Volume 1 - ITT.docx');
     assert.equal(particulars.awardOn, '2026-12-14');
     assert.equal(particulars.documentsListed.length, 3);
+  });
+
+  it('reviews the contract clause by clause, and drafts the clauses it can cite into the tender review', () => {
+    const review = contractreview.contractReviewForProject(ctx('qs'));
+    assert.equal(review.form, 'NEC4 Engineering and Construction Short Contract');
+    const byTopic = new Map(review.rows.map((row) => [row.topic, row]));
+    assert.equal(byTopic.get('NOTICES')!.severity, 'MATERIAL', 'eight weeks is 56 days: not a short time bar');
+    assert.equal(byTopic.get('DESIGN_LIABILITY')!.severity, 'SEVERE');
+    assert.deepEqual(byTopic.get('DESIGN_LIABILITY')!.review, ['LEGAL', 'INSURANCE']);
+    assert.equal(byTopic.get('LIABILITY_CAP')!.severity, 'SEVERE');
+    assert.match(byTopic.get('LIABILITY_CAP')!.sourceText, /not found in the documents/);
+    assert.match(byTopic.get('NOTICES')!.sourceText, /ERCF2509N 05 Volume 1 - ITT\.docx, 3\.2/);
+    assert.ok(review.notStated.some((entry) => entry.topic === 'PAYMENT_CERTIFICATION' && /funded/.test(entry.why)));
+    assert.ok(review.cannotCompare.some((line) => /amended but the amendments are not in it/.test(line)));
+    assert.ok(review.cannotCompare.some((line) => /named without its edition/.test(line)));
+
+    // The pack names no edition, so the review cannot be opened until somebody gives one.
+    assert.throws(() => contractreview.draftContractReview(ctx('owner'), {}), (error: Error & { code?: string }) => error.code === 'CONTRACT_FORM_REQUIRED');
+    const drafted = contractreview.draftContractReview(ctx('owner'), { edition: 'June 2017 (amended January 2023)' });
+    assert.equal(drafted.opened, true);
+    assert.equal(drafted.recorded, 2, 'the two clauses found in the documents');
+    assert.deepEqual(drafted.skipped.map((entry) => entry.title), ['Liability caps and exclusions']);
+    const record = platform.ledger.require({ refType: 'TenderReview', refId: drafted.reviewId }).state;
+    const obligations = record.obligations as Array<{ reference: string; wording: string; status: string; response: string }>;
+    const design = obligations.find((entry) => entry.reference === 'C-3.4')!;
+    assert.equal(design.wording, 'liable for design to the standard of fitness for purpose', 'the contract’s own words, as printed');
+    assert.equal(design.status, 'DRAFT', 'awaiting a legal or commercial owner');
+    assert.equal(design.response, 'CLARIFICATION');
+    // Again: nothing is added twice.
+    assert.equal(contractreview.draftContractReview(ctx('owner'), {}).recorded, 0);
+  });
+
+  it('recommends from everything on the record, with conditions, and proposes the risks the tender carries', () => {
+    const review = bidreview.bidReview(ctx('qs'));
+    assert.equal(review.read, true);
+    assert.equal(review.recommendation, 'HOLD', 'Volume 3 is listed in the pack and was never uploaded');
+    assert.ok(review.factors.some((factor) => factor.area === 'SCOPE_CERTAINTY' && factor.bearing === 'HOLD' && /Volume 3/.test(factor.finding)));
+    assert.ok(review.factors.some((factor) => factor.area === 'MARGIN' && factor.bearing === 'NOT_KNOWN'), 'not priced yet: said, not assumed');
+    const design = review.conditions.find((condition) => condition.id === 'COND-CONTRACT-DESIGN_LIABILITY')!;
+    assert.equal(design.deadline, '2026-11-19', 'no questions deadline recorded, so the return date');
+    assert.match(design.ifUnresolved, /Price the risk, or qualify the bid/);
+    for (const condition of review.conditions) assert.ok(condition.owner && condition.deadline && condition.ifUnresolved, condition.id);
+    assert.equal(new Set(review.risks.map((entry) => entry.source)).size, review.risks.length, 'each proposal is told apart by its source');
+    assert.equal(new Set(review.risks.map((entry) => entry.id)).size, review.risks.length);
+    const risk = review.risks.find((entry) => entry.id === 'RISK-CONTRACT-DESIGN_LIABILITY')!;
+    assert.equal(risk.registered, false);
+
+    // Registered with the source it cites, the proposal reads as registered.
+    safety.registerRisk(ctx('pm'), {
+      id: '',
+      title: risk.title,
+      category: risk.category,
+      cause: risk.cause,
+      allocation: risk.allocation,
+      probability: 0.3,
+      costImpact: { optimistic: 0, mostLikely: 500_000, pessimistic: 2_000_000 },
+      scheduleImpactDays: { optimistic: 0, mostLikely: 0, pessimistic: 10 },
+      projectValueMinor: 30_000_000,
+      projectDurationDays: 80,
+      source: risk.source,
+      decisionDue: risk.decisionDue!,
+    });
+    assert.equal(bidreview.bidReview(ctx('qs')).risks.find((entry) => entry.id === risk.id)!.registered, true);
+  });
+
+  it('keeps the internal log off the buyer’s copy, drafts an extension only when warranted, and traces an answer back', () => {
+    const raised = tenderintel.raiseTenderClarification(ctx('qs'), {
+      side: 'CLIENT',
+      subject: 'Key staff named in Q2',
+      ambiguity: 'Volume 2 Q2 asks for key staff; the ITT does not say whether named individuals are required.',
+      question: 'Please confirm whether Q2 requires named individuals or roles.',
+      links: { document: 'ERCF2509N 05 Volume 2 - CDQQ.docx', requirement: 'Q2' },
+      urgency: 'CRITICAL',
+      impact: 'Decides whether Q2 can be answered without named staff.',
+      owner: 'QS',
+      interimTreatment: 'Answered with roles; no named staff.',
+    });
+    const schedule = buyerquestions.buyerSchedule(ctx('qs'));
+    assert.equal(schedule.tenderReference, 'ERCF2509N');
+    const row = schedule.rows.find((entry) => entry.tq === raised.reference)!;
+    assert.match(row.cq, /^CQ-\d+$/);
+    assert.match(row.ambiguity, /does not say whether named individuals/);
+    assert.doesNotMatch(schedule.text, /CRITICAL|interim|no named staff|Decides whether/, 'nothing internal goes to the buyer');
+
+    const extension = buyerquestions.extensionRequestDraft(ctx('qs'), { today: '2026-11-10', proposedLocal: '2026-11-26T16:00' });
+    assert.equal(extension.warranted, true);
+    assert.ok(extension.reasons.some((reason) => /Volume 3/.test(reason)));
+    assert.ok(extension.reasons.some((reason) => /Key staff named in Q2/.test(reason)));
+    assert.match(extension.text!, /extended to 2026-11-26 16:00/);
+
+    tenderintel.recordClientAnswer(ctx('qs'), { clarificationId: raised.clarificationId, answer: 'Roles are sufficient.', answeredOn: '2026-11-12' });
+    const impacts = buyerquestions.answerImpacts(ctx('qs'), raised.clarificationId);
+    assert.ok(impacts.some((impact) => impact.kind === 'MATRIX_LINE' && impact.reference === 'Q2'));
+    assert.ok(impacts.some((impact) => impact.kind === 'PRICE' && /Answered with roles/.test(impact.action)));
+    const analysisId = String(platform.ledger.listByTenant(seed.tenantId, 'TenderInvitation').at(-1)!.state.analysisId);
+    const q2 = matrixreview.matrixPosition(governance('qs')(), analysisId).lines.find((line) => line.reference === 'Q2')!;
+    assert.match(q2.action, new RegExp(`The buyer answered ${raised.reference}`));
+    assert.equal(q2.answered?.answer, 'Roles are sufficient.');
   });
 
   it('keeps a register of the documents and every date, and says what the pack lists that never arrived', () => {

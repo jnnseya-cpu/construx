@@ -147,7 +147,10 @@ export async function risk(root) {
             headers: ['Risk', 'Category', 'P', 'Expected cost', 'Days', 'Severity', 'Mitigation'],
             align: ['', '', 'num', 'num', 'num', '', ''],
             rows: openRisks.map((r) => [
-              r.title,
+              // Where it comes from and when it must be decided, where the tender recorded them.
+              r.source || r.decisionDue
+                ? html`${r.title}<br><span style="font-size:11.5px;color:var(--text-3)">${[r.source, r.decisionDue ? `decide by ${date(r.decisionDue)}` : ''].filter(Boolean).join(' · ')}</span>`
+                : r.title,
               humanise(r.category),
               pct((r.probability ?? 0) * 100, 0),
               money(r.expectedCostMinor),

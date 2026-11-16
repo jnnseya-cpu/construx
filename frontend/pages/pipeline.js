@@ -285,6 +285,126 @@ function registerCard(register) {
   </section>`;
 }
 
+const RECOMMENDATION = {
+  BID: ['Bid', 'ok'],
+  CONDITIONAL_BID: ['Conditional bid', 'warn'],
+  HOLD: ['Hold', 'warn'],
+  NO_BID: ['No bid', 'bad'],
+};
+const BEARING = {
+  NO_BID: ['against bidding', 'bad'],
+  HOLD: ['hold', 'warn'],
+  CONDITION: ['a condition', 'warn'],
+  CLEAR: ['clear', 'ok'],
+  NOT_KNOWN: ['not known', ''],
+};
+
+/** The contract as the pack states it, clause by clause. A denial is shown as a denial. */
+function contractCard(review) {
+  if (!review) return '';
+  if (review.error) {
+    return html`<section class="card" style="margin-bottom:14px">${notice(`The contract review could not be read: ${review.error.message}`, 'err')}</section>`;
+  }
+  if (!review.analysisId) return '';
+  return html`<section class="card" style="margin-bottom:14px" aria-labelledby="pl-contract-h" data-contract-review>
+    <h2 id="pl-contract-h">Contract review</h2>
+    <p class="metric-sub">${[review.form, review.edition].filter(Boolean).join(' ') || 'Form of contract not named'}${
+      review.options.length > 0 ? ` · options ${review.options.join(', ')}` : ''
+    }. ${review.summary} A first pass by rule, so it can be argued with; the sign-off is a person’s, on the tender review.</p>
+    ${table({
+      headers: ['Clause', 'What the pack says', 'What it does to this bid', 'Affects', 'Severity', 'Review', 'Source'],
+      rows: review.rows.map((row) => [
+        html`${row.title}${row.clause ? html`<br><span style="font-size:11px;color:var(--text-3)">cl. ${row.clause}</span>` : ''}`,
+        html`<span style="font-size:12.5px">${row.stated}</span>`,
+        html`<span style="font-size:12.5px">${row.effect}</span>`,
+        html`<span style="font-size:12px">${row.affects.map((entry) => humanise(entry).toLowerCase()).join(', ')}</span>`,
+        badge(humanise(row.severity).toLowerCase(), TERM_TONE[row.severity] ?? ''),
+        row.review.length > 0 ? row.review.map((entry) => humanise(entry).toLowerCase()).join(', ') : '—',
+        row.source?.located
+          ? html`<span style="font-size:11.5px;color:var(--text-3)">${row.sourceText}</span>`
+          : badge('not found in the documents', 'warn'),
+      ]),
+      empty: 'No contract clause has been read from the pack.',
+    })}
+    ${
+      review.cannotCompare.length > 0
+        ? html`<h3 style="margin-top:12px">What cannot be compared</h3><ul style="margin:6px 0 0 18px;font-size:13px">${review.cannotCompare.map((line) => html`<li>${line}</li>`)}</ul>`
+        : ''
+    }
+    ${
+      review.notStated.length > 0
+        ? html`<p style="font-size:12.5px;color:var(--text-3);margin-top:10px"><strong>Not stated in the pack:</strong> ${review.notStated.map((entry) => entry.title.toLowerCase()).join(', ')}.</p>`
+        : ''
+    }
+    ${
+      review.rows.length > 0
+        ? html`<div class="actions" style="margin-top:10px"><button class="btn quiet" data-command="draft-contract-review"
+            title="Each clause found in the documents goes onto the tender review with the contract’s own wording, for a legal or commercial owner to accept or reject.">Send to the tender review for sign-off</button></div>`
+        : ''
+    }
+  </section>`;
+}
+
+/** The recommendation, its conditions, and the risks the tender carries. */
+function bidReviewCard(review) {
+  if (!review) return '';
+  if (review.error) {
+    return html`<section class="card" style="margin-bottom:14px">${notice(`The bid recommendation could not be read: ${review.error.message}`, 'err')}</section>`;
+  }
+  if (!review.read) return '';
+  const [label, tone] = RECOMMENDATION[review.recommendation] ?? [review.recommendation, ''];
+  return html`<section class="card" style="margin-bottom:14px" aria-labelledby="pl-bidreview-h" data-bid-review>
+    <h2 id="pl-bidreview-h">Bid recommendation ${badge(label, tone)}</h2>
+    <p class="metric-sub">${review.summary} It recommends; the decision is taken on the opportunity, by a person with the authority named.</p>
+    ${table({
+      headers: ['Area', 'Finding', 'Bearing'],
+      rows: review.factors.map((factor) => {
+        const [bearing, bearingTone] = BEARING[factor.bearing] ?? [factor.bearing, ''];
+        return [humanise(factor.area), html`<span style="font-size:12.5px">${factor.finding}</span>`, badge(bearing, bearingTone)];
+      }),
+    })}
+    ${
+      review.conditions.length > 0
+        ? html`<h3 style="margin-top:14px">Conditions</h3>
+            ${table({
+              headers: ['ID', 'Condition', 'Owner', 'By', 'If it is not resolved'],
+              rows: review.conditions.map((condition) => [
+                html`<span style="font-size:11.5px">${condition.id}</span>`,
+                html`<span style="font-size:12.5px">${condition.condition}</span>`,
+                humanise(condition.owner),
+                date(condition.deadline),
+                html`<span style="font-size:12.5px">${condition.ifUnresolved}</span>`,
+              ]),
+            })}`
+        : ''
+    }
+    ${
+      review.managementDecisions.length > 0
+        ? html`<h3 style="margin-top:14px">For management to decide</h3><ul style="margin:6px 0 0 18px;font-size:13px">${review.managementDecisions.map((line) => html`<li>${line}</li>`)}</ul>`
+        : ''
+    }
+    ${
+      review.risks.length > 0
+        ? html`<h3 style="margin-top:14px">Risks this tender carries</h3>
+            ${table({
+              headers: ['ID', 'Risk', 'Cause', 'Allocation', 'Source', 'Decide by', ''],
+              rows: review.risks.map((risk) => [
+                html`<span style="font-size:11.5px">${risk.id}</span>`,
+                risk.title,
+                html`<span style="font-size:12px">${risk.cause}</span>`,
+                humanise(risk.allocation),
+                html`<span style="font-size:11.5px;color:var(--text-3)">${risk.source}</span>`,
+                risk.decisionDue ? date(risk.decisionDue) : '—',
+                risk.registered
+                  ? badge('on the register', 'ok')
+                  : html`<button class="btn quiet sm" data-command="register-tender-risk" data-risk="${risk.id}">Register</button>`,
+              ]),
+            })}`
+        : ''
+    }
+  </section>`;
+}
+
 function ittReadingPanel({ perception, evidence, ingestion, projectId, projectName, blocked, tenderProjects, invitationOptions, projectHasInvitation }) {
   // Three separate reasons this cannot run, and they need different sentences.
   // Collapsing them into one "unavailable" is how somebody spends an afternoon
@@ -1574,7 +1694,7 @@ export async function pipeline(root) {
   // The reader is project-scoped: a reading is filed against the project the
   // tender is bid from, and it costs ACUs against that project's tenancy.
   const projectId = state.session?.projectId;
-  const [perception, evidence, ingestion, bidPacks, assurance, portalPort, submissions, flow, tenderDrafts, register] = projectId
+  const [perception, evidence, ingestion, bidPacks, assurance, portalPort, submissions, flow, tenderDrafts, register, bidReview, contractReview] = projectId
     ? await Promise.all([
         api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
         api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
@@ -1604,8 +1724,11 @@ export async function pipeline(root) {
         // The tender's documents and dates: what was read of each file, what
         // the pack lists or refers to that is missing, and every date.
         api.read(`/v1/projects/${projectId}/tender/register`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
+        // The recommendation, its conditions and the risks; and the contract clause by clause.
+        api.read(`/v1/projects/${projectId}/tender/bid-review`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
+        api.read(`/v1/projects/${projectId}/tender/contract-review`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
       ])
-    : [null, null, null, null, null, null, null, null, null, null];
+    : [null, null, null, null, null, null, null, null, null, null, null, null];
 
   // The register carries counts; the findings themselves are what somebody acts
   // on, so the newest review is opened in full rather than left behind a click.
@@ -2256,6 +2379,8 @@ export async function pipeline(root) {
       })}
 
       ${registerCard(register)}
+      ${contractCard(contractReview)}
+      ${bidReviewCard(bidReview)}
 
       <section class="card" style="margin-bottom:14px" aria-labelledby="pl-bid-h">
         <h2 id="pl-bid-h">Bid response packs</h2>
@@ -6321,6 +6446,81 @@ export async function pipeline(root) {
       if (await command(spec)) await draw();
     });
   }
+
+  // The contract review and the risks the tender carries. Both read the tender
+  // on the project in focus; each refusal is shown as the platform states it.
+  root.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-command="draft-contract-review"], [data-command="register-tender-risk"]');
+    if (!button || !projectId) return;
+    if (button.dataset.command === 'draft-contract-review') {
+      const done = await command({
+        title: 'Send the contract review for sign-off',
+        intent:
+          'Each clause found in the documents goes onto the tender review with the contract’s own wording beside the reading of it, ' +
+          'for a legal or commercial owner to accept or reject — the sign-off. A clause whose passage was not found is not sent: ' +
+          'there is no wording to carry. Nothing already on the review is added twice.',
+        path: `/v1/projects/${projectId}/tender/contract-review/draft`,
+        submitLabel: 'Send',
+        fields: [
+          { name: 'edition', label: 'Edition of the contract (if the pack does not name it)', type: 'text', required: false,
+            placeholder: 'e.g. June 2017 (amended January 2023)' },
+          { name: 'owner', label: 'Who signs it off', type: 'text', required: false, placeholder: 'Legal reviewer' },
+        ],
+        transform: (v) => ({
+          ...(String(v.edition ?? '').trim() ? { edition: v.edition } : {}),
+          ...(String(v.owner ?? '').trim() ? { owner: v.owner } : {}),
+        }),
+        report: (res) => ({
+          title: `${res.recorded} clause(s) on ${res.reference}`,
+          message:
+            (res.opened ? 'The tender review was opened from the pack. ' : '') +
+            (res.skipped.length > 0 ? `Not sent: ${res.skipped.map((entry) => `${entry.title} (${entry.why})`).join('; ')}.` : 'Each awaits sign-off.'),
+          tone: 'ok',
+        }),
+      });
+      if (done) await draw();
+      return;
+    }
+    const review = await api.read(`/v1/projects/${projectId}/tender/bid-review`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null);
+    const risk = (review?.risks ?? []).find((entry) => entry.id === button.dataset.risk);
+    if (!risk) return;
+    const done = await command({
+      title: `Register: ${risk.title}`,
+      intent:
+        'The risk, its cause, who carries it and where it comes from are filled in from the tender. The probability and the ' +
+        'three-point impact are yours to judge — the platform computes the expected value and the P80 from them and invents none.',
+      path: `/v1/projects/${projectId}/risk`,
+      submitLabel: 'Register',
+      fields: [
+        { name: 'title', label: 'Risk', type: 'text', value: risk.title },
+        { name: 'cause', label: 'Cause', type: 'textarea', rows: 2, value: risk.cause },
+        { name: 'allocation', label: 'Who carries it', type: 'select', value: risk.allocation,
+          options: [{ value: 'CONTRACTOR', label: 'Us' }, { value: 'CLIENT', label: 'The client' }, { value: 'SHARED', label: 'Shared' }] },
+        { name: 'probability', label: 'Probability', type: 'number', step: '0.05', min: 0, hint: 'Between 0 and 1' },
+        { name: 'costOptimistic', label: 'Cost impact — best case', type: 'number', money: true, hint: 'In pounds' },
+        { name: 'costMostLikely', label: 'Cost impact — most likely', type: 'number', money: true },
+        { name: 'costPessimistic', label: 'Cost impact — worst case', type: 'number', money: true },
+        { name: 'daysOptimistic', label: 'Delay — best case (days)', type: 'number' },
+        { name: 'daysMostLikely', label: 'Delay — most likely (days)', type: 'number' },
+        { name: 'daysPessimistic', label: 'Delay — worst case (days)', type: 'number' },
+        { name: 'decisionDue', label: 'Decide by', type: 'date', value: risk.decisionDue ?? '' },
+      ],
+      transform: (v) => ({
+        title: v.title,
+        category: risk.category,
+        cause: v.cause,
+        allocation: v.allocation,
+        probability: v.probability,
+        costImpact: { optimistic: v.costOptimistic, mostLikely: v.costMostLikely, pessimistic: v.costPessimistic },
+        scheduleImpactDays: { optimistic: v.daysOptimistic, mostLikely: v.daysMostLikely, pessimistic: v.daysPessimistic },
+        projectValueMinor: Number(state.project?.contractValueMinor ?? 0),
+        projectDurationDays: Math.max(1, Math.round((Date.parse(state.project?.plannedCompletion ?? '') - Date.parse(state.project?.plannedStart ?? '')) / 86_400_000) || 1),
+        source: risk.source,
+        ...(v.decisionDue ? { decisionDue: v.decisionDue } : {}),
+      }),
+    });
+    if (done) await draw();
+  });
 
   // The waiver doors live inside the matrix panel, which is rendered on demand,
   // so the listener is on the container rather than on the buttons.
