@@ -35144,3 +35144,34 @@ errors.
 
 **Not proved here:** whether a real model finds the published scale in a real
 pack — the stand-in returns a fixed reading, and no provider is called.
+
+## 2026-11 the ICO registration on the public site
+
+The owner's registration number with the Information Commissioner's Office,
+**C2089949**, is now on the public site.
+
+- `config.site.business.icoRegistration` (`SITE_ICO_REGISTRATION`, default
+  `C2089949`, listed in `.env.example`). `site/business.ts` `icoRegistrationOf`
+  keeps it only in the form the register prints, letters then digits; a
+  malformed value is not shown.
+- **Footer of every page:** "ICO registration C2089949" beside the legal name
+  and contact email.
+- **Privacy Policy:** a new "Who we are" section naming the operator (the
+  configured legal name), the ICO registration and the contact address for data
+  requests. "Your rights" now states the right to complain to the ICO, linked to
+  ico.org.uk. The policy's own date moved to 17 November 2026; the Terms and
+  Policies dates did not.
+
+**Verified:** `npm test` 8,625 pass, typecheck clean;
+`tests/sitebusiness.test.ts` covers the format rule, the policy text and the
+footer. Rendered in a real browser at desktop and phone width with no page errors
+and no horizontal scroll.
+
+**Not verified here:** the entry on the ICO's public register. ico.org.uk is not
+reachable from this environment, so the number is shown as given and is not
+linked to a register page.
+
+**Recorded, not changed:** the Privacy Policy does not say when CONSTRUX is the
+controller and when the customer company is (and CONSTRUX its processor) for
+project data. The configured legal name is still "CONSTRUX"; if a registered
+company operates it, set `SITE_LEGAL_NAME` to that company's name.

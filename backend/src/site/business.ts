@@ -32,6 +32,8 @@ export type BusinessDetails = {
   email: string;
   /** As displayed. Empty when not configured. */
   phone: string;
+  /** The data-protection registration with the UK ICO. Empty when not configured, and then not shown. */
+  icoRegistration: string;
   address: PostalAddress | null;
   /** Public profile URLs, in the order given. */
   social: string[];
@@ -55,10 +57,21 @@ export function businessDetails(): BusinessDetails {
     legalName: site.legalName,
     email: site.email,
     phone: site.phone,
+    icoRegistration: icoRegistrationOf(site.icoRegistration),
     address,
     social: site.social,
     openingHours: site.openingHours,
   };
+}
+
+/**
+ * An ICO registration number as the register prints it — letters then digits
+ * (`Z1234567`, `ZA123456`, `C2089949`). Anything else is not shown: a malformed
+ * number on a privacy page is one a reader cannot check.
+ */
+export function icoRegistrationOf(value: string): string {
+  const compact = value.replace(/\s+/g, '').toUpperCase();
+  return /^[A-Z]{1,2}\d{6,7}$/.test(compact) ? compact : '';
 }
 
 /**

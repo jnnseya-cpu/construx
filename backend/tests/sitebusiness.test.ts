@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import type { Server } from 'node:http';
 import { createGateway } from '../src/api/gateway.ts';
+import { about, privacy } from '../src/site/pages.ts';
 import { Platform } from '../src/platform.ts';
 import {
   addressBlock,
@@ -9,6 +10,7 @@ import {
   organisationJsonLd,
   phoneLink,
   socialLabel,
+  icoRegistrationOf,
   socialLinks,
   telHref,
   type BusinessDetails,
@@ -26,12 +28,33 @@ const FULL: BusinessDetails = {
   legalName: 'Construx Ventures Group Ltd',
   email: 'contact@construxvg.com',
   phone: '+44 (0)20 7946 0000',
+  icoRegistration: 'C2089949',
   address: { street: '1 Example Street', locality: 'London', region: '', postcode: 'EC1A 1AA', country: 'GB' },
   social: ['https://www.linkedin.com/company/construx', 'https://x.com/construx', 'https://example.org/us'],
   openingHours: ['Mo-Fr 09:00-17:30'],
 };
 
-const BARE: BusinessDetails = { legalName: 'CONSTRUX', email: 'contact@construxvg.com', phone: '', address: null, social: [], openingHours: [] };
+const BARE: BusinessDetails = { legalName: 'CONSTRUX', email: 'contact@construxvg.com', phone: '', icoRegistration: '', address: null, social: [], openingHours: [] };
+
+describe('the data-protection registration', () => {
+  it('keeps a number in the form the register prints, and shows nothing for anything else', () => {
+    assert.equal(icoRegistrationOf('C2089949'), 'C2089949');
+    assert.equal(icoRegistrationOf(' c208 9949 '), 'C2089949');
+    assert.equal(icoRegistrationOf('ZA123456'), 'ZA123456');
+    assert.equal(icoRegistrationOf(''), '');
+    assert.equal(icoRegistrationOf('pending'), '');
+    assert.equal(icoRegistrationOf('C20899'), '');
+  });
+
+  it('is on the Privacy Policy, with the right to complain to the ICO, and in the footer of every page', () => {
+    const page = privacy();
+    assert.match(page, /Who we are/);
+    assert.match(page, /registered with the Information Commissioner’s Office \(ICO\) under registration number\s+<b>C2089949<\/b>/);
+    assert.match(page, /complain to the Information\s+Commissioner’s Office/);
+    assert.match(page, /ICO registration C2089949/, 'the footer carries it');
+    assert.match(about(), /ICO registration C2089949/, 'and so does every other page');
+  });
+});
 
 describe('a number a phone can dial', () => {
   it('strips what people write and keeps the plus', () => {

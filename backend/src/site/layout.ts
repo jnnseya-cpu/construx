@@ -238,7 +238,9 @@ function footer(): string {
       ${contactColumn(business)}
     </div>
     <div class="foot-base">
-      <span>&copy; ${new Date().getUTCFullYear()} ${esc(business.legalName)}${business.email ? ` · ${emailLink(business)}` : ''}</span>
+      <span>&copy; ${new Date().getUTCFullYear()} ${esc(business.legalName)}${business.email ? ` · ${emailLink(business)}` : ''}${
+        business.icoRegistration ? ` · ICO registration ${esc(business.icoRegistration)}` : ''
+      }</span>
       <span class="foot-links"><a href="/verify-document">Verify a document</a> <a href="/terms">Terms</a> <a href="/privacy">Privacy</a> <a href="/policies">Policies</a></span>
     </div>
   </div>

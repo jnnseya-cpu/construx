@@ -1180,7 +1180,7 @@ function legal(meta: { title: string; description: string; path: string; updated
  */
 const UPDATED = {
   terms: '6 September 2026',
-  privacy: '6 September 2026',
+  privacy: '17 November 2026',
   policies: '6 September 2026',
 } as const;
 
@@ -1272,6 +1272,7 @@ export function terms(): string {
 }
 
 export function privacy(): string {
+  const business = businessDetails();
   return legal(
     {
       title: 'Privacy Policy',
@@ -1279,7 +1280,18 @@ export function privacy(): string {
       path: '/privacy',
       updated: UPDATED.privacy,
     },
-    `<h2>What we hold</h2>
+    `<h2>Who we are</h2>
+    <p>
+      The platform is operated by ${esc(business.legalName)}${
+        business.icoRegistration
+          ? `, registered with the Information Commissioner’s Office (ICO) under registration number
+      <b>${esc(business.icoRegistration)}</b>`
+          : ''
+      }.${business.email ? ` Questions about your personal data, and the requests described under
+      <a href="#your-rights">your rights</a>, go to <a href="mailto:${esc(business.email)}">${esc(business.email)}</a>.` : ''}
+    </p>
+
+    <h2>What we hold</h2>
     <p>
       For each identity: a name, an email address, the roles held, and the tenancy. Optionally a mobile number, where
       one has been given for notices that ride SMS. Where a person was invited from another organisation, which
@@ -1324,12 +1336,16 @@ export function privacy(): string {
       <li>We do not send project figures by email. The weekly issue is role-targeted, not data-personalised, because a message leaves the platform's access controls behind the moment it is sent.</li>
     </ul>
 
-    <h2>Your rights</h2>
+    <h2 id="your-rights">Your rights</h2>
     <p>
       You can request an export of the personal data we hold about you, and its deletion. Deletion of an identity
       removes the person's contact details and credentials. It does not rewrite the event chain, because doing so would
       destroy the integrity of a record other parties rely on — the events retain an actor reference, and the person
       behind it is no longer resolvable.
+    </p>
+    <p>
+      If you are not satisfied with how your personal data has been handled, you can complain to the Information
+      Commissioner’s Office at <a href="https://ico.org.uk" rel="noopener">ico.org.uk</a>.
     </p>
 
     <h2 id="sub-processors">Sub-processors</h2>
