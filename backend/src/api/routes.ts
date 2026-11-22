@@ -28500,10 +28500,10 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/planning/site-versions',
-    description: 'Record a red-line revision: GeoJSON in EPSG:4326, measured on the ellipsoid, with the confirmed legal area held apart and the determining authority',
+    description: 'Record a site revision: its stated area, and/or a red-line boundary as GeoJSON in EPSG:4326 measured on the ellipsoid, with the determining authority',
     schema: {
       type: 'object',
-      required: ['geometry', 'authority', 'boundarySource'],
+      required: ['authority', 'boundarySource'],
       properties: {
         geometry: { type: 'object' },
         confirmedAreaM2: { type: ['number', 'null'], minimum: 0 },
@@ -28543,15 +28543,20 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/planning/proposals',
-    description: 'Record a proposal version for a scenario: the red line it sits on, full or outline, the use, the dwellings and created floorspace (either may be unknown) and its assumptions',
+    description: 'Record a proposal version for a scenario: the site it sits on, full or outline, the planning need (housing, a school, a substation, temporary accommodation or anything else), its dwellings, floorspace, capacity or period (any may be unknown) and its assumptions',
     schema: {
       type: 'object',
-      required: ['siteVersionId', 'scenarioName', 'route', 'use', 'dwellingCount', 'createdGiaM2'],
+      required: ['siteVersionId', 'scenarioName', 'route', 'dwellingCount', 'createdGiaM2'],
       properties: {
         siteVersionId: { type: 'string', minLength: 1 },
         scenarioName: { type: 'string', minLength: 1, maxLength: 120 },
         route: { type: 'string', enum: ['full', 'outline'] },
+        category: { type: 'string', enum: ['RESIDENTIAL', 'EDUCATION', 'HEALTH', 'COMMUNITY', 'OFFICE', 'RETAIL', 'INDUSTRIAL', 'HOTEL', 'TEMPORARY_ACCOMMODATION', 'ELECTRICITY_SUBSTATION', 'ENERGY_GENERATION', 'MIXED', 'OTHER'] },
         use: { type: 'string', enum: ['HOUSING', 'MIXED', 'OTHER'] },
+        description: { type: 'string', maxLength: 4000 },
+        temporaryMonths: { type: ['number', 'null'], minimum: 0 },
+        capacityMW: { type: ['number', 'null'], minimum: 0 },
+        capacityUnits: { type: ['object', 'null'], properties: { count: { type: 'integer', minimum: 1 }, unit: { type: 'string', minLength: 1, maxLength: 60 } }, additionalProperties: false },
         dwellingCount: { type: ['integer', 'null'], minimum: 1 },
         createdGiaM2: { type: ['number', 'null'], minimum: 0 },
         assumptions: { type: 'array', maxItems: 50, items: { type: 'string', maxLength: 500 } },

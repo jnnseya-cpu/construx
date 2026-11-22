@@ -171,7 +171,7 @@ describe('the red line', () => {
 
 // --- Rules ------------------------------------------------------------------------------
 
-const base: RuleInput = { use: 'HOUSING', siteAreaM2: null, areaBasis: 'CONFIRMED', areaReviewReasons: [], authorityConfirmed: true, dwellings: null, createdGiaM2: null, facts: {} };
+const base: RuleInput = { category: 'RESIDENTIAL', siteAreaM2: null, areaBasis: 'CONFIRMED', areaReviewReasons: [], authorityConfirmed: true, dwellings: null, createdGiaM2: null, facts: {} };
 const status = (input: Partial<RuleInput>, code: string) => evaluateRules({ ...base, ...input }).findings.find((finding) => finding.code === code)!.status;
 
 describe('the rules, against the specification’s acceptance table', () => {
@@ -229,10 +229,58 @@ describe('the rules, against the specification’s acceptance table', () => {
     assert.equal(status({ siteAreaM2: 4_000, dwellings: 8, facts: { FLOOD_ZONE: '2' } }, 'FRA'), 'applies');
   });
 
-  it('a non-housing use and an unconfirmed authority go to review', () => {
-    const result = evaluateRules({ ...base, use: 'MIXED', authorityConfirmed: false, siteAreaM2: 30_000, dwellings: 40 });
+  it('mixed use and an unconfirmed authority go to review, and major development is still tested', () => {
+    const result = evaluateRules({ ...base, category: 'MIXED', authorityConfirmed: false, siteAreaM2: 30_000, dwellings: 40 });
     assert.ok(result.findings.some((finding) => finding.code === 'USE_SCOPE' && finding.status === 'review_required'));
     assert.ok(result.findings.some((finding) => finding.code === 'AUTHORITY'));
-    assert.ok(result.findings.filter((finding) => finding.code.startsWith('MAJOR_')).every((finding) => finding.status === 'review_required'));
+    assert.equal(result.major, 'MAJOR');
+  });
+});
+
+describe('any planning need, any site size', () => {
+  const find = (input: Partial<RuleInput>, code: string) => evaluateRules({ ...base, ...input }).findings.find((finding) => finding.code === code);
+
+  it('a school: major on floorspace, more vulnerable, exception test in Flood Zone 3a, a permitted-development check', () => {
+    const school = { category: 'EDUCATION' as const, siteAreaM2: 12_000, createdGiaM2: 2_400 };
+    assert.equal(evaluateRules({ ...base, ...school }).major, 'MAJOR');
+    assert.equal(find(school, 'MAJOR_UNKNOWN_COUNT_AREA')!.status, 'does_not_apply', 'the dwelling branch is for housing');
+    assert.match(find({ ...school, facts: { FLOOD_ZONE: '3a' } }, 'FLOOD_COMPATIBILITY')!.reason, /sequential test and the exception test/);
+    assert.match(find(school, 'CONSENT_ROUTE')!.reason, /Part 7/);
+    assert.match(find(school, 'EIA_SCREENING')!.reason, /10\(b\)/, '1.2 ha of non-dwelling urban development is over 1 ha');
+    assert.equal(find({ ...school, siteAreaM2: 8_000 }, 'EIA_SCREENING')!.status, 'review_required');
+  });
+
+  it('a substation: essential infrastructure, an exception test even in Flood Zone 3b, and the undertaker route to settle', () => {
+    const substation = { category: 'ELECTRICITY_SUBSTATION' as const, siteAreaM2: 2_500, createdGiaM2: 0 };
+    const flood = find({ ...substation, facts: { FLOOD_ZONE: '3b' } }, 'FLOOD_COMPATIBILITY')!;
+    assert.equal(flood.status, 'applies');
+    assert.match(flood.reason, /essential infrastructure.*exception test/);
+    assert.match(find(substation, 'CONSENT_ROUTE')!.reason, /Part 15, Class B/);
+    assert.match(find(substation, 'EIA_SCREENING')!.reason, /screening judgement/);
+    assert.equal(evaluateRules({ ...base, ...substation }).major, 'NOT_MAJOR');
+  });
+
+  it('temporary accommodation: a time-limited permission, and a vulnerability that depends on the units', () => {
+    const temporary = { category: 'TEMPORARY_ACCOMMODATION' as const, siteAreaM2: 6_000, createdGiaM2: 1_800 };
+    assert.equal(find(temporary, 'TEMPORARY_PERMISSION')!.status, 'review_required', 'the period is not given');
+    assert.match(find({ ...temporary, temporaryMonths: 36 }, 'TEMPORARY_PERMISSION')!.reason, /36 months.*removal and reinstatement/);
+    assert.equal(find({ ...temporary, facts: { FLOOD_ZONE: '2' } }, 'FLOOD_COMPATIBILITY')!.status, 'review_required');
+    assert.equal(evaluateRules({ ...base, ...temporary }).major, 'MAJOR', '1,800 m² created');
+  });
+
+  it('industry over 0.5 ha needs screening as an industrial estate; less vulnerable development is fine in Flood Zone 3a', () => {
+    const industrial = { category: 'INDUSTRIAL' as const, siteAreaM2: 6_000, createdGiaM2: 900 };
+    assert.match(find(industrial, 'EIA_SCREENING')!.reason, /10\(a\)/);
+    assert.match(find({ ...industrial, facts: { FLOOD_ZONE: '3a' } }, 'FLOOD_COMPATIBILITY')!.reason, /less vulnerable, appropriate in Flood Zone 3a once the sequential test/);
+    assert.match(find({ ...industrial, facts: { FLOOD_ZONE: '3b' } }, 'FLOOD_COMPATIBILITY')!.reason, /should not be permitted/);
+  });
+
+  it('energy generation names the development consent question with the stated capacity', () => {
+    assert.match(find({ category: 'ENERGY_GENERATION', siteAreaM2: 400_000, capacityMW: 49.9 }, 'CONSENT_ROUTE')!.reason, /Planning Act 2008.*49\.9 MW/);
+  });
+
+  it('housing on a small site is unchanged: no route check, Flood Zone 1 appropriate', () => {
+    assert.equal(find({ siteAreaM2: 2_000, dwellings: 6, facts: { FLOOD_ZONE: '1' } }, 'CONSENT_ROUTE'), undefined);
+    assert.equal(find({ siteAreaM2: 2_000, dwellings: 6, facts: { FLOOD_ZONE: '1' } }, 'FLOOD_COMPATIBILITY')!.status, 'does_not_apply');
   });
 });

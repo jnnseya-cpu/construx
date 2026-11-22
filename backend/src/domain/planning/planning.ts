@@ -5,7 +5,7 @@ import { requireModule } from '../../identity/modules.ts';
 import type { PermissionCode } from '../../identity/roles.ts';
 import { FEE_ROUTES, FEE_SCHEDULES, FeeInputError, quoteFee, scheduleHash, type FeeQuoteResult, type FeeRoute } from './fees.ts';
 import { areaDivergence, geodeticAreaM2, GeometryError, parseSiteGeometry, type SiteGeometry } from './geometry.ts';
-import { evaluateRules, RULE_PACK_VERSION, rulePackHash, SITE_FACTS, THRESHOLDS, type Finding, type Gate, type RuleInput, type SiteFactKey } from './rules.ts';
+import { DEVELOPMENT_CATEGORIES, evaluateRules, isCategory, RULE_PACK_VERSION, rulePackHash, SITE_FACTS, THRESHOLDS, type DevelopmentCategory, type Finding, type Gate, type RuleInput, type SiteFactKey } from './rules.ts';
 
 /**
  * CONSTRUX Planning, first release: the appraisal half.
@@ -64,7 +64,7 @@ export function rulePacks(): RulePack[] {
     {
       version: RULE_PACK_VERSION,
       kind: 'EVALUATION',
-      title: 'England housing rules: major development, flood risk, EIA screening, BNG, validation, CIL, determination period',
+      title: 'England planning rules for every kind of development: major development, consenting route, flood risk and vulnerability, EIA screening, temporary permission, BNG, validation, CIL, determination period',
       sources: [
         'https://www.legislation.gov.uk/uksi/2015/595/article/2',
         'https://www.gov.uk/guidance/flood-risk-assessment-flood-zones-1-2-3-and-3b',
@@ -271,8 +271,10 @@ function publishedFeeVersions(ctx: EngineContext): Set<string> {
 export type SiteVersion = {
   id: string;
   revision: number;
-  geometry: SiteGeometry;
-  calculatedAreaM2: number;
+  /** The drawn red line, where one was given. A site can be recorded by its stated area alone. */
+  geometry?: SiteGeometry;
+  /** Measured from the drawn boundary; null where only an area was stated. */
+  calculatedAreaM2: number | null;
   /** The confirmed legal red-line area, held apart from the drawn one. */
   confirmedAreaM2: number | null;
   authority: { name: string; code?: string; confirmed: boolean; source?: string };
@@ -294,17 +296,22 @@ function siteVersion(ctx: EngineContext, id: string): SiteVersion {
 
 export function recordSiteVersion(
   ctx: EngineContext,
-  input: { geometry: unknown; confirmedAreaM2?: number | null; authority: { name: string; code?: string; confirmed: boolean; source?: string }; boundarySource: string },
+  input: { geometry?: unknown; confirmedAreaM2?: number | null; authority: { name: string; code?: string; confirmed: boolean; source?: string }; boundarySource: string },
 ): SiteVersion & { divergence: ReturnType<typeof areaDivergence> } {
   guard(ctx, 'C');
-  let geometry: SiteGeometry;
-  try {
-    geometry = parseSiteGeometry(input.geometry);
-  } catch (error) {
-    if (error instanceof GeometryError) throw new DomainError('SITE_GEOMETRY_INVALID', error.message, 422, [{ field: 'geometry', message: error.message }]);
-    throw error;
+  let geometry: SiteGeometry | undefined;
+  if (input.geometry !== undefined && input.geometry !== null) {
+    try {
+      geometry = parseSiteGeometry(input.geometry);
+    } catch (error) {
+      if (error instanceof GeometryError) throw new DomainError('SITE_GEOMETRY_INVALID', error.message, 422, [{ field: 'geometry', message: error.message }]);
+      throw error;
+    }
   }
   const confirmed = input.confirmedAreaM2 ?? null;
+  if (!geometry && confirmed === null) {
+    throw new DomainError('SITE_AREA_REQUIRED', 'Give the site area, or the red-line boundary to measure it from.', 422, [{ field: 'confirmedAreaM2', message: 'the site area' }]);
+  }
   if (confirmed !== null && (!Number.isFinite(confirmed) || confirmed <= 0)) {
     throw new DomainError('SITE_AREA_INVALID', 'The confirmed area is a positive number of square metres.', 422, [{ field: 'confirmedAreaM2', message: 'positive m²' }]);
   }
@@ -317,8 +324,8 @@ export function recordSiteVersion(
   const site: SiteVersion = {
     id: `${ctx.projectId}-site-r${revision}`,
     revision,
-    geometry,
-    calculatedAreaM2: geodeticAreaM2(geometry),
+    ...(geometry ? { geometry } : {}),
+    calculatedAreaM2: geometry ? geodeticAreaM2(geometry) : null,
     confirmedAreaM2: confirmed === null ? null : Math.round(confirmed * 100) / 100,
     authority: {
       name,
@@ -386,7 +393,16 @@ export type Proposal = {
   version: number;
   siteVersionId: string;
   route: 'full' | 'outline';
-  use: 'HOUSING' | 'MIXED' | 'OTHER';
+  /** The planning need: what is being built. */
+  category: DevelopmentCategory;
+  /** The need in the applicant's own words, where given. */
+  description?: string;
+  /** For temporary development, how long it is needed for. */
+  temporaryMonths?: number | null;
+  /** For energy generation or storage, the capacity in MW. */
+  capacityMW?: number | null;
+  /** Bedspaces, pupils, beds or units — whatever the use counts by — where it is not dwellings. */
+  capacityUnits?: { count: number; unit: string } | null;
   dwellings: number | null;
   createdGiaM2: number | null;
   assumptions: string[];
@@ -406,7 +422,21 @@ function proposal(ctx: EngineContext, id: string): Proposal {
 
 export function recordProposal(
   ctx: EngineContext,
-  input: { siteVersionId: string; scenarioName: string; route: string; use: string; dwellingCount: number | null; createdGiaM2: number | null; assumptions?: string[] },
+  input: {
+    siteVersionId: string;
+    scenarioName: string;
+    route: string;
+    category?: string;
+    /** Accepted from earlier clients: HOUSING is RESIDENTIAL. */
+    use?: string;
+    description?: string;
+    dwellingCount: number | null;
+    createdGiaM2: number | null;
+    temporaryMonths?: number | null;
+    capacityMW?: number | null;
+    capacityUnits?: { count: number; unit: string } | null;
+    assumptions?: string[];
+  },
 ): Proposal {
   guard(ctx, 'C');
   siteVersion(ctx, input.siteVersionId);
@@ -414,7 +444,21 @@ export function recordProposal(
   if (input.route !== 'full' && input.route !== 'outline') {
     throw new DomainError('PROPOSAL_ROUTE', 'A first-release proposal is a full or an outline application.', 422, [{ field: 'route', message: 'full or outline' }]);
   }
-  if (!['HOUSING', 'MIXED', 'OTHER'].includes(input.use)) throw new DomainError('PROPOSAL_USE', 'The use is housing, mixed or other.', 422, [{ field: 'use', message: 'choose one' }]);
+  const category = input.category ?? (input.use === 'HOUSING' ? 'RESIDENTIAL' : input.use);
+  if (!isCategory(category)) {
+    throw new DomainError('PROPOSAL_CATEGORY', `The planning need is one of: ${Object.values(DEVELOPMENT_CATEGORIES).map((entry) => entry.label).join(', ')}.`, 422, [{ field: 'category', message: 'choose one' }]);
+  }
+  for (const [field, value, max] of [['temporaryMonths', input.temporaryMonths, 600], ['capacityMW', input.capacityMW, 100_000]] as const) {
+    if (value !== undefined && value !== null && (!Number.isFinite(value) || value <= 0 || value > max)) {
+      throw new DomainError('PROPOSAL_NUMBER', `${field === 'temporaryMonths' ? 'The period is months' : 'The capacity is MW'}, positive, or left unknown.`, 422, [{ field, message: 'positive number' }]);
+    }
+  }
+  if (input.capacityUnits && (!Number.isInteger(input.capacityUnits.count) || input.capacityUnits.count < 1 || !String(input.capacityUnits.unit ?? '').trim())) {
+    throw new DomainError('PROPOSAL_UNITS', 'Give a whole number and what it counts — bedspaces, pupils, beds.', 422, [{ field: 'capacityUnits', message: 'count and unit' }]);
+  }
+  if (category !== 'RESIDENTIAL' && category !== 'MIXED' && input.dwellingCount !== null && input.dwellingCount !== undefined) {
+    throw new DomainError('PROPOSAL_DWELLINGS_USE', 'Dwellings are counted for housing or mixed use; give other uses their own count.', 422, [{ field: 'dwellingCount', message: 'housing or mixed use only' }]);
+  }
   const dwellings = input.dwellingCount ?? null;
   if (dwellings !== null && (!Number.isInteger(dwellings) || dwellings < 1)) {
     throw new DomainError('PROPOSAL_DWELLINGS', 'The dwelling count is a positive whole number, or left unknown.', 422, [{ field: 'dwellingCount', message: 'whole number' }]);
@@ -430,7 +474,11 @@ export function recordProposal(
     version,
     siteVersionId: input.siteVersionId,
     route: input.route,
-    use: input.use as Proposal['use'],
+    category,
+    ...(input.description?.trim() ? { description: input.description.trim() } : {}),
+    ...(input.temporaryMonths ? { temporaryMonths: input.temporaryMonths } : {}),
+    ...(input.capacityMW ? { capacityMW: input.capacityMW } : {}),
+    ...(input.capacityUnits ? { capacityUnits: { count: input.capacityUnits.count, unit: input.capacityUnits.unit.trim() } } : {}),
     dwellings,
     createdGiaM2: gia,
     assumptions: (input.assumptions ?? []).map((entry) => String(entry).trim()).filter(Boolean),
@@ -464,8 +512,11 @@ function ruleInputFor(ctx: EngineContext, subject: Proposal): RuleInput {
   const site = siteVersion(ctx, subject.siteVersionId);
   const facts = Object.fromEntries(Object.values(siteFacts(ctx)).map((fact) => [fact!.key, fact!.value])) as RuleInput['facts'];
   return {
-    use: subject.use,
-    siteAreaM2: site.confirmedAreaM2 ?? site.calculatedAreaM2,
+    // Proposals recorded before the planning need was asked are housing, mixed or other.
+    category: subject.category ?? ((subject as { use?: string }).use === 'HOUSING' ? 'RESIDENTIAL' : ((subject as { use?: string }).use as DevelopmentCategory) ?? 'OTHER'),
+    temporaryMonths: subject.temporaryMonths ?? null,
+    capacityMW: subject.capacityMW ?? null,
+    siteAreaM2: site.confirmedAreaM2 ?? site.calculatedAreaM2!,
     areaBasis: site.confirmedAreaM2 !== null ? 'CONFIRMED' : 'CALCULATED',
     areaReviewReasons: areaDivergence(site.calculatedAreaM2, site.confirmedAreaM2).reasons,
     authorityConfirmed: site.authority.confirmed,
@@ -568,12 +619,16 @@ export function quoteFeeFor(
     if (!site) extraReasons.push('No red line is recorded.');
     else if (!site.accepted) extraReasons.push(`Red line revision ${site.revision} has not been accepted, so its area is not used for a fee.`);
     else {
-      areaM2 = site.confirmedAreaM2 ?? site.calculatedAreaM2;
+      areaM2 = site.confirmedAreaM2 ?? site.calculatedAreaM2!;
       const divergence = areaDivergence(site.calculatedAreaM2, site.confirmedAreaM2);
       if (divergence.material) extraReasons.push(...divergence.reasons);
     }
   }
   const dwellings = input.dwellings !== undefined ? input.dwellings : (subject?.dwellings ?? null);
+  const category = subject?.category ?? 'RESIDENTIAL';
+  if (category !== 'RESIDENTIAL' && ['full', 'outline', 'reserved_matters'].includes(input.route) && !input.nonStandard?.trim()) {
+    extraReasons.push(`${DEVELOPMENT_CATEGORIES[category].label}: the verified schedules automate new housing only; this fee is charged on its own basis and is checked with the authority.`);
+  }
   const kernelInput = {
     route: input.route as FeeRoute,
     madeOn: input.madeOn,
@@ -859,6 +914,7 @@ export type PlanningOverview = {
   /** The closed lists the forms offer, published here so the browser holds no copy of its own. */
   vocabulary: {
     facts: typeof SITE_FACTS;
+    categories: typeof DEVELOPMENT_CATEGORIES;
     feeRoutes: readonly string[];
     costKinds: readonly string[];
     vatBases: readonly string[];
@@ -893,6 +949,6 @@ export function planningOverview(ctx: EngineContext): PlanningOverview {
     costs: costSummary(ctx),
     lines: costLines(ctx),
     rules: ruleVersions(ctx),
-    vocabulary: { facts: SITE_FACTS, feeRoutes: FEE_ROUTES, costKinds: COST_KINDS, vatBases: VAT_BASES, confidences: CONFIDENCES, gates: GATES },
+    vocabulary: { facts: SITE_FACTS, categories: DEVELOPMENT_CATEGORIES, feeRoutes: FEE_ROUTES, costKinds: COST_KINDS, vatBases: VAT_BASES, confidences: CONFIDENCES, gates: GATES },
   };
 }

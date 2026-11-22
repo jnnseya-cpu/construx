@@ -78,11 +78,26 @@ describe('the red line, the facts and a proposal', () => {
       authority: { name: 'Example District Council', confirmed: true, source: 'Planning Data API boundary check, 20 Nov 2026' },
       boundarySource: 'Title plan WK123456 and topographical survey rev B',
     });
-    assert.ok(Math.abs(site.calculatedAreaM2 - 30_000) < 3);
+    assert.ok(Math.abs(site.calculatedAreaM2! - 30_000) < 3);
     assert.equal(site.confirmedAreaM2, 30_000);
     assert.equal(site.divergence.material, false);
     assert.equal(site.revision, 1);
     siteId = site.id;
+  });
+
+  it('records a site by its stated area alone, any size, and refuses one with neither area nor boundary', () => {
+    refused(() => planning.recordSiteVersion(as('pm'), { authority: { name: 'Example DC', confirmed: false }, boundarySource: 'Agent particulars' }), 'SITE_AREA_REQUIRED');
+    const stated = planning.recordSiteVersion(as('pm'), { confirmedAreaM2: 7_250, authority: { name: 'Example DC', confirmed: false }, boundarySource: 'Agent particulars, 0.725 ha' });
+    assert.equal(stated.calculatedAreaM2, null);
+    assert.equal(stated.geometry, undefined);
+    assert.equal(stated.divergence.material, false);
+    // The drawn revision is recorded again so the rest of this file reads the 3 ha site.
+    siteId = planning.recordSiteVersion(as('pm'), {
+      geometry: THREE_HECTARES,
+      confirmedAreaM2: 30_000,
+      authority: { name: 'Example District Council', confirmed: true, source: 'Planning Data API boundary check, 20 Nov 2026' },
+      boundarySource: 'Title plan WK123456 and topographical survey rev B',
+    }).id;
   });
 
   it('accepts the latest revision only, once', () => {
@@ -121,7 +136,7 @@ describe('the red line, the facts and a proposal', () => {
     const evaluation = planning.evaluations(as('pm')).at(-1)!;
     assert.match(planning.evaluationStaleness(as('pm'), evaluation).join(' '), /newer version/);
     planning.recordSiteVersion(as('pm'), { geometry: THREE_HECTARES, confirmedAreaM2: 32_000, authority: { name: 'Example District Council', confirmed: true, source: 'Boundary check' }, boundarySource: 'Survey rev C' });
-    assert.match(planning.evaluationStaleness(as('pm'), evaluation).join(' '), /newer revision \(2\)/);
+    assert.match(planning.evaluationStaleness(as('pm'), evaluation).join(' '), /newer revision \(4\)/);
     // The drawn area is now 6% from the confirmed one: material, raised for review.
     const overview = planning.planningOverview(as('pm'));
     assert.equal(overview.site!.divergence.material, true);

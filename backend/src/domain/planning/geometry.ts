@@ -214,8 +214,9 @@ export const AREA_THRESHOLDS_M2 = [5_000, 10_000, 25_000, 50_000] as const;
  * more than 2% of the confirmed area, or by falling either side of a rule
  * threshold (0.5, 1, 2.5 or 5 ha), where the difference changes an outcome.
  */
-export function areaDivergence(calculatedM2: number, confirmedM2: number | null): { material: boolean; reasons: string[] } {
-  if (confirmedM2 === null) return { material: false, reasons: [] };
+export function areaDivergence(calculatedM2: number | null, confirmedM2: number | null): { material: boolean; reasons: string[] } {
+  // Nothing to compare where only one of the two exists — a stated area with no drawn boundary is not a discrepancy.
+  if (confirmedM2 === null || calculatedM2 === null) return { material: false, reasons: [] };
   const reasons: string[] = [];
   const difference = Math.abs(calculatedM2 - confirmedM2);
   if (difference > confirmedM2 * 0.02) {

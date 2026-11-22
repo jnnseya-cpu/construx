@@ -16,7 +16,7 @@ import { hashEvidence } from '../../core/canonical.ts';
  * pack's content, so a publication pins exactly these numbers.
  */
 
-export const RULE_PACK_VERSION = 'england-housing-rules-2026-11';
+export const RULE_PACK_VERSION = 'england-planning-rules-2026-11';
 
 export const THRESHOLDS = {
   majorDwellings: 10,
@@ -30,7 +30,7 @@ export const THRESHOLDS = {
   bngObjectivePercent: 10,
 } as const;
 
-export const rulePackHash = (): string => hashEvidence(JSON.stringify(THRESHOLDS));
+export const rulePackHash = (): string => hashEvidence(JSON.stringify({ THRESHOLDS, DEVELOPMENT_CATEGORIES }));
 
 export type FindingStatus = 'applies' | 'does_not_apply' | 'review_required' | 'unavailable';
 export type SourceKind = 'LEGISLATION' | 'NATIONAL_GUIDANCE' | 'LOCAL' | 'PROJECT' | 'BEST_PRACTICE';
@@ -65,8 +65,98 @@ export const SITE_FACTS = {
 } as const;
 export type SiteFactKey = keyof typeof SITE_FACTS;
 
+/**
+ * What is being built — the planning need — and what each kind of development
+ * means for the rules that differ by use.
+ *
+ * - `vulnerability` is the flood risk vulnerability class (Planning Practice
+ *   Guidance, Flood risk and coastal change, Annex 3); `REVIEW` where the class
+ *   turns on facts the category alone does not settle.
+ * - `eia` is the EIA Regulations 2017 Schedule 2 description the category most
+ *   plainly falls under, with its area threshold; `REVIEW` where it is a
+ *   screening judgement.
+ * - `route` is a consenting question to settle before an application is the
+ *   right route at all (permitted development, a development consent order,
+ *   another consent regime) — always a planner's decision, never assumed.
+ * - `studies` are the studies the category requires whatever the site.
+ */
+export const DEVELOPMENT_CATEGORIES = {
+  RESIDENTIAL: { label: 'Housing', vulnerability: 'MORE_VULNERABLE', eia: { paragraph: '10(b)', title: 'Urban development project', overM2: 50_000 }, studies: [] },
+  EDUCATION: {
+    label: 'School, college or nursery',
+    vulnerability: 'MORE_VULNERABLE',
+    eia: { paragraph: '10(b)', title: 'Urban development project (non-dwelling)', overM2: 10_000 },
+    route: 'An extension or temporary building at an existing school may be permitted development (GPDO 2015, Schedule 2, Part 7). Confirm before preparing an application.',
+    studies: ['TRANSPORT'],
+  },
+  HEALTH: { label: 'Health (clinic, surgery, hospital)', vulnerability: 'MORE_VULNERABLE', eia: { paragraph: '10(b)', title: 'Urban development project (non-dwelling)', overM2: 10_000 }, studies: ['TRANSPORT'] },
+  COMMUNITY: { label: 'Community, assembly or leisure', vulnerability: 'LESS_VULNERABLE', eia: { paragraph: '10(b)', title: 'Urban development project (non-dwelling)', overM2: 10_000 }, studies: [] },
+  OFFICE: { label: 'Offices', vulnerability: 'LESS_VULNERABLE', eia: { paragraph: '10(b)', title: 'Urban development project (non-dwelling)', overM2: 10_000 }, studies: [] },
+  RETAIL: { label: 'Shops, food and drink', vulnerability: 'LESS_VULNERABLE', eia: { paragraph: '10(b)', title: 'Urban development project (non-dwelling)', overM2: 10_000 }, studies: ['TRANSPORT'] },
+  INDUSTRIAL: { label: 'Industry, storage and distribution', vulnerability: 'LESS_VULNERABLE', eia: { paragraph: '10(a)', title: 'Industrial estate development project', overM2: 5_000 }, studies: ['TRANSPORT', 'NOISE_AIR'] },
+  HOTEL: { label: 'Hotel or hostel', vulnerability: 'MORE_VULNERABLE', eia: { paragraph: '10(b)', title: 'Urban development project (non-dwelling)', overM2: 10_000 }, studies: [] },
+  TEMPORARY_ACCOMMODATION: {
+    label: 'Temporary accommodation',
+    vulnerability: 'REVIEW',
+    vulnerabilityNote: 'Caravans, mobile homes and park homes for permanent residential use are highly vulnerable; hostels and similar are more vulnerable. Classify the units proposed.',
+    eia: 'REVIEW',
+    eiaNote: 'Urban development (10(b)) or a caravan site (12(e)) depending on the form; a screening judgement.',
+    route: 'Consider a time-limited permission, a change of use, or — for buildings needed only while construction is carried out — permitted development (GPDO 2015, Schedule 2, Part 4, Class A).',
+    studies: ['UTILITIES', 'TRANSPORT'],
+  },
+  ELECTRICITY_SUBSTATION: {
+    label: 'Electricity substation',
+    vulnerability: 'ESSENTIAL_INFRASTRUCTURE',
+    eia: 'REVIEW',
+    eiaNote: 'Not itself a listed Schedule 2 description; part of a generating installation (3(a)) or an overhead line (3(b)) it may be. A screening judgement.',
+    route: 'A substation for an electricity undertaker may be permitted development (GPDO 2015, Schedule 2, Part 15, Class B); an overhead line needs consent under section 37 of the Electricity Act 1989. Confirm who is promoting it and on what powers.',
+    studies: ['NOISE_AIR', 'UTILITIES'],
+  },
+  ENERGY_GENERATION: {
+    label: 'Energy generation or storage (solar, battery, wind)',
+    vulnerability: 'ESSENTIAL_INFRASTRUCTURE',
+    eia: { paragraph: '3(a)', title: 'Industrial installation for the production of electricity', overM2: 5_000 },
+    eiaNote: 'Battery storage alone is a screening judgement; wind turbines fall under 3(i).',
+    route: 'Above the generating-capacity threshold in force under the Planning Act 2008 for its technology, a generating station is a nationally significant infrastructure project needing a development consent order, not planning permission. Confirm the capacity against the threshold in force.',
+    studies: ['UTILITIES', 'NOISE_AIR'],
+  },
+  MIXED: { label: 'Mixed use', vulnerability: 'REVIEW', vulnerabilityNote: 'Each use is classified; the most vulnerable governs.', eia: 'REVIEW', eiaNote: 'Each component is screened.', studies: [] },
+  OTHER: { label: 'Something else', vulnerability: 'REVIEW', eia: 'REVIEW', studies: [] },
+} as const satisfies Record<
+  string,
+  {
+    label: string;
+    vulnerability: 'ESSENTIAL_INFRASTRUCTURE' | 'HIGHLY_VULNERABLE' | 'MORE_VULNERABLE' | 'LESS_VULNERABLE' | 'WATER_COMPATIBLE' | 'REVIEW';
+    vulnerabilityNote?: string;
+    eia: { paragraph: string; title: string; overM2: number } | 'REVIEW';
+    eiaNote?: string;
+    route?: string;
+    studies: readonly string[];
+  }
+>;
+export type DevelopmentCategory = keyof typeof DEVELOPMENT_CATEGORIES;
+export const isCategory = (value: unknown): value is DevelopmentCategory => typeof value === 'string' && value in DEVELOPMENT_CATEGORIES;
+
+/**
+ * Flood zone and vulnerability compatibility (Planning Practice Guidance, Flood
+ * risk and coastal change, Table 2): ✓ appropriate, E the exception test is
+ * required, ✗ should not be permitted.
+ */
+const FLOOD_COMPATIBILITY: Record<string, Record<'1' | '2' | '3a' | '3b', '✓' | 'E' | '✗'>> = {
+  ESSENTIAL_INFRASTRUCTURE: { '1': '✓', '2': '✓', '3a': 'E', '3b': 'E' },
+  HIGHLY_VULNERABLE: { '1': '✓', '2': 'E', '3a': '✗', '3b': '✗' },
+  MORE_VULNERABLE: { '1': '✓', '2': '✓', '3a': 'E', '3b': '✗' },
+  LESS_VULNERABLE: { '1': '✓', '2': '✓', '3a': '✓', '3b': '✗' },
+  WATER_COMPATIBLE: { '1': '✓', '2': '✓', '3a': '✓', '3b': '✓' },
+};
+
 export type RuleInput = {
-  use: 'HOUSING' | 'MIXED' | 'OTHER';
+  /** The planning need. */
+  category: DevelopmentCategory;
+  /** For temporary development, how long it is needed for. */
+  temporaryMonths?: number | null;
+  /** For energy generation or storage, the capacity in MW. */
+  capacityMW?: number | null;
   /** The area rules use: the confirmed red-line area where there is one, otherwise the calculated one. */
   siteAreaM2: number | null;
   areaBasis: 'CONFIRMED' | 'CALCULATED' | 'NONE';
@@ -87,6 +177,10 @@ const SOURCES = {
   cil: { kind: 'LEGISLATION' as const, title: 'Community Infrastructure Levy Regulations 2010', url: 'https://www.legislation.gov.uk/uksi/2010/948' },
   hra: { kind: 'NATIONAL_GUIDANCE' as const, title: 'Habitats regulations assessments', url: 'https://www.gov.uk/guidance/appropriate-assessment' },
   project: { kind: 'PROJECT' as const, title: 'The project’s own record', url: '' },
+  vulnerability: { kind: 'NATIONAL_GUIDANCE' as const, title: 'Flood risk and coastal change: vulnerability classification and Table 2', url: 'https://www.gov.uk/guidance/flood-risk-and-coastal-change' },
+  gpdo: { kind: 'LEGISLATION' as const, title: 'Town and Country Planning (General Permitted Development) (England) Order 2015', url: 'https://www.legislation.gov.uk/uksi/2015/596' },
+  dco: { kind: 'LEGISLATION' as const, title: 'Planning Act 2008 (nationally significant infrastructure projects)', url: 'https://www.legislation.gov.uk/ukpga/2008/29/part/3' },
+  temporary: { kind: 'NATIONAL_GUIDANCE' as const, title: 'Use of planning conditions: temporary permission', url: 'https://www.gov.uk/guidance/use-of-planning-conditions' },
 };
 
 const ha = (m2: number): string => `${(m2 / 10_000).toFixed(4)} ha`;
@@ -101,7 +195,8 @@ export function evaluateRules(input: RuleInput): Evaluation {
   const findings: Finding[] = [];
   const add = (finding: Omit<Finding, 'ruleVersion'>) => findings.push({ ...finding, ruleVersion: RULE_PACK_VERSION });
   const area = input.siteAreaM2;
-  const housing = input.use === 'HOUSING';
+  const housing = input.category === 'RESIDENTIAL';
+  const category = DEVELOPMENT_CATEGORIES[input.category] as (typeof DEVELOPMENT_CATEGORIES)[DevelopmentCategory] & { vulnerabilityNote?: string; eiaNote?: string; route?: string };
   const fact = (key: SiteFactKey) => input.facts[key];
 
   // --- The site itself ---------------------------------------------------------
@@ -124,11 +219,32 @@ export function evaluateRules(input: RuleInput): Evaluation {
       inputs: {}, evidenceNeeded: ['The authority, confirmed against the boundary'],
     });
   }
-  if (!housing) {
+  if (input.category === 'MIXED' || input.category === 'OTHER') {
     add({
-      code: 'USE_SCOPE', title: 'Supported use', status: 'review_required', gate: 'G0', source: SOURCES.project,
-      reason: `${input.use === 'MIXED' ? 'Mixed use' : 'A non-housing use'} is outside the first release's automated rules; every finding below needs a planner's review.`,
-      inputs: { use: input.use }, evidenceNeeded: ['A planner’s classification of the proposal'],
+      code: 'USE_SCOPE', title: 'Planning need', status: 'review_required', gate: 'G0', source: SOURCES.project,
+      reason: `${category.label}: the use-dependent rules (flood vulnerability, EIA description, consenting route) need a planner's classification of each use.`,
+      inputs: { category: input.category }, evidenceNeeded: ['A planner’s classification of the proposal'],
+    });
+  }
+  if (category.route) {
+    add({
+      code: 'CONSENT_ROUTE', title: 'Consenting route', status: 'review_required', gate: 'G1',
+      source: input.category === 'ENERGY_GENERATION' ? SOURCES.dco : SOURCES.gpdo,
+      reason: `${category.route}${input.capacityMW ? ` Stated capacity: ${input.capacityMW} MW.` : ''}`,
+      inputs: { category: input.category, capacityMW: input.capacityMW ?? null },
+      evidenceNeeded: ['A planner’s decision on the route, with its basis'],
+    });
+  }
+  if (input.category === 'TEMPORARY_ACCOMMODATION' || (input.temporaryMonths ?? null) !== null) {
+    const months = input.temporaryMonths ?? null;
+    add({
+      code: 'TEMPORARY_PERMISSION', title: 'Temporary permission', gate: 'G2', source: SOURCES.temporary,
+      status: months === null ? 'review_required' : 'applies',
+      reason: months === null
+        ? 'Temporary development: say how long it is needed for, so the permission can be time-limited.'
+        : `Needed for ${months} months: a time-limited permission, with conditions for removal and reinstatement of the land at the end.`,
+      inputs: { temporaryMonths: months },
+      evidenceNeeded: months === null ? ['The period the development is needed for'] : ['Removal and reinstatement scheme'],
     });
   }
 
@@ -137,7 +253,9 @@ export function evaluateRules(input: RuleInput): Evaluation {
   {
     const n = input.dwellings;
     majorReasons.push(
-      n === null
+      n === null && !housing && input.category !== 'MIXED'
+        ? { code: 'MAJOR_DWELLINGS', status: 'does_not_apply', reason: `${category.label} provides no dwellings.`, inputs: { dwellings: null } }
+        : n === null
         ? { code: 'MAJOR_DWELLINGS', status: 'review_required', reason: 'The dwelling count is not known.', inputs: { dwellings: null } }
         : n >= THRESHOLDS.majorDwellings
           ? { code: 'MAJOR_DWELLINGS', status: 'applies', reason: `${n} dwellings is ${THRESHOLDS.majorDwellings} or more.`, inputs: { dwellings: n } }
@@ -177,7 +295,7 @@ export function evaluateRules(input: RuleInput): Evaluation {
     add({
       code: entry.code,
       title: 'Major development',
-      status: housing ? status : 'review_required',
+      status,
       reason: status === 'unavailable' ? `${entry.reason} It does not change the outcome: the proposal is major on another reason.` : entry.reason,
       inputs: entry.inputs,
       evidenceNeeded: status === 'review_required' ? ['The missing input, or a planner’s classification'] : [],
@@ -216,31 +334,64 @@ export function evaluateRules(input: RuleInput): Evaluation {
     }
   }
 
+  // --- Flood zone compatibility, by what is being built ------------------------------
+  {
+    const zone = fact('FLOOD_ZONE') as '1' | '2' | '3a' | '3b' | undefined;
+    const vulnerability = category.vulnerability;
+    const inputs = { floodZone: zone ?? null, vulnerability, category: input.category };
+    if (!zone || vulnerability === 'REVIEW') {
+      add({ code: 'FLOOD_COMPATIBILITY', title: 'Flood zone compatibility', status: 'review_required', gate: 'G1', source: SOURCES.vulnerability, inputs,
+        reason: !zone ? 'The flood zone is not recorded, so compatibility cannot be tested.' : `${category.label}: ${category.vulnerabilityNote ?? 'its vulnerability class needs a planner’s classification.'}`,
+        evidenceNeeded: !zone ? ['The flood zone'] : ['The vulnerability classification of each use'] });
+    } else {
+      const verdict = FLOOD_COMPATIBILITY[vulnerability]![zone];
+      const words = vulnerability.toLowerCase().replace(/_/g, ' ');
+      add({ code: 'FLOOD_COMPATIBILITY', title: 'Flood zone compatibility', gate: 'G1', source: SOURCES.vulnerability, inputs,
+        status: verdict === '✓' && zone === '1' ? 'does_not_apply' : 'applies',
+        reason: verdict === '✗'
+          ? `${category.label} is ${words}, which should not be permitted in Flood Zone ${zone}.`
+          : verdict === 'E'
+            ? `${category.label} is ${words}: in Flood Zone ${zone} the sequential test and the exception test are both required.`
+            : zone === '1'
+              ? `${category.label} is ${words}, appropriate in Flood Zone 1.`
+              : `${category.label} is ${words}, appropriate in Flood Zone ${zone} once the sequential test is passed.`,
+        evidenceNeeded: verdict === '✗' ? ['A different site, or a different use'] : verdict === 'E' ? ['Sequential test', 'Exception test'] : zone === '1' ? [] : ['Sequential test'] });
+    }
+  }
+
   // --- EIA screening -------------------------------------------------------------
   {
     const opinion = fact('EIA_SCREENING_OPINION');
     const n = input.dwellings;
     const inputs = { dwellings: n, siteAreaM2: area, sensitiveArea: fact('EIA_SENSITIVE_AREA') ?? null, cumulative: fact('EIA_CUMULATIVE') ?? null, screeningOpinion: opinion ?? null };
     const exceeded: string[] = [];
-    if (n !== null && n > THRESHOLDS.eiaDwellingsOver) exceeded.push(`more than ${THRESHOLDS.eiaDwellingsOver} dwellings`);
-    if (area !== null && area > THRESHOLDS.eiaSiteAreaOverM2) exceeded.push(`over 5 ha in total`);
-    const unknownNumbers = (n === null && (area === null || area <= THRESHOLDS.eiaSiteAreaOverM2)) || area === null;
-    if (opinion) {
+    const description = category.eia;
+    if (housing && n !== null && n > THRESHOLDS.eiaDwellingsOver) exceeded.push(`more than ${THRESHOLDS.eiaDwellingsOver} dwellings`);
+    if (area !== null && area > THRESHOLDS.eiaSiteAreaOverM2) exceeded.push('over 5 ha in total');
+    if (description !== 'REVIEW' && !housing && area !== null && area > description.overM2) {
+      exceeded.push(`Schedule 2 ${description.paragraph} (${description.title.toLowerCase()}) over ${description.overM2 / 10_000} ha`);
+    }
+    const unknownNumbers = housing ? (n === null && (area === null || area <= THRESHOLDS.eiaSiteAreaOverM2)) || area === null : area === null;
+    if (!opinion && description === 'REVIEW') {
+      add({ code: 'EIA_SCREENING', title: 'Environmental impact assessment', status: 'review_required', gate: 'G1', source: SOURCES.eia, inputs,
+        reason: `${category.label}: ${category.eiaNote ?? 'which Schedule 2 description applies is a screening judgement.'}${exceeded.length ? ` Also ${exceeded.join('; ')}.` : ''}`,
+        evidenceNeeded: ['A planner’s screening judgement, or a formal screening opinion'] });
+    } else if (opinion) {
       add({ code: 'EIA_SCREENING', title: 'Environmental impact assessment', gate: 'G1', source: SOURCES.eia, inputs,
         status: opinion === 'ES_REQUIRED' ? 'applies' : 'does_not_apply',
         reason: opinion === 'ES_REQUIRED' ? 'The formal screening opinion requires an Environmental Statement.' : 'The formal screening opinion is that an Environmental Statement is not required.',
         evidenceNeeded: opinion === 'ES_REQUIRED' ? ['Scoping opinion', 'Environmental Statement'] : [] });
     } else if (exceeded.length > 0) {
       add({ code: 'EIA_SCREENING', title: 'Environmental impact assessment', status: 'review_required', gate: 'G1', source: SOURCES.eia, inputs,
-        reason: `Schedule 2 urban development threshold exceeded (${exceeded.join('; ')}): screening is required.`, evidenceNeeded: ['Formal screening opinion'] });
+        reason: `Schedule 2 threshold exceeded (${exceeded.join('; ')}): screening is required.`, evidenceNeeded: ['Formal screening opinion'] });
     } else {
       const checked = fact('EIA_SENSITIVE_AREA') === 'NO' && fact('EIA_CUMULATIVE') === 'NONE_FOUND' && !unknownNumbers;
       add({ code: 'EIA_SCREENING', title: 'Environmental impact assessment', gate: 'G1', source: SOURCES.eia, inputs,
         status: checked ? 'does_not_apply' : 'review_required',
         reason: checked
-          ? 'Below the numerical urban-development thresholds, outside a sensitive area, with no cumulative or linked development found.'
+          ? `Below the Schedule 2 thresholds for ${category.label.toLowerCase()}, outside a sensitive area, with no cumulative or linked development found.`
           : unknownNumbers
-            ? 'The dwelling count or site area is not known, so the thresholds cannot be tested.'
+            ? housing ? 'The dwelling count or site area is not known, so the thresholds cannot be tested.' : 'The site area is not known, so the thresholds cannot be tested.'
             : fact('EIA_SENSITIVE_AREA') === 'YES'
               ? 'In or near a sensitive area: Schedule 2 screening applies whatever the size.'
               : 'Below the numerical thresholds; screening review stays open until the sensitive-area and cumulative-development checks are complete.',

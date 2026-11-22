@@ -93,7 +93,7 @@ before(async () => {
     planning.recordSiteFact(as('pm'), { key, value, source: 'Recorded for the test, 1 Oct 2026' });
   }
   proposalId = planning.recordProposal(as('pm'), { siteVersionId: site.id, scenarioName: 'Outline, 40 homes', route: 'outline', use: 'HOUSING', dwellingCount: 40, createdGiaM2: 3600 }).id;
-  for (const version of ['england-housing-rules-2026-11', 'england-2026-12-08']) {
+  for (const version of ['england-planning-rules-2026-11', 'england-2026-12-08']) {
     planning.prepareRuleVersion(as('pm'), { version, checkNote: 'Checked against the published source, figure by figure' });
     planning.publishRuleVersion(as('owner'), { version, note: 'Second check' });
   }

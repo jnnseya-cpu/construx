@@ -2,7 +2,8 @@ import { DomainError } from '../../core/errors.ts';
 import { ulid } from '../../core/ids.ts';
 import { write, type EngineContext } from '../../engines/context.ts';
 import { applications, today } from './applications.ts';
-import { evaluations, guard, planningChanged, text } from './planning.ts';
+import { evaluations, guard, planningChanged, proposals, text } from './planning.ts';
+import { DEVELOPMENT_CATEGORIES } from './rules.ts';
 
 /**
  * Study scheduling: the technical work an application needs, planned against
@@ -69,6 +70,9 @@ export function generateStudies(ctx: EngineContext, applicationId: string): Stud
   if (!application) throw new DomainError('APPLICATION_NOT_FOUND', 'No such application on this project.', 404);
   const evaluation = application.proposalId ? evaluations(ctx).filter((entry) => entry.proposalId === application.proposalId).at(-1) : undefined;
   const have = new Set(studies(ctx, applicationId).map((entry) => entry.template));
+  const subject = application.proposalId ? proposals(ctx).find((entry) => entry.id === application.proposalId) : undefined;
+  const need = subject?.category ? DEVELOPMENT_CATEGORIES[subject.category] : undefined;
+  const byNeed = new Set<string>(need?.studies ?? []);
   const added: Study[] = [];
   for (const template of Object.keys(STUDY_TEMPLATES) as StudyTemplate[]) {
     if (have.has(template)) continue;
@@ -80,8 +84,13 @@ export function generateStudies(ctx: EngineContext, applicationId: string): Stud
       template,
       title: STUDY_TEMPLATES[template],
       applicationId,
-      applicability: triggers.length > 0 ? 'REQUIRED' : 'REVIEW',
-      basis: triggers.length > 0 ? `Required: ${triggers.map((finding) => finding!.title).join(', ')} applies.` : 'Template study — a planner decides whether it applies to this site and proposal.',
+      applicability: triggers.length > 0 || byNeed.has(template) ? 'REQUIRED' : 'REVIEW',
+      basis:
+        triggers.length > 0
+          ? `Required: ${triggers.map((finding) => finding!.title).join(', ')} applies.`
+          : byNeed.has(template)
+            ? `Required for ${need!.label.toLowerCase()}.`
+            : 'Template study — a planner decides whether it applies to this site and proposal.',
       status: 'CANDIDATE',
       dependsOn: [],
     };

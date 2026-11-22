@@ -76,7 +76,7 @@ export async function planning(root) {
         <div class="actions cmd-bar">
           ${raw(
             commandBar([
-              { id: 'pl-site', label: site ? 'Record a new red line' : 'Record the red line', tone: site ? '' : 'primary', permitted: canCreate, reason: blockedReason('PLANNING_CONSENT', 'C') },
+              { id: 'pl-site', label: site ? 'Record a new site revision' : 'Record the site', tone: site ? '' : 'primary', permitted: canCreate, reason: blockedReason('PLANNING_CONSENT', 'C') },
               site ? { id: 'pl-proposal', label: 'Record a proposal', permitted: canCreate, reason: blockedReason('PLANNING_CONSENT', 'C') } : null,
               { id: 'pl-fee', label: 'Quote a fee', permitted: canCreate, reason: blockedReason('PLANNING_CONSENT', 'C') },
               { id: 'pl-cost', label: 'Add a cost line', permitted: canCreate, reason: blockedReason('PLANNING_CONSENT', 'C') },
@@ -148,38 +148,40 @@ export async function planning(root) {
 
   const COMMANDS = {
     'pl-site': () => ({
-      title: 'Record the red line',
+      title: 'Record the site',
       intent:
-        'The site boundary as GeoJSON in longitude/latitude (EPSG:4326) — a Polygon, a MultiPolygon or one Feature. It is measured on the ' +
-        'ellipsoid; the confirmed legal area is held apart from that measurement. Each recording is a new revision; earlier ones are kept.',
+        'The site area — whatever its size — and, if you have it, the red-line boundary as GeoJSON (EPSG:4326), which is measured on the ' +
+        'ellipsoid and held beside the stated area. Each recording is a new revision; earlier ones are kept.',
       path: `${base}/site-versions`,
       submitLabel: 'Record',
       fields: [
-        { name: 'geometryFile', label: 'GeoJSON file', type: 'textfile', into: 'geometry', accept: '.geojson,.json,application/geo+json,application/json', required: false },
-        { name: 'geometry', label: 'GeoJSON', type: 'textarea', rows: 6, placeholder: '{"type":"Polygon","coordinates":[[[-1.5,52.2],…]]}', hint: 'Choose a file above, or paste it here.' },
-        { name: 'confirmedAreaM2', label: 'Confirmed legal red-line area (m²)', type: 'number', min: 0, required: false, hint: 'From the title or the surveyed red line, where it is known.' },
+        { name: 'areaHa', label: 'Site area (hectares)', type: 'number', min: 0, step: 'any', required: false, hint: 'From the title, the survey or the particulars. 1 ha = 10,000 m².' },
+        { name: 'geometryFile', label: 'Red-line boundary file (optional)', type: 'textfile', into: 'geometry', accept: '.geojson,.json,application/geo+json,application/json', required: false },
+        { name: 'geometry', label: 'Or paste the GeoJSON (optional)', type: 'textarea', rows: 4, required: false, placeholder: '{"type":"Polygon","coordinates":[[[-1.5,52.2],…]]}' },
         { name: 'authorityName', label: 'Local planning authority', type: 'text', value: site?.authority.name ?? '' },
-        { name: 'authorityConfirmed', label: 'The authority is confirmed against the boundary', type: 'checkbox', value: site?.authority.confirmed ?? false },
+        { name: 'authorityConfirmed', label: 'The authority is confirmed for this site', type: 'checkbox', value: site?.authority.confirmed ?? false },
         { name: 'authoritySource', label: 'Confirmed from', type: 'text', required: false, value: site?.authority.source ?? '' },
-        { name: 'boundarySource', label: 'Where the boundary came from', type: 'text', placeholder: 'Title plan WK123456; topographical survey rev B' },
+        { name: 'boundarySource', label: 'Where the area or boundary came from', type: 'text', placeholder: 'Title plan WK123456; topographical survey rev B' },
       ],
       validate: (v) => {
+        if (!v.geometry && (v.areaHa === undefined || v.areaHa === '')) return { field: 'areaHa', message: 'Give the site area, or a boundary to measure it from.' };
+        if (!v.geometry) return undefined;
         try {
-          JSON.parse(String(v.geometry ?? ''));
+          JSON.parse(String(v.geometry));
           return undefined;
         } catch {
           return { field: 'geometry', message: 'This is not valid JSON.' };
         }
       },
       transform: (v) => ({
-        geometry: JSON.parse(v.geometry),
-        confirmedAreaM2: v.confirmedAreaM2 === undefined || v.confirmedAreaM2 === '' ? null : Number(v.confirmedAreaM2),
+        ...(v.geometry ? { geometry: JSON.parse(v.geometry) } : {}),
+        confirmedAreaM2: v.areaHa === undefined || v.areaHa === '' ? null : Math.round(Number(v.areaHa) * 10_000 * 100) / 100,
         authority: { name: v.authorityName, confirmed: Boolean(v.authorityConfirmed), ...(v.authoritySource ? { source: v.authoritySource } : {}) },
         boundarySource: v.boundarySource,
       }),
       report: (res) => ({
-        title: `Red line revision ${res.revision} recorded`,
-        message: `Measured ${m2(res.calculatedAreaM2)} (${ha(res.calculatedAreaM2)}).${res.divergence.material ? ` For review: ${res.divergence.reasons.join(' ')}` : ''}`,
+        title: `Site revision ${res.revision} recorded`,
+        message: `${res.confirmedAreaM2 !== null ? `Stated ${ha(res.confirmedAreaM2)}. ` : ''}${res.calculatedAreaM2 !== null ? `Boundary measures ${m2(res.calculatedAreaM2)} (${ha(res.calculatedAreaM2)}).` : ''}${res.divergence.material ? ` For review: ${res.divergence.reasons.join(' ')}` : ''}`,
         tone: res.divergence.material ? 'warn' : 'ok',
       }),
     }),
@@ -209,24 +211,41 @@ export async function planning(root) {
       const previous = view.scenarios.find((entry) => entry.proposal.scenarioName === button?.dataset?.scenario)?.proposal;
       return {
         title: previous ? `New version of ${previous.scenarioName}` : 'Record a proposal',
-        intent: 'A scenario on the current red line. Leave the dwellings or floorspace blank where they are not known — the rules treat them as unknown, not zero.',
+        intent:
+          'What is to be built on this site — housing, a school, a substation, temporary accommodation or anything else — and its numbers. ' +
+          'Leave any number blank where it is not known: the rules treat it as unknown, not zero.',
         path: `${base}/proposals`,
         submitLabel: 'Record',
         fields: [
-          { name: 'scenarioName', label: 'Scenario', type: 'text', value: previous?.scenarioName ?? '', placeholder: 'Full, 40 homes' },
+          { name: 'scenarioName', label: 'Scenario', type: 'text', value: previous?.scenarioName ?? '', placeholder: 'Full, primary school' },
+          {
+            name: 'category',
+            label: 'Planning need',
+            type: 'select',
+            options: Object.entries(vocab.categories).map(([value, entry]) => ({ value, label: entry.label })),
+            value: previous?.category ?? (previous?.use === 'HOUSING' ? 'RESIDENTIAL' : previous?.use) ?? 'RESIDENTIAL',
+          },
+          { name: 'description', label: 'The need in your own words', type: 'textarea', rows: 2, required: false, value: previous?.description ?? '', placeholder: '2-form-entry primary school with a nursery' },
           { name: 'route', label: 'Route', type: 'select', options: [{ value: 'full', label: 'Full application' }, { value: 'outline', label: 'Outline application' }], value: previous?.route ?? 'full' },
-          { name: 'use', label: 'Use', type: 'select', options: [{ value: 'HOUSING', label: 'Housing' }, { value: 'MIXED', label: 'Mixed use (manual review)' }, { value: 'OTHER', label: 'Other (manual review)' }], value: previous?.use ?? 'HOUSING' },
-          { name: 'dwellingCount', label: 'Dwellings', type: 'number', min: 1, step: '1', required: false, value: previous?.dwellings ?? '' },
+          { name: 'dwellingCount', label: 'Dwellings (housing or mixed use)', type: 'number', min: 1, step: '1', required: false, value: previous?.dwellings ?? '' },
           { name: 'createdGiaM2', label: 'Floorspace created (GIA, m²)', type: 'number', min: 0, required: false, value: previous?.createdGiaM2 ?? '' },
+          { name: 'unitsCount', label: 'Capacity — bedspaces, pupils, beds…', type: 'number', min: 1, step: '1', required: false, value: previous?.capacityUnits?.count ?? '' },
+          { name: 'unitsName', label: 'What the capacity counts', type: 'text', required: false, value: previous?.capacityUnits?.unit ?? '', placeholder: 'bedspaces' },
+          { name: 'temporaryMonths', label: 'Needed for (months), if temporary', type: 'number', min: 1, step: '1', required: false, value: previous?.temporaryMonths ?? '' },
+          { name: 'capacityMW', label: 'Generating or storage capacity (MW), if energy', type: 'number', min: 0, step: 'any', required: false, value: previous?.capacityMW ?? '' },
           { name: 'assumptions', label: 'Assumptions, one per line', type: 'textarea', rows: 3, required: false, value: (previous?.assumptions ?? []).join('\n') },
         ],
         transform: (v) => ({
           siteVersionId: site.id,
           scenarioName: v.scenarioName,
           route: v.route,
-          use: v.use,
+          category: v.category,
+          ...(v.description ? { description: v.description } : {}),
           dwellingCount: v.dwellingCount === undefined ? null : Number(v.dwellingCount),
           createdGiaM2: v.createdGiaM2 === undefined ? null : Number(v.createdGiaM2),
+          ...(v.unitsCount !== undefined && v.unitsName ? { capacityUnits: { count: Number(v.unitsCount), unit: v.unitsName } } : {}),
+          ...(v.temporaryMonths !== undefined ? { temporaryMonths: Number(v.temporaryMonths) } : {}),
+          ...(v.capacityMW !== undefined ? { capacityMW: Number(v.capacityMW) } : {}),
           assumptions: String(v.assumptions ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
         }),
       };
@@ -435,11 +454,11 @@ function siteCard(view, canUpdate) {
     ${
       site
         ? html`${table({
-            headers: ['Revision', 'Drawn area', 'Confirmed area', 'Authority', 'Boundary from', 'Status'],
+            headers: ['Revision', 'Measured from the boundary', 'Stated area', 'Authority', 'Boundary from', 'Status'],
             rows: [
               [
                 `${site.revision}`,
-                html`${m2(site.calculatedAreaM2)}<br><span class="metric-sub">${ha(site.calculatedAreaM2)}</span>`,
+                site.calculatedAreaM2 === null ? html`<span class="metric-sub">no boundary drawn</span>` : html`${m2(site.calculatedAreaM2)}<br><span class="metric-sub">${ha(site.calculatedAreaM2)}</span>`,
                 site.confirmedAreaM2 === null ? html`<span class="metric-sub">not recorded</span>` : html`${m2(site.confirmedAreaM2)}<br><span class="metric-sub">${ha(site.confirmedAreaM2)}</span>`,
                 html`${site.authority.name}${site.authority.code ? ` (${site.authority.code})` : ''}<br>${badge(site.authority.confirmed ? 'confirmed' : 'to confirm', site.authority.confirmed ? 'ok' : 'warn')}${site.authority.source ? html` <span class="metric-sub">${site.authority.source}</span>` : ''}`,
                 html`<span style="font-size:12.5px">${site.boundarySource}</span>`,
@@ -475,15 +494,18 @@ function scenariosCard(view, canCreate) {
     <h2 id="pl-scen-h">Proposals and rule findings</h2>
     ${
       view.scenarios.length === 0
-        ? html`<p class="metric-sub">${view.site ? 'No proposal recorded. Record one to evaluate it against the rules.' : 'Record the red line first.'}</p>`
+        ? html`<p class="metric-sub">${view.site ? 'No proposal recorded. Record one to evaluate it against the rules.' : 'Record the site first.'}</p>`
         : view.scenarios.map(({ proposal, evaluation, stale }) => {
             const counts = evaluation
               ? ['review_required', 'applies', 'does_not_apply', 'unavailable'].map((status) => [status, evaluation.findings.filter((finding) => finding.status === status).length])
               : [];
             return html`<div style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px">
-              <h3 style="margin:0">${proposal.scenarioName} <span class="metric-sub">v${proposal.version} · ${proposal.route} · ${humanise(proposal.use).toLowerCase()} · ${
-                proposal.dwellings === null ? 'dwellings unknown' : `${proposal.dwellings} dwellings`
+              <h3 style="margin:0">${proposal.scenarioName} <span class="metric-sub">v${proposal.version} · ${proposal.route} · ${(view.vocabulary.categories[proposal.category ?? (proposal.use === 'HOUSING' ? 'RESIDENTIAL' : proposal.use)]?.label ?? humanise(proposal.use)).toLowerCase()}${
+                proposal.capacityUnits ? ` · ${proposal.capacityUnits.count} ${proposal.capacityUnits.unit}` : ''
+              }${proposal.temporaryMonths ? ` · ${proposal.temporaryMonths} months` : ''}${proposal.capacityMW ? ` · ${proposal.capacityMW} MW` : ''}${
+                ['RESIDENTIAL', 'MIXED'].includes(proposal.category ?? 'RESIDENTIAL') || proposal.use ? ` · ${proposal.dwellings === null ? 'dwellings unknown' : String(proposal.dwellings) + ' dwellings'}` : ''
               } · ${proposal.createdGiaM2 === null ? 'floorspace unknown' : m2(proposal.createdGiaM2)}</span></h3>
+              ${proposal.description ? html`<p style="margin:4px 0;font-size:13px">${proposal.description}</p>` : ''}
               ${proposal.assumptions.length ? html`<p class="metric-sub" style="margin:4px 0">Assumptions: ${proposal.assumptions.join('; ')}</p>` : ''}
               <p style="margin:6px 0">
                 ${
