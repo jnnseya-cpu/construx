@@ -35175,3 +35175,155 @@ linked to a register page.
 controller and when the customer company is (and CONSTRUX its processor) for
 project data. The configured legal name is still "CONSTRUX"; if a registered
 company operates it, set `SITE_LEGAL_NAME` to that company's name.
+
+## 2026-11 CONSTRUX Planning, increment 1: the red line, the rules, the fee, the costs
+
+The owner's *CONSTRUX Planning — implementation specification v1.0* (22 November
+2026) and its fee reference kernel (`CONSTRUX_Planning_Fee_Reference.py`). This
+increment is the specification's delivery steps 1 and 2 (foundation and
+appraisal). Steps 3 to 5 — applications, consents, gates and the production
+checks — are **not built yet**; see "Not built" below.
+
+**Where it lives.** `backend/src/domain/planning/` (`fees.ts`, `geometry.ts`,
+`rules.ts`, `planning.ts`), `backend/src/agents/planning.ts`, routes under
+`/v1/projects/:projectId/planning`, and the Planning screen
+(`frontend/pages/planning.js`) in the Deliver group of the menu.
+
+**Feature flag: the PLANNING module.** The specification asks for a feature flag;
+the platform's existing mechanism for one is the module grant
+(`identity/modules.ts`), so Planning is a restricted module the operator grants
+company by company, like Bid-On. Every planning command calls `requireModule`,
+and the screen is absent from the menu for a company without it. No price is
+attached to the module.
+
+**Permission area: `PLANNING_CONSENT`** (new). Authoring: DEVELOPMENT_MANAGER,
+PM, QS, COMMERCIAL_MANAGER, DESIGNER, PRINCIPAL_DESIGNER (EPC also approves).
+Approval: EXECUTIVE, PROJECT_DIRECTOR, EPC and OWNER. Read only: ENTERPRISE_ADMIN,
+PLANNER, SAFETY, QAQC, BIM, CONSTRUCTION_MANAGER, VIEWER. Scope pair
+`planning:read`/`planning:write`. Console page `planning`.
+
+**Decision recorded, for the owner to confirm:** planning records — including
+cost lines and fee quotes — are **Internal**, not Commercial-L3. The
+development director who approves a planning budget holds the DEVELOPMENT_MANAGER
+or EXECUTIVE role, and neither is cleared for Commercial-L3 (`identity/abac.ts`).
+Classifying the costs L3 would have hidden the forecast from the person the
+specification says owns it; widening L3 clearance was not done silently.
+
+### What is built
+
+- **The red line** (`geometry.ts`). GeoJSON Polygon, MultiPolygon, Feature or a
+  one-feature collection in EPSG:4326. Refused with the reason, never repaired:
+  unclosed rings, fewer than four positions, out-of-range or projected
+  coordinates, a ring crossing itself or another, a hole outside its shell,
+  overlapping parts (an island inside another part's hole is allowed), more than
+  5,000 positions. **Area on the WGS84 ellipsoid without a GIS library**: authalic
+  latitude onto the equal-area sphere, a Lambert azimuthal equal-area projection
+  centred on the site, planar ring sums; holes subtract and parts add. A 100 m
+  square in England measures within a square metre. Each recording is a new,
+  immutable revision. The **confirmed legal area is held apart** from the drawn
+  one; a difference over 2%, or one either side of 0.5, 1, 2.5 or 5 ha, is raised
+  for review. A reviewer **accepts** the latest revision; only an accepted one
+  feeds an outline fee.
+- **Site facts**, a closed list the rules read (flood zone, critical drainage
+  area, surface water, future flood risk, EIA sensitive area, cumulative
+  development, the screening opinion, HRA screening, protected species, BNG
+  applicability, the local validation list, the CIL charging schedule), each with
+  its source. Spatial lookups (Planning Data API, Flood Map for Planning) are not
+  connected; a fact nobody has recorded is **unknown**, never Flood Zone 1.
+- **Proposals**: scenarios on a red-line revision, full or outline, housing (mixed
+  and other go to manual review), dwellings and created floorspace each allowed
+  to be unknown. Each change is a new version.
+- **Rule evaluation** (`rules.ts`), deterministic, pinned with its inputs and the
+  rule pack's content hash. Findings carry code, status (`applies`,
+  `does_not_apply`, `review_required`, `unavailable`), reason, inputs, evidence
+  needed, gate and source (legislation, national guidance, local, project). Major
+  development keeps each reason independently (known count ≥10; unknown count on a
+  housing site ≥0.5 ha; site ≥1 ha; created floorspace ≥1,000 m²); an unknown that
+  cannot change the outcome is `unavailable`, not a review. FRA: Flood Zone 2/3,
+  or Flood Zone 1 at ≥1 ha, or a recorded other source; ruled out under 1 ha only
+  when critical drainage, surface water and future risk are all recorded clear.
+  EIA: >150 dwellings or >5 ha raises screening; below them screening stays open
+  until the sensitive-area and cumulative checks are recorded; a formal opinion
+  settles it. HRA and protected species are independent of EIA. BNG defaults to
+  an applicability review. Local validation stays unresolved until the local list
+  is verified. CIL is unknown without schedule evidence. The determination period
+  is 16 weeks with an ES, 13 for major, 8 otherwise. An evaluation reports itself
+  **stale** when the red line, the proposal, a site fact or the rule pack has
+  moved on, and is kept as it stood.
+- **Fees** (`fees.ts`): a port of the owner's reference kernel — full, outline,
+  reserved matters, condition details, section 73 major and section 96A
+  non-householder — for the two 2026 schedules, integer pence, areas as integer
+  hundredths of a square metre so "started 0.1 ha" is never a float ceiling, the
+  published upper-band bases written out rather than derived, caps as an explicit
+  adjustment line. A date outside both schedules, a non-standard case, unverified
+  reserved-matters history, an unknown count or an unaccepted red line returns
+  **review required with no payable figure**. Each quote is an append-only
+  snapshot with its inputs, breakdown, date basis (assumed or evidenced) and the
+  schedule's content hash.
+- **Rule versions: two people.** The rule pack and each fee schedule produce
+  nothing relied on until one person records the check against the published
+  source and a **different** person with approval publishes it (the same person
+  is refused). A version whose content changes after publication shows as changed
+  and stops counting as published. An unpublished schedule still shows what a
+  quote would come to, labelled not payable.
+- **Costs**: lines with low/base/high in pence (any may be unknown, never zero),
+  kind (allowance, statutory fee, liability, in-kind obligation), gate, phase,
+  source, VAT basis, confidence, estimate date and cash trigger. A calculated fee
+  quote becomes a statutory fee line carrying the quote's figure (once). Revisions
+  are new versions under **If-Match** (412 on a stale version; the console now
+  sends PATCH with If-Match). Withdrawal keeps the line with its reason. The
+  summary gives the **known subtotal**, the cash lines with unknown amounts, the
+  liabilities **apart from the cash figure**, and the unresolved liabilities (CIL
+  without schedule evidence; section 106 with no line). The specification's four
+  illustrative allowances can be taken as a starting point, labelled as
+  assumptions to replace with quotes, VAT excluded, no base figure invented.
+- **The planning watch agent** (`AGT-PLANNING-WATCH`, module PLANNING,
+  observe-only): a rule version changed since publication, a material red-line
+  area discrepancy, a latest proposal version never evaluated, and a current
+  evaluation gone stale — each with the record it read.
+- **The screen**: where it stands (site, authority, major development, what is
+  blocking with the evidence needed and the source), the site and its facts,
+  proposals with every finding, fee quotes with their breakdown, costs, and rule
+  versions with check, publish (locked to the person who checked) and return.
+
+**Verified.** `npm test` 8,669 pass, typecheck clean. `tests/planningkernel.test.ts`
+(the reference kernel's seven fixture groups verbatim, the specification's fee
+examples and its outline JSON breakdown, the §8 acceptance rows for major
+development, FRA, EIA and the period, and the geometry refusals and area
+accuracy) and `tests/planning.test.ts` (module gate, permission area, the red
+line, acceptance, facts, evaluation and staleness, two-person publication, quote
+snapshots, accepted-area rule, costs reproducing the specification's
+£67,720–£132,720, liabilities apart, If-Match, the watch agent, the routes). The
+reference kernel itself was run (7 tests pass) before porting. Walked in a real
+browser on a fresh local journal: the module granted, a red line pasted as
+GeoJSON (a Point refused with the reason), accepted, a flood-zone fact, a 40-home
+proposal evaluated (major; five findings for review), a December quote refused as
+unpublished, the PM checking the schedule and the owner publishing it, the quote
+then £32,720.00, added as a cost, the four allowances added, the known subtotal
+£67,720.00 – £132,720.00, a line revised under If-Match; the site manager has no
+Planning in the menu; no horizontal scroll at phone width; no page errors. The
+walk found and fixed: the cost route's schema demanded a `source` a fee line
+supplies itself; fees were shown abbreviated (£32.7K) instead of exact; an empty
+budget read "£0".
+
+**Not verified here.** The fee figures and thresholds against their published
+sources: gov.uk, legislation.gov.uk and the planning data services are not
+reachable from this environment. They are the specification's figures, and the
+platform will not treat them as relied on until a person in the company checks
+and a second publishes each version.
+
+### Not built (the specification's steps 3 to 5)
+
+- Applications and dated events (draft → ready → submitted → valid → determined,
+  invalid and withdrawn paths, consultations, extensions, committee, decision
+  evidence, appeals linked to the original record), the statutory clock from the
+  validated date, requirements and reviews with CDE evidence revisions, immutable
+  submission packs, and gates G0–G3 with blockers.
+- Consents, conditions and condition requests with per-condition outcomes,
+  section 106 obligations and triggers, phase-scoped release (G4/G5) with
+  revocation and hand-off to Programme, Risk and Cost Control.
+- Rule-version source diffs and the impact preview on open projects; the
+  `planning.*` integrator events (writes already go through the ledger's outbox,
+  but the specification's named event types are not defined); study scheduling;
+  spatial lookups and their caching; jobs (evaluation runs synchronously — it is
+  fast and in-process, so a queue would be a layer with no problem behind it).

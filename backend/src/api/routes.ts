@@ -182,6 +182,7 @@ import * as answercheck from '../domain/answercheck.ts';
 import * as pricecheck from '../domain/pricecheck.ts';
 import { RISK_CATEGORIES } from '../engines/maths/risk.ts';
 import * as bidsignoff from '../domain/bidsignoff.ts';
+import * as planningconsent from '../domain/planning/planning.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -28482,6 +28483,185 @@ export const ROUTES: Route[] = [
     description:
       'The executive brief: the recommendation, the binding deadlines, the decision drivers and the approvals; the nine outputs of the bid review, each Ready for Review, In Draft or Blocked with what stands in the way; and the submission manifest',
     handler: (platform, ctx) => tenderbrief.tenderBrief(projectContext(platform, ctx)),
+  },
+  // --- CONSTRUX Planning (the PLANNING module) -------------------------------
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/planning',
+    readOnly: true,
+    description: 'The planning overview: the red line, the site facts, each scenario with its latest evaluation and whether it is stale, what is blocking, fee quotes, costs with liabilities apart, and the rule versions',
+    handler: (platform, ctx) => planningconsent.planningOverview(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/site-versions',
+    description: 'Record a red-line revision: GeoJSON in EPSG:4326, measured on the ellipsoid, with the confirmed legal area held apart and the determining authority',
+    schema: {
+      type: 'object',
+      required: ['geometry', 'authority', 'boundarySource'],
+      properties: {
+        geometry: { type: 'object' },
+        confirmedAreaM2: { type: ['number', 'null'], minimum: 0 },
+        authority: {
+          type: 'object',
+          required: ['name', 'confirmed'],
+          properties: { name: { type: 'string', minLength: 1, maxLength: 200 }, code: { type: 'string', maxLength: 50 }, confirmed: { type: 'boolean' }, source: { type: 'string', maxLength: 300 } },
+          additionalProperties: false,
+        },
+        boundarySource: { type: 'string', minLength: 1, maxLength: 300 },
+      },
+      additionalProperties: false,
+    },
+    maxBytes: 2_000_000,
+    handler: (platform, ctx) => planningconsent.recordSiteVersion(projectContext(platform, ctx), body<Parameters<typeof planningconsent.recordSiteVersion>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/site-versions/:siteVersionId/accept',
+    description: 'Accept the latest red-line revision as the one fees and rules read, saying what it was checked against',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 1, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) =>
+      planningconsent.acceptSiteVersion(projectContext(platform, ctx), { siteVersionId: ctx.params.siteVersionId as string, note: body<{ note: string }>(ctx).note }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/facts',
+    description: 'Record a fact about the site the rules read — flood zone, sensitive area, screening opinions, BNG applicability, the local list, the CIL schedule — with its source',
+    schema: {
+      type: 'object',
+      required: ['key', 'value', 'source'],
+      properties: { key: { type: 'string', maxLength: 60 }, value: { type: 'string', maxLength: 60 }, source: { type: 'string', minLength: 1, maxLength: 500 }, note: { type: 'string', maxLength: 1000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningconsent.recordSiteFact(projectContext(platform, ctx), body<Parameters<typeof planningconsent.recordSiteFact>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/proposals',
+    description: 'Record a proposal version for a scenario: the red line it sits on, full or outline, the use, the dwellings and created floorspace (either may be unknown) and its assumptions',
+    schema: {
+      type: 'object',
+      required: ['siteVersionId', 'scenarioName', 'route', 'use', 'dwellingCount', 'createdGiaM2'],
+      properties: {
+        siteVersionId: { type: 'string', minLength: 1 },
+        scenarioName: { type: 'string', minLength: 1, maxLength: 120 },
+        route: { type: 'string', enum: ['full', 'outline'] },
+        use: { type: 'string', enum: ['HOUSING', 'MIXED', 'OTHER'] },
+        dwellingCount: { type: ['integer', 'null'], minimum: 1 },
+        createdGiaM2: { type: ['number', 'null'], minimum: 0 },
+        assumptions: { type: 'array', maxItems: 50, items: { type: 'string', maxLength: 500 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningconsent.recordProposal(projectContext(platform, ctx), body<Parameters<typeof planningconsent.recordProposal>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/evaluations',
+    description: 'Evaluate a proposal against the rule pack: each finding with its status, reason, inputs, evidence needed, gate, source and rule version, pinned as it stood',
+    schema: { type: 'object', required: ['proposalId'], properties: { proposalId: { type: 'string', minLength: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => planningconsent.evaluateProposal(projectContext(platform, ctx), body<{ proposalId: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/fee-quotes',
+    description: 'Quote the standard planning fee for a route and made date, kept as an append-only snapshot; no payable figure unless the schedule is published and the case is standard',
+    schema: {
+      type: 'object',
+      required: ['route', 'madeOn', 'dateBasis'],
+      properties: {
+        route: { type: 'string', enum: ['full', 'outline', 'reserved_matters', 'condition_details', 'section_73_major', 'section_96a_non_householder'] },
+        madeOn: { type: 'string', minLength: 10, maxLength: 10 },
+        dateBasis: { type: 'string', enum: ['ASSUMED', 'EVIDENCED'] },
+        proposalId: { type: 'string' },
+        dwellings: { type: ['integer', 'null'], minimum: 1 },
+        reservedHistoryThresholdMet: { type: ['boolean', 'null'] },
+        nonStandard: { type: 'string', maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningconsent.quoteFeeFor(projectContext(platform, ctx), body<Parameters<typeof planningconsent.quoteFeeFor>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/costs',
+    description: 'Record a planning cost line: low, base and high in pence (any may be unknown), the VAT basis, confidence, gate and cash trigger — or a statutory fee line from a calculated quote',
+    schema: {
+      type: 'object',
+      // `source` is not required here: a line made from a fee quote carries the quote as its source.
+      // The platform still refuses any other line without one.
+      required: ['label', 'costCode', 'gate', 'vatBasis', 'confidence', 'estimateDate', 'cashTrigger'],
+      properties: {
+        label: { type: 'string', minLength: 1, maxLength: 200 },
+        costCode: { type: 'string', minLength: 1, maxLength: 40 },
+        kind: { type: 'string', enum: ['ALLOWANCE', 'STATUTORY_FEE', 'LIABILITY', 'IN_KIND_OBLIGATION'] },
+        gate: { type: 'string', enum: ['G0', 'G1', 'G2', 'G3', 'G4', 'G5'] },
+        phase: { type: 'string', maxLength: 100 },
+        source: { type: 'string', minLength: 1, maxLength: 500 },
+        lowMinor: { type: ['integer', 'null'], minimum: 0 },
+        baseMinor: { type: ['integer', 'null'], minimum: 0 },
+        highMinor: { type: ['integer', 'null'], minimum: 0 },
+        vatBasis: { type: 'string', enum: ['EXCLUDED', 'INCLUDED', 'NOT_APPLICABLE', 'RECOVERABLE'] },
+        confidence: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH'] },
+        estimateDate: { type: 'string', minLength: 10, maxLength: 10 },
+        cashTrigger: { type: 'string', minLength: 1, maxLength: 300 },
+        feeQuoteId: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningconsent.recordCostLine(projectContext(platform, ctx), body<Parameters<typeof planningconsent.recordCostLine>[1]>(ctx)),
+  },
+  {
+    method: 'PATCH',
+    pattern: '/v1/projects/:projectId/planning/costs/:costLineId',
+    description: 'Revise or withdraw a planning cost line, as a new version of it (send If-Match with the version you read)',
+    schema: {
+      type: 'object',
+      properties: {
+        label: { type: 'string', minLength: 1, maxLength: 200 },
+        source: { type: 'string', minLength: 1, maxLength: 500 },
+        lowMinor: { type: ['integer', 'null'], minimum: 0 },
+        baseMinor: { type: ['integer', 'null'], minimum: 0 },
+        highMinor: { type: ['integer', 'null'], minimum: 0 },
+        confidence: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH'] },
+        vatBasis: { type: 'string', enum: ['EXCLUDED', 'INCLUDED', 'NOT_APPLICABLE', 'RECOVERABLE'] },
+        estimateDate: { type: 'string', minLength: 10, maxLength: 10 },
+        cashTrigger: { type: 'string', minLength: 1, maxLength: 300 },
+        withdraw: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 1, maxLength: 500 } }, additionalProperties: false },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      planningconsent.reviseCostLine(projectContext(platform, ctx), ctx.params.costLineId as string, body<Parameters<typeof planningconsent.reviseCostLine>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/costs/illustrative-allowances',
+    description: 'Start the planning budget from the specification’s four illustrative allowances, labelled as assumptions to replace with quotes',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => planningconsent.seedIllustrativeAllowances(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/rule-versions/:version/prepare',
+    description: 'Record that a rule version — the evaluation rules or a fee schedule — was checked against its published sources, ready for a second person to publish',
+    schema: { type: 'object', required: ['checkNote'], properties: { checkNote: { type: 'string', minLength: 1, maxLength: 4000 } }, additionalProperties: false },
+    handler: (platform, ctx) =>
+      planningconsent.prepareRuleVersion(projectContext(platform, ctx), { version: ctx.params.version as string, checkNote: body<{ checkNote: string }>(ctx).checkNote }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/rule-versions/:version/publish',
+    description: 'Publish a prepared rule version for the company — by a different person from the one who prepared it',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 1, maxLength: 2000 } }, additionalProperties: false },
+    handler: (platform, ctx) => planningconsent.publishRuleVersion(projectContext(platform, ctx), { version: ctx.params.version as string, note: body<{ note: string }>(ctx).note }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/rule-versions/:version/return',
+    description: 'Return a prepared rule version to its editor with what is wrong',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 1, maxLength: 2000 } }, additionalProperties: false },
+    handler: (platform, ctx) => planningconsent.returnRuleVersion(projectContext(platform, ctx), { version: ctx.params.version as string, reason: body<{ reason: string }>(ctx).reason }),
   },
   {
     method: 'GET',

@@ -550,6 +550,8 @@ export function command({
   // rule the panel exists to enforce. Both switch the cost block on.
   ai = false,
   method = 'POST',
+  /** For a PATCH of an existing record: the version the person read, sent as If-Match. */
+  ifMatch,
   /**
    * A rule the form can check for itself, before anything is sent.
    *
@@ -789,7 +791,12 @@ export function command({
           for (const run of runs) {
             const payload = transform ? transform(run) : run;
             const target = typeof path === 'function' ? path(run) : path;
-            response = method === 'PUT' ? await api.put(target, payload) : await api.post(target, payload);
+            response =
+              method === 'PUT'
+                ? await api.put(target, payload)
+                : method === 'PATCH'
+                  ? await api.patch(target, payload, ifMatch === undefined ? {} : { ifMatch })
+                  : await api.post(target, payload);
             filed += 1;
           }
         } catch (error) {

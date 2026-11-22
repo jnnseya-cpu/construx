@@ -807,6 +807,21 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // the signatory, each approved by a person with the authority for it; and
   // where each return goes on the buyer's portal, with a person's confirmation
   // that it is there. Human acts, never an agent's.
+  // CONSTRUX Planning. Every one a person's act: the red line, the facts
+  // about the site, a proposal, an evaluation run, a fee quote, a cost line and
+  // the publication of a rule version. The publication is an approval, and the
+  // person who prepared a version can never be the one who publishes it.
+  def('PLANNING_RULE_VERSION_PREPARED', 'PlanningRuleVersion', 'UPDATE', 'DESIGN', { creates: true }),
+  def('PLANNING_RULE_VERSION_PUBLISHED', 'PlanningRuleVersion', 'APPROVE', 'DESIGN'),
+  def('PLANNING_RULE_VERSION_RETURNED', 'PlanningRuleVersion', 'REJECT', 'DESIGN'),
+  def('PLANNING_SITE_VERSION_RECORDED', 'PlanningSiteVersion', 'CREATE', 'DESIGN', { creates: true }),
+  def('PLANNING_SITE_VERSION_ACCEPTED', 'PlanningSiteVersion', 'APPROVE', 'DESIGN'),
+  def('PLANNING_SITE_FACT_RECORDED', 'PlanningSiteFact', 'UPDATE', 'DESIGN', { creates: true }),
+  def('PLANNING_PROPOSAL_RECORDED', 'PlanningProposal', 'CREATE', 'DESIGN', { creates: true }),
+  def('PLANNING_EVALUATION_RECORDED', 'PlanningEvaluation', 'CREATE', 'DESIGN', { creates: true }),
+  def('PLANNING_FEE_QUOTED', 'PlanningFeeQuote', 'CREATE', 'DESIGN', { creates: true }),
+  def('PLANNING_COST_LINE_RECORDED', 'PlanningCostLine', 'CREATE', 'DESIGN', { creates: true }),
+  def('PLANNING_COST_LINE_REVISED', 'PlanningCostLine', 'UPDATE', 'DESIGN'),
   def('BID_SIGN_OFF_RECORDED', 'BidSignOff', 'APPROVE', 'PROCUREMENT', { creates: true }),
   def('SUBMISSION_FILE_RECORDED', 'BidSignOff', 'UPDATE', 'PROCUREMENT', { creates: true }),
   // A compliance undertaking confirmed: the agent drafts the statement, a person

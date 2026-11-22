@@ -190,7 +190,15 @@ export type CapabilityArea =
   // Reachable only inside the Bid-On module, on the same terms as
   // SITE_SERVICES: the area is in the published matrix for every tenancy, and
   // holding a permission on it does nothing without the grant.
-  | 'BID_SERVICES';
+  | 'BID_SERVICES'
+  // Planning consent: the red line, the proposal, the rules and fees, the
+  // application, the decision, its conditions and obligations, and the release
+  // of works phase by phase. Its own area because the authority is over a
+  // statutory process with the local planning authority, not over design
+  // information or the programme; the development side authors it and an
+  // executive or project director approves its gates. Reachable only inside
+  // the PLANNING module — every planning command calls `requireModule`.
+  | 'PLANNING_CONSENT';
 
 export const ROLE_ACCOUNT_LAYER: Record<Role, AccountLayer> = {
   PLATFORM_ADMIN: 'PLATFORM_ADMIN',
@@ -335,6 +343,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     BILLING_ACU: ['R', 'U'],
     SITE_SERVICES: ['R'],
     BID_SERVICES: ['R'],
+    PLANNING_CONSENT: ['R'],
   },
 
   // The business owner: everything anybody in the tenancy can do, and nothing
@@ -371,6 +380,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     BILLING_ACU: ['R'],
     SITE_SERVICES: ['R', 'A'],
     BID_SERVICES: ['R', 'A'],
+    PLANNING_CONSENT: ['R', 'A'],
   },
 
   // Authors the concept and approves none of it. Every 'A' is absent
@@ -404,6 +414,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // matters is enforced per act anyway: `approveAnswer` refuses whoever last
     // wrote the answer, whether an agent or a person.
     BID_SERVICES: ['R', 'C', 'U', 'X', 'I'],
+    PLANNING_CONSENT: ['R', 'C', 'U', 'I', 'X'],
   },
 
   // Contractor-side seniority: approves what the delivery team authors, and
@@ -434,6 +445,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
     SITE_SERVICES: ['R', 'C', 'U', 'A'],
+    PLANNING_CONSENT: ['R', 'A'],
   },
 
   // Approves what the QS authors, and receives the exception when the data
@@ -461,6 +473,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     BILLING_ACU: ['R'],
     SITE_SERVICES: ['R', 'U', 'A'],
     BID_SERVICES: ['R'],
+    PLANNING_CONSENT: ['R', 'C', 'U'],
   },
 
   // The CDM 2015 statutory duty holder for the pre-construction phase. This is
@@ -488,6 +501,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // basis gate. Which gate a role may pass is decided by the gate itself;
     // this only says the role may approve in the area at all.
     SITE_SERVICES: ['R', 'A'],
+    PLANNING_CONSENT: ['R', 'C', 'U'],
   },
 
   EPC: {
@@ -516,6 +530,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // `A` because the EPC contractor is a named approver of G1 and of the G5
     // integrated test — the systems being energised are on their supply.
     SITE_SERVICES: ['R', 'C', 'U', 'A'],
+    PLANNING_CONSENT: ['R', 'C', 'U', 'A'],
   },
 
   // QS authors commercial documents but must not approve the budget baseline
@@ -551,6 +566,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // director who sets a fee are deliberately somebody else, by role as well
     // as by act.
     BID_SERVICES: ['R', 'C', 'U', 'X', 'I'],
+    PLANNING_CONSENT: ['R', 'C', 'U'],
   },
 
   PM: {
@@ -579,6 +595,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
     SITE_SERVICES: ['R', 'C', 'U', 'A'],
+    PLANNING_CONSENT: ['R', 'C', 'U'],
   },
 
   PLANNER: {
@@ -596,6 +613,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     SITE_SERVICES: ['R'],
+    PLANNING_CONSENT: ['R'],
   },
 
   // Safety approves RAMS but has no line of sight into Legal-L4 contract content.
@@ -614,6 +632,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // `A` because G5, the integrated test and safe energisation, is a
     // safety-critical hold point the safety function holds.
     SITE_SERVICES: ['R', 'C', 'U', 'A'],
+    PLANNING_CONSENT: ['R'],
   },
 
   QAQC: {
@@ -629,6 +648,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // `C`/`U` to attest the off-site and installation evidence, `A` because
     // G2 off-site readiness and G4 install complete are quality's gates.
     SITE_SERVICES: ['R', 'C', 'U', 'A'],
+    PLANNING_CONSENT: ['R'],
   },
 
   DESIGNER: {
@@ -642,6 +662,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     AI_EXECUTION: ['R', 'X'],
     // `A` because the designer is a named approver of the G1 design basis.
     SITE_SERVICES: ['R', 'A'],
+    PLANNING_CONSENT: ['R', 'C', 'U'],
   },
 
   BIM: {
@@ -656,6 +677,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     SITE_SERVICES: ['R'],
+    PLANNING_CONSENT: ['R'],
   },
 
   /**
@@ -695,6 +717,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     SITE_SERVICES: ['R', 'C', 'U', 'A'],
+    PLANNING_CONSENT: ['R'],
   },
 
   SUPERVISOR: {
@@ -761,6 +784,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     HANDOVER_OM: ['R'],
     EVIDENCE_AUDIT: ['R'],
     SITE_SERVICES: ['R'],
+    PLANNING_CONSENT: ['R'],
   },
   REGULATOR: {
     PROJECT_SETUP: ['R'],
