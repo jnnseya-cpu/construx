@@ -224,6 +224,17 @@ describe('costs: the known subtotal, and the liabilities kept apart', () => {
     refused(() => planning.reviseCostLine(stale, line.id, { lowMinor: 1_300_000 }), 'VERSION_CONFLICT');
     const fee = planning.costLines(as('pm')).find((entry) => entry.kind === 'STATUTORY_FEE')!;
     refused(() => planning.reviseCostLine(as('pm'), fee.id, { lowMinor: 1 }), 'COST_LINE_FROM_QUOTE');
+    // Commitments and actuals feed the outturn: actual + committed-unpaid + uncommitted base.
+    const design = planning.costLines(as('pm')).find((entry) => entry.label === 'Planning and design')!;
+    refused(() => planning.reviseCostLine(as('pm'), design.id, { committedMinor: 2_000_000 }), 'COST_COMMITMENT_REF');
+    planning.reviseCostLine(as('pm'), design.id, { baseMinor: 2_500_000, committedMinor: 2_200_000, actualMinor: 500_000, commitmentRef: 'PO-1042' });
+    const outturn = planning.costSummary(as('pm')).outturn;
+    assert.equal(outturn.actualMinor, 500_000);
+    assert.equal(outturn.committedMinor, 1_700_000);
+    // The fee line (base £32,720) is uncommitted; the allowances without a base cannot be forecast.
+    assert.equal(outturn.uncommittedMinor, 3_272_000);
+    assert.equal(outturn.minor, 500_000 + 1_700_000 + 3_272_000);
+    assert.equal(outturn.unforecast, 3);
     planning.reviseCostLine(as('pm'), line.id, { withdraw: { reason: 'Surveys now in the consultant appointment' } });
     assert.equal(planning.costSummary(as('pm')).known.lowMinor, 6_772_000 - 1_200_000);
   });

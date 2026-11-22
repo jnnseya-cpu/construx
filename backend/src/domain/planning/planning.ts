@@ -5,7 +5,7 @@ import { requireModule } from '../../identity/modules.ts';
 import type { PermissionCode } from '../../identity/roles.ts';
 import { FEE_ROUTES, FEE_SCHEDULES, FeeInputError, quoteFee, scheduleHash, type FeeQuoteResult, type FeeRoute } from './fees.ts';
 import { areaDivergence, geodeticAreaM2, GeometryError, parseSiteGeometry, type SiteGeometry } from './geometry.ts';
-import { evaluateRules, RULE_PACK_VERSION, rulePackHash, SITE_FACTS, type Finding, type Gate, type RuleInput, type SiteFactKey } from './rules.ts';
+import { evaluateRules, RULE_PACK_VERSION, rulePackHash, SITE_FACTS, THRESHOLDS, type Finding, type Gate, type RuleInput, type SiteFactKey } from './rules.ts';
 
 /**
  * CONSTRUX Planning, first release: the appraisal half.
@@ -26,14 +26,28 @@ import { evaluateRules, RULE_PACK_VERSION, rulePackHash, SITE_FACTS, type Findin
 
 const governance = (ctx: EngineContext) => `${ctx.tenantId}-governance`;
 
-function guard(ctx: EngineContext, code: PermissionCode): void {
+/**
+ * What runs after a planning write: the gates and releases re-check themselves
+ * against what changed, and record their own invalidation. Registered by
+ * `gates.ts` rather than imported, so this module does not depend on the one
+ * that depends on it.
+ */
+const afterChange: Array<(ctx: EngineContext) => void> = [];
+export function onPlanningChange(listener: (ctx: EngineContext) => void): void {
+  if (!afterChange.includes(listener)) afterChange.push(listener);
+}
+export function planningChanged(ctx: EngineContext): void {
+  for (const listener of afterChange) listener(ctx);
+}
+
+export function guard(ctx: EngineContext, code: PermissionCode): void {
   requireModule(ctx.grantedModules, 'PLANNING');
   authorise(ctx, 'PLANNING_CONSENT', code);
 }
 
-const states = <T>(ctx: EngineContext, type: string): T[] => ctx.ledger.list(ctx.projectId, type).map((record) => record.state as unknown as T);
+export const states = <T>(ctx: EngineContext, type: string): T[] => ctx.ledger.list(ctx.projectId, type).map((record) => record.state as unknown as T);
 
-function text(value: unknown, field: string, min: number, what: string): string {
+export function text(value: unknown, field: string, min: number, what: string): string {
   const trimmed = typeof value === 'string' ? value.trim() : '';
   if (trimmed.length < min) throw new DomainError('PLANNING_FIELD_REQUIRED', what, 422, [{ field, message: what }]);
   return trimmed;
@@ -43,7 +57,7 @@ function text(value: unknown, field: string, min: number, what: string): string 
 // Rule versions: prepared by one person, published by another
 // =============================================================================
 
-export type RulePack = { version: string; kind: 'FEE_SCHEDULE' | 'EVALUATION'; title: string; sources: string[]; hash: string; effective?: string };
+export type RulePack = { version: string; kind: 'FEE_SCHEDULE' | 'EVALUATION'; title: string; sources: string[]; hash: string; effective?: string; content: unknown };
 
 export function rulePacks(): RulePack[] {
   return [
@@ -59,6 +73,7 @@ export function rulePacks(): RulePack[] {
         'https://www.gov.uk/guidance/determining-a-planning-application',
       ],
       hash: rulePackHash(),
+      content: THRESHOLDS,
     },
     ...FEE_SCHEDULES.map((schedule) => ({
       version: schedule.version,
@@ -66,6 +81,7 @@ export function rulePacks(): RulePack[] {
       title: schedule.title,
       sources: [schedule.sourceUrl],
       hash: scheduleHash(schedule),
+      content: schedule,
       effective: `${schedule.effectiveFrom} to ${schedule.effectiveTo}`,
     })),
   ];
@@ -79,6 +95,8 @@ type RuleVersionRecord = {
   preparedBy: string;
   preparedAt: string;
   checkNote: string;
+  /** The content as it was checked: what a later change is compared against. */
+  content?: unknown;
   publishedBy?: string;
   publishedAt?: string;
   publishNote?: string;
@@ -136,7 +154,7 @@ export function prepareRuleVersion(ctx: EngineContext, input: { version: string;
   if (existing?.status === 'PUBLISHED' && existing.hash === pack.hash) {
     throw new DomainError('RULE_VERSION_PUBLISHED', `${pack.version} is already published, unchanged.`, 409);
   }
-  const record: RuleVersionRecord = { id: ruleRef(ctx, pack.version).refId, version: pack.version, status: 'PREPARED', hash: pack.hash, preparedBy: ctx.auth.actorId, preparedAt: new Date().toISOString(), checkNote };
+  const record: RuleVersionRecord = { id: ruleRef(ctx, pack.version).refId, version: pack.version, status: 'PREPARED', hash: pack.hash, preparedBy: ctx.auth.actorId, preparedAt: new Date().toISOString(), checkNote, content: pack.content };
   write(ctx, { eventType: 'PLANNING_RULE_VERSION_PREPARED', entity: ruleRef(ctx, pack.version), projectId: governance(ctx), nextState: record, reason: `${pack.version} checked: ${checkNote}` });
   return record;
 }
@@ -155,6 +173,7 @@ export function publishRuleVersion(ctx: EngineContext, input: { version: string;
   const note = text(input.note, 'note', 5, 'Say what you reviewed before publishing.');
   const record: RuleVersionRecord = { ...existing, status: 'PUBLISHED', publishedBy: ctx.auth.actorId, publishedAt: new Date().toISOString(), publishNote: note };
   write(ctx, { eventType: 'PLANNING_RULE_VERSION_PUBLISHED', entity: ruleRef(ctx, pack.version), projectId: governance(ctx), nextState: record, reason: `${pack.version} published: ${note}` });
+  planningChanged(ctx);
   return record;
 }
 
@@ -167,6 +186,73 @@ export function returnRuleVersion(ctx: EngineContext, input: { version: string; 
   const record: RuleVersionRecord = { ...existing, status: 'RETURNED', returnedBy: ctx.auth.actorId, returnedAt: new Date().toISOString(), returnReason: reason };
   write(ctx, { eventType: 'PLANNING_RULE_VERSION_RETURNED', entity: ruleRef(ctx, pack.version), projectId: governance(ctx), nextState: record, reason: `${pack.version} returned: ${reason}` });
   return record;
+}
+
+/** Every leaf of a rule version's content, by path. */
+function leaves(value: unknown, path = ''): Map<string, unknown> {
+  const out = new Map<string, unknown>();
+  if (value !== null && typeof value === 'object') {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      for (const [leaf, leafValue] of leaves(child, path ? `${path}.${key}` : key)) out.set(leaf, leafValue);
+    }
+  } else {
+    out.set(path, value);
+  }
+  return out;
+}
+
+export type RuleDifference = { path: string; from: unknown; to: unknown };
+
+export function differences(from: unknown, to: unknown): RuleDifference[] {
+  const before = leaves(from);
+  const after = leaves(to);
+  return [...new Set([...before.keys(), ...after.keys()])]
+    .filter((path) => before.get(path) !== after.get(path))
+    .map((path) => ({ path, from: before.get(path) ?? null, to: after.get(path) ?? null }));
+}
+
+export type RuleVersionDetail = RuleVersionPosition & {
+  /** Against the previous version of the same kind — what the new schedule changes. */
+  comparedWith?: string;
+  differences: RuleDifference[];
+  /** Against the content as it was checked, where it has changed since. */
+  changedSinceChecked: RuleDifference[];
+  impact: {
+    projects: number;
+    payableQuotes: number;
+    unpayableQuotes: number;
+    staleEvaluations: number;
+    openPacks: number;
+  };
+};
+
+/** Source differences and the impact on the company's open projects, for the rule administrator. */
+export function ruleVersionDetail(ctx: EngineContext, version: string): RuleVersionDetail {
+  guard(ctx, 'R');
+  const position = ruleVersionPositions(ctx).find((entry) => entry.version === version);
+  if (!position) throw new DomainError('RULE_VERSION_NOT_FOUND', `${version} is not a rule version this platform holds.`, 404);
+  const sameKind = rulePacks().filter((entry) => entry.kind === position.kind);
+  const previous = sameKind[sameKind.findIndex((entry) => entry.version === version) - 1];
+  const quotes = ctx.ledger.listByTenant(ctx.tenantId, 'PlanningFeeQuote').map((record) => ({ projectId: record.projectId, state: record.state as unknown as FeeQuoteRecord }));
+  const pinned = ctx.ledger.listByTenant(ctx.tenantId, 'PlanningEvaluation').map((record) => ({ projectId: record.projectId, state: record.state as unknown as EvaluationRecord }));
+  const packs = ctx.ledger.listByTenant(ctx.tenantId, 'PlanningPack').map((record) => ({ projectId: record.projectId, state: record.state as { status: string; items: Array<{ kind: string; refId: string; hash?: string }> } }));
+  const onVersion = quotes.filter((entry) => entry.state.ruleVersion === version);
+  const staleEvaluations = position.kind === 'EVALUATION' ? pinned.filter((entry) => entry.state.ruleVersion === version && entry.state.rulePackHash !== position.hash) : [];
+  const openPacks = packs.filter((entry) => entry.state.status === 'ASSEMBLED' && entry.state.items.some((item) => item.kind === 'RULE_VERSION' && item.refId === version));
+  const projects = new Set([...onVersion, ...staleEvaluations, ...openPacks].map((entry) => entry.projectId));
+  return {
+    ...position,
+    ...(previous ? { comparedWith: previous.version } : {}),
+    differences: previous ? differences(previous.content, position.content) : [],
+    changedSinceChecked: position.record?.content !== undefined ? differences(position.record.content, position.content) : [],
+    impact: {
+      projects: projects.size,
+      payableQuotes: onVersion.filter((entry) => entry.state.amountMinor !== null).length,
+      unpayableQuotes: onVersion.filter((entry) => entry.state.amountMinor === null).length,
+      staleEvaluations: staleEvaluations.length,
+      openPacks: openPacks.length,
+    },
+  };
 }
 
 const isPublished = (ctx: EngineContext, pack: RulePack): boolean => {
@@ -245,6 +331,7 @@ export function recordSiteVersion(
     recordedAt: new Date().toISOString(),
   };
   write(ctx, { eventType: 'PLANNING_SITE_VERSION_RECORDED', entity: { refType: 'PlanningSiteVersion', refId: site.id }, nextState: site, reason: `Red line revision ${revision}: ${boundarySource}` });
+  planningChanged(ctx);
   return { ...site, divergence: areaDivergence(site.calculatedAreaM2, site.confirmedAreaM2) };
 }
 
@@ -258,6 +345,7 @@ export function acceptSiteVersion(ctx: EngineContext, input: { siteVersionId: st
   const note = text(input.note, 'note', 5, 'Say what the boundary was checked against.');
   const next: SiteVersion = { ...site, accepted: { by: ctx.auth.actorId, at: new Date().toISOString(), note } };
   write(ctx, { eventType: 'PLANNING_SITE_VERSION_ACCEPTED', entity: { refType: 'PlanningSiteVersion', refId: site.id }, nextState: next, reason: `Red line revision ${site.revision} accepted: ${note}` });
+  planningChanged(ctx);
   return next;
 }
 
@@ -284,6 +372,7 @@ export function recordSiteFact(ctx: EngineContext, input: { key: string; value: 
   const source = text(input.source, 'source', 3, 'Name the source — the map, survey, report or authority letter, with its date.');
   const fact: SiteFact = { key, value: input.value, source, ...(input.note?.trim() ? { note: input.note.trim() } : {}), recordedBy: ctx.auth.actorId, recordedAt: new Date().toISOString() };
   write(ctx, { eventType: 'PLANNING_SITE_FACT_RECORDED', entity: { refType: 'PlanningSiteFact', refId: `${ctx.projectId}-fact-${key}` }, nextState: fact, reason: `${SITE_FACTS[key].label}: ${input.value} (${source})` });
+  planningChanged(ctx);
   return fact;
 }
 
@@ -349,6 +438,7 @@ export function recordProposal(
     recordedAt: new Date().toISOString(),
   };
   write(ctx, { eventType: 'PLANNING_PROPOSAL_RECORDED', entity: { refType: 'PlanningProposal', refId: next.id }, nextState: next, reason: `${scenarioName} v${version}` });
+  planningChanged(ctx);
   return next;
 }
 
@@ -410,6 +500,7 @@ export function evaluateProposal(ctx: EngineContext, input: { proposalId: string
     nextState: record,
     reason: `${subject.scenarioName} v${subject.version} evaluated: ${result.findings.filter((finding) => finding.status === 'review_required').length} for review`,
   });
+  planningChanged(ctx);
   return record;
 }
 
@@ -553,6 +644,10 @@ export type CostLine = {
   estimateDate: string;
   cashTrigger: string;
   feeQuoteId?: string;
+  /** Committed (ordered) and paid to date, in pence, with the order or invoice they come from. */
+  committedMinor?: number | null;
+  actualMinor?: number | null;
+  commitmentRef?: string;
   status: 'ACTIVE' | 'WITHDRAWN';
   withdrawnReason?: string;
   recordedBy: string;
@@ -577,6 +672,11 @@ function checkedCost(input: CostInput, previous?: CostLine): Omit<CostLine, 'id'
     if (!Number.isInteger(value) || (value as number) < 0) throw new DomainError('COST_AMOUNT', 'An amount is whole pence, not negative, or left unknown.', 422, [{ field, message: 'pence' }]);
     return value as number;
   };
+  const committed = amount(merged.committedMinor, 'committedMinor');
+  const actual = amount(merged.actualMinor, 'actualMinor');
+  if ((committed !== null || actual !== null) && !merged.commitmentRef?.trim()) {
+    throw new DomainError('COST_COMMITMENT_REF', 'A committed or actual figure names the order or invoice it comes from.', 422, [{ field: 'commitmentRef', message: 'order or invoice' }]);
+  }
   const low = amount(merged.lowMinor, 'lowMinor');
   const baseAmount = amount(merged.baseMinor, 'baseMinor');
   const high = amount(merged.highMinor, 'highMinor');
@@ -599,6 +699,9 @@ function checkedCost(input: CostInput, previous?: CostLine): Omit<CostLine, 'id'
     estimateDate: String(merged.estimateDate),
     cashTrigger,
     ...(merged.feeQuoteId ? { feeQuoteId: merged.feeQuoteId } : {}),
+    ...(committed !== null ? { committedMinor: committed } : {}),
+    ...(actual !== null ? { actualMinor: actual } : {}),
+    ...(merged.commitmentRef?.trim() ? { commitmentRef: merged.commitmentRef.trim() } : {}),
   };
 }
 
@@ -629,6 +732,7 @@ export function recordCostLine(ctx: EngineContext, input: CostInput): CostLine {
   }
   const line: CostLine = { ...checkedCost(fields), id: ulid(), status: 'ACTIVE', recordedBy: ctx.auth.actorId, recordedAt: new Date().toISOString() };
   write(ctx, { eventType: 'PLANNING_COST_LINE_RECORDED', entity: { refType: 'PlanningCostLine', refId: line.id }, nextState: line, reason: `${line.label} (${line.kind.toLowerCase()})` });
+  planningChanged(ctx);
   return line;
 }
 
@@ -646,6 +750,7 @@ export function reviseCostLine(ctx: EngineContext, id: string, input: CostInput 
     ? { ...previous, status: 'WITHDRAWN', withdrawnReason: text(input.withdraw.reason, 'withdraw.reason', 5, 'Say why the line is withdrawn.') }
     : { ...previous, ...checkedCost(input, previous) };
   write(ctx, { eventType: 'PLANNING_COST_LINE_REVISED', entity: { refType: 'PlanningCostLine', refId: id }, nextState: next, reason: input.withdraw ? `${next.label} withdrawn: ${next.withdrawnReason}` : `${next.label} revised` });
+  planningChanged(ctx);
   return next;
 }
 
@@ -686,6 +791,12 @@ export type CostSummary = {
   /** Cash lines (allowances and statutory fees) whose figures are known. */
   known: { lines: number; lowMinor: number; highMinor: number; baseMinor: number | null; baseMissing: number };
   unknownCashLines: Array<{ id: string; label: string }>;
+  /**
+   * Forecast outturn on the cash lines: actuals, plus what is committed and not
+   * yet paid, plus the base forecast on lines with nothing committed. Lines
+   * with no base and nothing committed cannot be forecast and are counted.
+   */
+  outturn: { minor: number; actualMinor: number; committedMinor: number; uncommittedMinor: number; unforecast: number };
   /** Liabilities and in-kind obligations, never added into the cash forecast. */
   liabilities: Array<{ id: string; label: string; kind: string; lowMinor: number | null; highMinor: number | null }>;
   /** Liabilities known to exist but not yet quantified anywhere. */
@@ -714,6 +825,15 @@ export function costSummary(ctx: EngineContext): CostSummary {
       baseMissing,
     },
     unknownCashLines: cash.filter((line) => line.lowMinor === null || line.highMinor === null).map((line) => ({ id: line.id, label: line.label })),
+    outturn: (() => {
+      const actualMinor = sum(cash.map((line) => line.actualMinor ?? 0));
+      const committedMinor = sum(cash.map((line) => Math.max((line.committedMinor ?? 0) - (line.actualMinor ?? 0), 0)));
+      const uncommitted = cash.filter((line) => line.committedMinor === undefined || line.committedMinor === null);
+      const forecastable = uncommitted.filter((line) => line.baseMinor !== null);
+      // Paid against a line with nothing committed is already in actuals; the base is what remains.
+      const uncommittedMinor = sum(forecastable.map((line) => Math.max(line.baseMinor! - (line.actualMinor ?? 0), 0)));
+      return { minor: actualMinor + committedMinor + uncommittedMinor, actualMinor, committedMinor, uncommittedMinor, unforecast: uncommitted.length - forecastable.length };
+    })(),
     liabilities: active
       .filter((line) => line.kind === 'LIABILITY' || line.kind === 'IN_KIND_OBLIGATION')
       .map((line) => ({ id: line.id, label: line.label, kind: line.kind, lowMinor: line.lowMinor, highMinor: line.highMinor })),

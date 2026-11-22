@@ -822,6 +822,37 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PLANNING_FEE_QUOTED', 'PlanningFeeQuote', 'CREATE', 'DESIGN', { creates: true }),
   def('PLANNING_COST_LINE_RECORDED', 'PlanningCostLine', 'CREATE', 'DESIGN', { creates: true }),
   def('PLANNING_COST_LINE_REVISED', 'PlanningCostLine', 'UPDATE', 'DESIGN'),
+  // Applications, requirements, packs and gates. PLANNING_PACK_APPROVED,
+  // PLANNING_DECISION_RECORDED, PLANNING_GATE_APPROVED, PLANNING_GATE_INVALIDATED
+  // and PLANNING_OBLIGATION_DUE are the specification's integrator events
+  // (planning.pack.approved, planning.decision.recorded, planning.gate.approved,
+  // planning.gate.invalidated, planning.obligation.due), published through the
+  // ledger's transactional outbox like every other event.
+  def('PLANNING_APPLICATION_DRAFTED', 'PlanningApplication', 'CREATE', 'DESIGN', { creates: true }),
+  def('PLANNING_APPLICATION_EVENT_RECORDED', 'PlanningApplication', 'UPDATE', 'DESIGN'),
+  def('PLANNING_DECISION_RECORDED', 'PlanningApplication', 'UPDATE', 'DESIGN'),
+  def('PLANNING_REQUIREMENT_RECORDED', 'PlanningRequirement', 'CREATE', 'DESIGN', { creates: true }),
+  def('PLANNING_REQUIREMENT_UPDATED', 'PlanningRequirement', 'UPDATE', 'DESIGN'),
+  def('PLANNING_REQUIREMENT_REVIEWED', 'PlanningRequirement', 'APPROVE', 'DESIGN'),
+  def('PLANNING_PACK_ASSEMBLED', 'PlanningPack', 'CREATE', 'DESIGN', { creates: true }),
+  def('PLANNING_PACK_APPROVED', 'PlanningPack', 'APPROVE', 'DESIGN'),
+  def('PLANNING_GATE_APPROVED', 'PlanningGateReview', 'APPROVE', 'DESIGN', { creates: true }),
+  def('PLANNING_GATE_INVALIDATED', 'PlanningGateReview', 'UPDATE', 'DESIGN'),
+  // Consents, conditions, obligations and the release of works.
+  def('PLANNING_CONSENT_RECORDED', 'PlanningConsent', 'CREATE', 'DESIGN', { creates: true }),
+  def('PLANNING_CONSENT_AMENDED', 'PlanningConsent', 'UPDATE', 'DESIGN'),
+  def('PLANNING_CONDITION_RECORDED', 'PlanningCondition', 'UPDATE', 'DESIGN', { creates: true }),
+  def('PLANNING_CONDITION_VERIFIED', 'PlanningCondition', 'APPROVE', 'DESIGN'),
+  def('PLANNING_CONDITION_REQUEST_RECORDED', 'PlanningConditionRequest', 'CREATE', 'DESIGN', { creates: true }),
+  def('PLANNING_CONDITION_RESPONSE_RECORDED', 'PlanningConditionRequest', 'UPDATE', 'DESIGN'),
+  def('PLANNING_OBLIGATION_RECORDED', 'PlanningObligation', 'CREATE', 'DESIGN', { creates: true }),
+  def('PLANNING_OBLIGATION_UPDATED', 'PlanningObligation', 'UPDATE', 'DESIGN'),
+  def('PLANNING_OBLIGATION_DUE', 'PlanningObligation', 'UPDATE', 'DESIGN'),
+  def('PLANNING_RELEASE_REQUESTED', 'PlanningRelease', 'CREATE', 'DESIGN', { creates: true }),
+  def('PLANNING_RELEASE_APPROVED', 'PlanningRelease', 'APPROVE', 'DESIGN'),
+  def('PLANNING_RELEASE_REVOKED', 'PlanningRelease', 'UPDATE', 'DESIGN'),
+  def('PLANNING_STUDY_RECORDED', 'PlanningStudy', 'CREATE', 'DESIGN', { creates: true }),
+  def('PLANNING_STUDY_UPDATED', 'PlanningStudy', 'UPDATE', 'DESIGN'),
   def('BID_SIGN_OFF_RECORDED', 'BidSignOff', 'APPROVE', 'PROCUREMENT', { creates: true }),
   def('SUBMISSION_FILE_RECORDED', 'BidSignOff', 'UPDATE', 'PROCUREMENT', { creates: true }),
   // A compliance undertaking confirmed: the agent drafts the statement, a person

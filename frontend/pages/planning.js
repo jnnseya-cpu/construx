@@ -2,6 +2,7 @@ import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { badge, date, exact as money, html, humanise, notice, raw, render, table } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
+import { bindConsentExtras, consentCards, consentCommands } from './planningconsent.js';
 
 /**
  * CONSTRUX Planning — the appraisal half of the first release.
@@ -41,8 +42,9 @@ export async function planning(root) {
   const projectId = state.session.projectId;
   const base = `/v1/projects/${projectId}/planning`;
   let view;
+  let reg;
   try {
-    view = await api.get(base);
+    [view, reg] = await Promise.all([api.get(base), api.get(`/v1/projects/${projectId}/planning/register`).catch((error) => ({ error }))]);
   } catch (error) {
     render(
       root,
@@ -134,6 +136,7 @@ export async function planning(root) {
 
       ${siteCard(view, canUpdate)}
       ${scenariosCard(view, canCreate)}
+      ${consentCards(reg, view, { canCreate, canUpdate, canApprove })}
       ${feesCard(view, quotedIds, canCreate, publishedFees)}
       ${costsCard(view, canCreate, canUpdate, anyAllowance)}
       ${rulesCard(view, canUpdate, canApprove)}
@@ -336,6 +339,9 @@ export async function planning(root) {
               ]),
           { name: 'confidence', label: 'Confidence', type: 'select', options: options(vocab.confidences), value: line.confidence },
           { name: 'estimateDate', label: 'Estimate date', type: 'date', value: line.estimateDate },
+          { name: 'committedMinor', label: 'Committed (£) — ordered or appointed', type: 'number', money: true, min: 0, required: false, value: line.committedMinor == null ? '' : line.committedMinor / 100 },
+          { name: 'actualMinor', label: 'Paid to date (£)', type: 'number', money: true, min: 0, required: false, value: line.actualMinor == null ? '' : line.actualMinor / 100 },
+          { name: 'commitmentRef', label: 'Order or invoice reference', type: 'text', required: false, value: line.commitmentRef ?? '' },
         ],
       };
     },
@@ -386,13 +392,16 @@ export async function planning(root) {
     }),
   };
 
+  Object.assign(COMMANDS, consentCommands(reg, view, base));
+
   root.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
     if (!button) return;
     const make = COMMANDS[button.dataset.command];
     if (!make) return;
-    if (await command(make(button))) await draw();
+    if (await command(make(button, root))) await draw();
   });
+  bindConsentExtras(root, base, draw);
 }
 
 function costFields(vocab, line) {
@@ -548,7 +557,7 @@ function costsCard(view, canCreate, canUpdate, anyAllowance) {
   const withdrawn = view.lines.filter((line) => line.status === 'WITHDRAWN');
   return html`<section class="card" style="margin-bottom:14px" aria-labelledby="pl-cost-h" data-planning-costs>
     <h2 id="pl-cost-h">Planning costs ${canCreate && !anyAllowance ? html`<button class="btn quiet sm" data-command="pl-allowances">Start from illustrative allowances</button>` : ''}</h2>
-    <div class="grid g3" style="margin-top:8px">
+    <div class="grid g4" style="margin-top:8px">
       <div><h3>Known subtotal</h3>${
         costs.known.lines === 0
           ? html`<p class="metric-sub">No cost line yet.</p>`
@@ -557,6 +566,10 @@ function costsCard(view, canCreate, canUpdate, anyAllowance) {
       }</div>
       <div><h3>Unknown amounts</h3><p style="margin:4px 0">${costs.unknownCashLines.length ? badge(`${costs.unknownCashLines.length} line(s)`, 'warn') : badge('none', 'ok')}</p>
         <p class="metric-sub">${costs.unknownCashLines.map((line) => line.label).join(', ') || 'Every cash line has a range.'}</p></div>
+      <div><h3>Forecast outturn</h3><p style="margin:4px 0"><b>${money(costs.outturn.minor)}</b></p>
+        <p class="metric-sub">Paid ${money(costs.outturn.actualMinor)} · committed, unpaid ${money(costs.outturn.committedMinor)} · uncommitted base ${money(costs.outturn.uncommittedMinor)}${
+          costs.outturn.unforecast ? ` · ${costs.outturn.unforecast} line(s) with no base cannot be forecast` : ''
+        }</p></div>
       <div><h3>Unresolved liabilities</h3><p style="margin:4px 0">${costs.unresolved.length ? badge(`${costs.unresolved.length}`, 'bad') : badge('none', 'ok')}</p>
         <p class="metric-sub">${costs.unresolved.join(' ')}</p></div>
     </div>
@@ -613,7 +626,7 @@ function rulesCard(view, canUpdate, canApprove) {
             record?.status === 'PREPARED' ? html`<br><span class="metric-sub">${record.checkNote}</span>` : ''
           }`,
           html`${rule.sources.map((url) => html`<a href="${url}" target="_blank" rel="noopener" style="font-size:12px;display:block">${url.replace(/^https:\/\/(www\.)?/, '').slice(0, 48)}…</a>`)}`,
-          actions.length ? html`${actions}` : '',
+          html`${actions.length ? html`${actions}` : ''} <button class="btn quiet sm" data-rule-detail="${rule.version}">Differences and impact</button><div data-rule-detail-for="${rule.version}"></div>`,
         ];
       }),
     })}

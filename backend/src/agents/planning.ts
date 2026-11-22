@@ -1,6 +1,9 @@
 import { areaDivergence } from '../domain/planning/geometry.ts';
 import { evaluations, evaluationStaleness, proposals, ruleVersionPositions, siteVersions } from '../domain/planning/planning.ts';
 import type { EngineContext } from '../engines/context.ts';
+import { applications, today } from '../domain/planning/applications.ts';
+import { obligations } from '../domain/planning/consents.ts';
+import { releases } from '../domain/planning/gates.ts';
 import type { AgentDefinition, AgentOutput, Finding } from './types.ts';
 
 /**
@@ -30,9 +33,20 @@ export const planningWatchAgent: AgentDefinition = {
     { kind: 'EVENT', eventType: 'PLANNING_SITE_FACT_RECORDED' },
     { kind: 'EVENT', eventType: 'PLANNING_PROPOSAL_RECORDED' },
     { kind: 'EVENT', eventType: 'PLANNING_RULE_VERSION_PUBLISHED' },
+    { kind: 'EVENT', eventType: 'PLANNING_RELEASE_REVOKED' },
+    { kind: 'EVENT', eventType: 'PLANNING_OBLIGATION_DUE' },
   ],
   inputs: ['Red-line revisions', 'Site facts', 'Proposals and their evaluations', 'Published rule versions'],
-  outputs: ['Rule versions changed since publication', 'Stale evaluations', 'Proposals never evaluated', 'Material red-line area discrepancies'],
+  outputs: [
+    'Rule versions changed since publication',
+    'Stale evaluations',
+    'Proposals never evaluated',
+    'Material red-line area discrepancies',
+    'Works releases revoked',
+    'Works recorded on a programme task with no live planning release',
+    'Obligations due or falling due',
+    'Applications past their determination date',
+  ],
   emits: [],
   hitl: 'REVIEW',
   // Every finding is a comparison of recorded values; there is no judgement in it.
@@ -58,6 +72,63 @@ export const planningWatchAgent: AgentDefinition = {
         consequence:
           'The content the company checked and published is not the content now in force, so nothing it produces is relied on until it is checked and published again.',
         evidence: [{ refType: 'PlanningRuleVersion', refId: rule.record.id, note: `Published hash ${rule.record.hash.slice(0, 12)}` }],
+      });
+    }
+
+    // Releases: revoked ones, and works recorded where nothing is released.
+    const allReleases = releases(ctx);
+    for (const release of allReleases.filter((entry) => entry.status === 'REVOKED')) {
+      const reinstated = allReleases.some((entry) => entry.status === 'APPROVED' && entry.gate === release.gate && entry.phase === release.phase && entry.operation === release.operation);
+      if (reinstated) continue;
+      findings.push({
+        key: `planning:revoked:${release.id}`,
+        severity: 'URGENT',
+        summary: `${release.reference} (${release.phase}, ${release.operation.toLowerCase().replace('_', ' ')}) was revoked: ${(release.revoked?.reasons ?? []).slice(0, 2).join(' ')}`,
+        consequence: 'Delivery no longer has a planning release for this phase and operation; works that rely on it are at risk of breaching the permission.',
+        evidence: [{ refType: 'PlanningRelease', refId: release.id, note: `Revoked ${String(release.revoked?.at ?? '').slice(0, 10)}` }],
+      });
+    }
+    for (const release of allReleases.filter((entry) => entry.programmeTaskId && entry.status !== 'APPROVED')) {
+      const task = ctx.ledger.get({ refType: 'Task', refId: release.programmeTaskId! });
+      const progress = Number(task?.state.percentComplete ?? 0);
+      if (!task || progress <= 0) continue;
+      if (allReleases.some((entry) => entry.status === 'APPROVED' && entry.programmeTaskId === release.programmeTaskId)) continue;
+      findings.push({
+        key: `planning:unreleased-works:${release.programmeTaskId}`,
+        severity: 'URGENT',
+        summary: `${String(task.state.name)} is ${progress}% complete on the programme, and ${release.reference} for it is ${release.status.toLowerCase()}.`,
+        consequence: 'Work is recorded against a task with no live planning release — the conditions it depends on may not be discharged.',
+        evidence: [
+          { refType: 'Task', refId: task.refId, note: `${progress}% complete` },
+          { refType: 'PlanningRelease', refId: release.id, note: release.status },
+        ],
+      });
+    }
+
+    // Obligations: due now, or falling due on a date within 30 days.
+    const soon = new Date(Date.parse(`${today()}T00:00:00Z`) + 30 * 86_400_000).toISOString().slice(0, 10);
+    for (const obligation of obligations(ctx).filter((entry) => entry.status !== 'SATISFIED')) {
+      const dated = obligation.triggers.find((trigger) => trigger.event === 'DATE' && trigger.on && trigger.on <= soon);
+      if (!obligation.dueSince && !dated) continue;
+      findings.push({
+        key: `planning:obligation-due:${obligation.id}`,
+        severity: obligation.dueSince || (dated && dated.on! <= today()) ? 'URGENT' : 'ATTENTION',
+        summary: `${obligation.reference} (${obligation.instrument} ${obligation.clause}: ${obligation.description}) is ${obligation.dueSince ? `due since ${obligation.dueSince}` : `due on ${dated!.on}`}, owned by ${obligation.owner}.`,
+        consequence: 'An obligation not met on its trigger is a breach of the agreement, and can carry interest, enforcement or a stop on occupation.',
+        evidence: [{ refType: 'PlanningObligation', refId: obligation.id, note: obligation.status }],
+      });
+    }
+
+    // Applications past the date they should have been decided by.
+    for (const application of applications(ctx).filter((entry) => entry.status === 'VALID')) {
+      const due = application.extension?.agreedTo ?? application.clock?.statutoryTargetOn;
+      if (!due || due >= today()) continue;
+      findings.push({
+        key: `planning:overdue:${application.id}`,
+        severity: 'ATTENTION',
+        summary: `${application.reference} passed its ${application.extension ? 'agreed extension' : 'statutory determination date'} (${due}) undecided.`,
+        consequence: 'The applicant may agree a further extension or appeal against non-determination; the land option and the programme are exposed meanwhile.',
+        evidence: [{ refType: 'PlanningApplication', refId: application.id, note: `Validated ${application.validatedOn}` }],
       });
     }
 

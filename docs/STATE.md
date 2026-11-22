@@ -35312,7 +35312,7 @@ reachable from this environment. They are the specification's figures, and the
 platform will not treat them as relied on until a person in the company checks
 and a second publishes each version.
 
-### Not built (the specification's steps 3 to 5)
+### Not built (the specification's steps 3 to 5) — *built in increment 2 below, except where it says otherwise*
 
 - Applications and dated events (draft → ready → submitted → valid → determined,
   invalid and withdrawn paths, consultations, extensions, committee, decision
@@ -35327,3 +35327,191 @@ and a second publishes each version.
   but the specification's named event types are not defined); study scheduling;
   spatial lookups and their caching; jobs (evaluation runs synchronously — it is
   fast and in-process, so a queue would be a layer with no problem behind it).
+
+## 2026-11 CONSTRUX Planning, increment 2: applications to the release of works
+
+The rest of the specification (delivery steps 3 to 5): applications and their
+events, the statutory clock, requirements and evidence, submission packs, gates
+G0 to G5, permissions and their lineage, conditions and discharge, obligations,
+the phase-scoped release of works and occupation, study scheduling, rule
+administration, the integrator events, and the watch agent's delivery findings.
+Same module grant and permission area as increment 1.
+
+**Where it lives.** `backend/src/domain/planning/applications.ts` (evidence,
+applications, events, clock, requirements, packs), `consents.ts` (permissions,
+conditions, condition requests, obligations), `gates.ts` (blockers, approvals,
+releases, re-validation), `studies.ts`, `register.ts` (the one read for the
+screen); `frontend/pages/planningconsent.js` (the sections after the
+appraisal); routes under `/v1/projects/:projectId/planning/…`.
+
+### What is built
+
+- **Evidence** is a CDE revision (`InformationContainer`) or a filed document
+  (`IngestedFile`) **on the same project**, which the reader is allowed to open
+  (design-information read; audit read at Legal-L4 for filed documents). Anything
+  else — another tenant's, another project's, or one the reader may not open — is
+  answered as a scoped 404. A container whose file the scanner quarantined is
+  flagged, and a superseded or archived revision is noticed.
+- **Applications**: full and outline promoted from a proposal (outline records
+  each of access, appearance, landscaping, layout and scale as determined or
+  reserved); reserved matters, section 73 and section 96A drafted against an
+  effective permission (reserved matters only for matters reserved and still
+  outstanding, per phase). Status draft → ready → submitted → valid → determined,
+  with invalid, resubmitted, invalidated (evidenced authority correction) and
+  withdrawn; consultation (statutory or developer-led), amended plans, extension,
+  committee resolution and forecast are **dated events that move no status**; an
+  event cannot be in the future. Determined needs the **issued notice**, attested
+  and attached — a draft or committee report does not record a decision. Appeals
+  against refusal or non-determination (only after the period or extension has
+  passed) stay linked to the original record, which keeps its refusal.
+- **The clock** starts from the validated date the authority records: 13, 16 or 8
+  weeks from the latest evaluation, or stated with its basis where no evaluation
+  settles it. The authority's target, an agreed extension, the forecast and the
+  land-option expiry are separate fields; a forecast never rewrites the
+  statutory date.
+- **Requirements** generated per application, never twice and never removed: the
+  G1 items (site control and access, consultant scopes, local policy review),
+  national items (form, fee, certificates and notices, location and site plans,
+  a Design and Access Statement for major development, BNG information where it
+  applies) and one per rule finding that needs evidence; local items and
+  external consents added by hand with their basis. Owner, due date, progress
+  and evidence under If-Match. **Acceptance needs evidence and a second person**
+  (the person who attached it is refused); non-applicability needs a source;
+  new evidence on an accepted requirement sends it back to review.
+- **Packs** freeze the proposal, the evaluation, the rule versions, the fee quote,
+  the documents and the submission-critical requirements, with a manifest hash.
+  A pack reports itself stale when any frozen item has moved on. Its manifest is
+  **refused for export while any document in it is quarantined**. An approved
+  pack stays retrievable exactly as it was.
+- **Gates.** Blockers are computed from the records and re-checked inside the
+  approval; two approvals of one gate accept one. Each blocker is statutory,
+  evidence, commercial or time; an internal **risk acceptance clears only a
+  commercial assumption** (unquoted allowances, a land option expiring before a
+  decision could come), with its rationale. G0 appraise; G1 commit to route
+  (G0, the latest proposal version, the G1 requirements, a target submission
+  date, a budget); G2 approve the pack (G1, a current pack, a determined fee,
+  every submission-critical requirement accepted or sourced-not-applicable, no
+  quarantined document, the rule pack published, the reserved-matters deadline)
+  — approving it approves the pack and makes the application ready; G3 record
+  the decision (the issued notice, no pending appeal, the permission recorded,
+  every condition entered and its wording verified by a second person, an
+  executed s106 where the resolution required one, no approved drawing
+  superseded). A committee resolution without the signed notice keeps G3
+  blocked.
+- **Re-validation.** After every planning write, approvals still in force (G0
+  always; G1 while the application is a draft; G2 while it is ready; G3 while its
+  permission is effective) and live releases are re-checked; one that no longer
+  holds is **invalidated or revoked on the record with its reasons**, and a ready
+  application goes back to draft. An approved gate shows only what still bites.
+- **Permissions**: recorded from a grant (or an appeal allowed) with type,
+  lineage, phases, the time limits from the notice and the approved drawings;
+  section 96A amends its parent instead. Where BNG applies, the **statutory
+  biodiversity gain condition** is recorded on the permission. Conditions are
+  entered verbatim with interpretation, trigger (before commencement, above
+  ground, before occupation, ongoing, bespoke) and phase scope, and verified by
+  a second person; a person confirms the count on the notice. Permissions can be
+  marked lapsed or superseded.
+- **Condition requests** cover several conditions of one permission with one fee
+  quote; the authority's answer is recorded **condition by condition**, and only
+  an explicit approval discharges. Three approved and one refused in one request
+  keeps four outcomes and one fee line.
+- **Obligations** (section 106, section 278, undertakings, CIL notices, other):
+  instrument, clause, financial/deliverable/notice, amount (or unknown),
+  indexation, cap, repayment, security, phases, triggers (before or on
+  commencement, before or on occupation, an occupation count, a date, ongoing,
+  other) and an owner; estimated → executed → satisfied on evidence, and
+  acknowledged. When a release records commencement or occupation, the
+  obligations it triggers are **marked due**.
+- **Release of works and occupation** (G4/G5), one phase and one operation
+  (commencement, above-ground, occupation), requested by one person and
+  approved by another holding approval. G4 checks: the permission effective and
+  covering the phase; not an outline alone; G3 approved; the commencement
+  deadline (until the first release under it); every reserved matter approved
+  for the phase; every before-commencement (and, above ground, above-ground)
+  condition in scope on the permission and its lineage discharged and verified;
+  bespoke triggers reviewed; obligations due before commencement satisfied and
+  those due on it executed; a CIL commencement notice served where CIL is
+  charged; external consents accepted; no approved drawing superseded. G5 checks
+  the live commencement release, before-occupation conditions and occupation
+  obligations. **Phase 1 can be released while phase 2 waits.** A release links
+  to a programme task.
+- **Study scheduling**: the specification's ten templates per application —
+  required where a finding applies (FRA and SuDS, ecology and BNG), otherwise for
+  a planner's applicability decision with its reason; consultant, commission
+  date, duration, survey window (month-days, wrapping the year end), dependencies
+  (loops refused) and validity. Scheduled forward through dependencies and the
+  next open window; flagged on the critical path when it finishes after the
+  target submission or the land option, was not commissioned in time, or its
+  findings expire before submission.
+- **Rule administration**: each rule version keeps the content it was checked
+  with; the screen shows the differences from the previous version (figure by
+  figure), any change since the check, and the impact on the company's projects
+  (payable and unpayable quotes on it, evaluations pinned to older content, open
+  packs pinning it).
+- **Integrator events**: `PLANNING_PACK_APPROVED`, `PLANNING_DECISION_RECORDED`,
+  `PLANNING_GATE_APPROVED`, `PLANNING_GATE_INVALIDATED` and
+  `PLANNING_OBLIGATION_DUE` are the specification's `planning.pack.approved`,
+  `planning.decision.recorded`, `planning.gate.approved`,
+  `planning.gate.invalidated` and `planning.obligation.due`, published through the
+  ledger's existing transactional outbox (unique event ids, so consumers
+  deduplicate) like every other event.
+- **Costs**: committed and paid figures with their order or invoice, and a
+  **forecast outturn** — actuals, plus committed-unpaid, plus the base on
+  uncommitted lines — with lines that cannot be forecast counted.
+- **The watch agent** also reports: a release revoked (urgent), works recorded on
+  a programme task (progress above zero) with no live release (urgent),
+  obligations due or falling due within 30 days, and applications past their
+  determination date.
+
+**Verified.** `npm test` 8,693 pass, typecheck clean. `tests/planningconsent.test.ts`
+(24 tests): an outline permission for 44 homes in two phases from G0 to a works
+release; same-person and evidence-less acceptance refused; cross-project evidence
+refused; a commercial risk accepted and a statutory one refused; a quarantined
+document blocking export and G2; a material change after G2 invalidating G0 and
+G2, returning the application to draft, with the approved manifest still
+retrievable; the event lifecycle, the made date, the 13-week clock and the
+forecast kept apart; committee resolution without the notice keeping G3 blocked;
+the draft notice refused; the statutory BNG condition; s106 execution; reserved
+matters only for outstanding matters; a release refused under the outline alone;
+a pre-commencement condition refused as a risk; one request answering three
+approved and one refused with one fee; phase 1 released while phase 2 waits on
+its CIL notice; the s106 contribution marked due; occupation blocked on the
+refused condition; a live release revoked by a new condition, with the agent's
+urgent finding; works recorded with no release; a refusal, its appeal and the
+permission the inspector grants; studies and survey windows on the critical path;
+the register; every route; the fee-schedule differences and impact.
+`tests/planning.test.ts` adds the outturn. Walked in a real browser on a fresh
+local journal through the whole lifecycle from the screen — G0, promotion,
+requirement evidence and review (the attacher's own acceptance refused), G1
+refused then approved with the risk accepted, pack, G2, submission, validation,
+committee resolution, G3 refused until the notice, the decision, a condition
+(self-verification refused, verified by a second person), G3, discharge requests
+and answers, an obligation executed, a release (self-approval refused, approved
+by a second person) with the obligation then due, the rule differences, the
+requirement filter, the manifest export, the studies with a survey window on the
+critical path; no page errors, no horizontal scroll at phone width. The walk found
+and fixed: the gate Approve buttons lost their application id (the attribute was
+escaped as text); manifest hashes shown with their algorithm prefix; approved
+gates listing accepted risks and checks that no longer applied as blockers.
+
+**Not built, stated.**
+- **Spatial lookups** (Planning Data API, Flood Map for Planning, designations,
+  heritage, TPOs) and their caching and retries: the hosts are not reachable from
+  this environment, so site facts are recorded by a person with their source —
+  which the specification permits ("manually verified evidence").
+- **Direct portal submission, automated appeal filing, the statutory biodiversity
+  metric, nationwide local-rule ingestion and other UK jurisdictions** — deferred
+  by the specification itself.
+- **Programme milestones from a release** are not written into the programme
+  baseline: a release links to a programme task and the agent flags works
+  recorded without one, but the release does not create or move programme
+  activities (the authority over the programme is another area's).
+- **Cost Control** budget, commitments and actuals are entered on the planning
+  cost line with their reference, not read from Cost Control.
+- **Jobs**: evaluations and packs run synchronously in-process (they are fast);
+  the specification's 202-and-poll shape is not used.
+- **Redacted public submission variants** and per-consultant assignment scoping
+  of evidence are not built; evidence access follows the reader's own document
+  permissions.
+- **Requirement filters** are kept for the screen's session; they are not in the
+  URL.
