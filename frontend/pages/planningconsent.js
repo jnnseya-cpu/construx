@@ -248,7 +248,9 @@ function studiesCard(reg, canCreate, canUpdate) {
       empty: 'No study planned',
       emptyDetail: 'Plan an application’s studies once it is drafted.',
       rows: reg.studies.map((study) => [
-        html`${study.title}${study.consultant ? html`<br><span class="metric-sub">${study.consultant}</span>` : ''}`,
+        html`${study.title}${study.consultant ? html`<br><span class="metric-sub">${study.consultant}</span>` : ''}${
+          study.scope ? html`<details><summary style="cursor:pointer;font-size:12px">The brief</summary><p style="font-size:12px;margin:4px 0;white-space:pre-wrap">${study.scope}</p></details>` : ''
+        }`,
         appName(reg, study.applicationId),
         html`${badge(humanise(study.applicability).toLowerCase(), tone[study.applicability])}<br><span class="metric-sub">${study.applicabilityNote ?? study.basis}</span>`,
         study.start
@@ -758,6 +760,7 @@ export function consentCommands(reg, view, base) {
           { name: 'windowTo', label: 'Survey window to (MM-DD)', type: 'text', required: false, value: study.surveyWindow?.to ?? '', placeholder: '09-30' },
           { name: 'dependsOn', label: 'Depends on', type: 'multiselect', required: false, options: siblings.map((entry) => ({ value: entry.id, label: entry.title })), value: study.dependsOn },
           { name: 'validUntil', label: 'Findings valid until', type: 'date', required: false, value: study.validUntil ?? '' },
+          { name: 'scope', label: 'The brief', type: 'textarea', rows: 4, required: false, value: study.scope ?? '', hint: 'What the study must answer, the survey work and the outputs.' },
         ],
         transform: (v) => ({
           ...(v.applicability ? { applicability: v.applicability, applicabilityNote: v.applicabilityNote ?? '' } : {}),
@@ -768,6 +771,7 @@ export function consentCommands(reg, view, base) {
           ...(v.windowFrom && v.windowTo ? { surveyWindow: { from: v.windowFrom, to: v.windowTo } } : {}),
           dependsOn: v.dependsOn ?? [],
           ...(v.validUntil ? { validUntil: v.validUntil } : {}),
+          ...(v.scope && v.scope !== (study.scope ?? '') ? { scope: v.scope } : {}),
         }),
       };
     },

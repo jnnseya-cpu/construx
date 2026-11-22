@@ -188,6 +188,7 @@ import * as planningconsents from '../domain/planning/consents.ts';
 import * as planninggates from '../domain/planning/gates.ts';
 import * as planningregister from '../domain/planning/register.ts';
 import * as planningstudies from '../domain/planning/studies.ts';
+import * as planningagents from '../domain/planning/agents.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -922,13 +923,15 @@ async function readTenderDocumentOnArrival(
     .listByTenant(engineCtx.tenantId, 'EvidenceItem')
     .filter((entry) => {
       const state = entry.state as { hash?: string; type?: string };
-      return state.hash === hash && state.type === 'TENDER_DOCUMENT';
+      // Planning documents are read on arrival for the same reason: the planning
+      // agents read what was read, and a document nobody read is one they cannot cite.
+      return state.hash === hash && (state.type === 'TENDER_DOCUMENT' || state.type === 'PLANNING_DOCUMENT');
     })
     .reverse();
   let outcome: Record<string, unknown> = {};
   let alreadyRead: Record<string, unknown> | undefined;
   for (const filing of filings) {
-    const filename = String((filing.state as { description?: string }).description ?? '').replace(/^Tender document:\s*/, '') || undefined;
+    const filename = String((filing.state as { description?: string }).description ?? '').replace(/^(Tender|Planning) document:\s*/, '') || undefined;
     const onProject =
       filing.projectId === engineCtx.projectId
         ? engineCtx
@@ -29011,6 +29014,7 @@ export const ROUTES: Route[] = [
         surveyWindow: { type: ['object', 'null'], properties: { from: { type: 'string', minLength: 5, maxLength: 5 }, to: { type: 'string', minLength: 5, maxLength: 5 } }, additionalProperties: false },
         dependsOn: { type: 'array', maxItems: 20, items: { type: 'string' } },
         validUntil: { type: 'string', minLength: 10, maxLength: 10 },
+        scope: { type: 'string', minLength: 20, maxLength: 8000 },
       },
       additionalProperties: false,
     },
@@ -29022,6 +29026,101 @@ export const ROUTES: Route[] = [
     description: 'Withdraw a release request',
     schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 1, maxLength: 1000 } }, additionalProperties: false },
     handler: (platform, ctx) => planninggates.withdrawRelease(projectContext(platform, ctx), ctx.params.releaseId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/documents',
+    description: 'File a planning document — a flood map extract, a desk study, a survey, the authority’s letter, a decision notice — so the planning agents can read it. The bytes follow by the upload route and are scanned and read on arrival',
+    schema: {
+      type: 'object',
+      required: ['hash', 'filename'],
+      properties: { hash: { type: 'string', minLength: 64, maxLength: 71 }, filename: { type: 'string', minLength: 1, maxLength: 300 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningagents.recordPlanningDocument(projectContext(platform, ctx), body<{ hash: string; filename: string }>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/planning/documents',
+    readOnly: true,
+    description: 'The planning documents on the project and how much of each was read',
+    handler: (platform, ctx) => planningagents.planningDocuments(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/planning/agents/proposals',
+    readOnly: true,
+    description: 'What the planning agents proposed, what was accepted or rejected and by whom, and the share of the work they carried',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      return { proposals: planningagents.agentProposals(engineCtx), share: planningagents.agentShare(engineCtx) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/agents/intake',
+    description: 'The intake agent: the planning need in your own words becomes a proposed site area and structured proposal, with its assumptions and the questions to answer',
+    ai: { engine: 'CONSENT', taskType: 'planning_intake', capability: 'REASONING' },
+    schema: { type: 'object', required: ['need'], properties: { need: { type: 'string', minLength: 10, maxLength: 4000 } }, additionalProperties: false },
+    handler: (platform, ctx) => planningagents.runIntake(projectContext(platform, ctx), body<{ need: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/agents/site-facts',
+    description: 'The site-facts agent: reads the planning documents and proposes each fact the rules read — flood zone, heritage, ecology, designations — quoting the passage it came from',
+    ai: {
+      engine: 'CONSENT',
+      taskType: 'planning_site_facts',
+      capability: 'REASONING',
+      quoteInputText: (engineCtx) => ingestion.packText(engineCtx, { purpose: 'PLANNING' }).text || undefined,
+    },
+    schema: { type: 'object', properties: { ingestionIds: { type: 'array', maxItems: 50, items: { type: 'string' } } }, additionalProperties: false },
+    handler: (platform, ctx) => planningagents.readSiteFacts(projectContext(platform, ctx), body<{ ingestionIds?: string[] }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/consents/:consentId/agents/conditions',
+    description: 'The conditions agent: reads the decision notice and proposes every condition word for word, with its trigger and phases, for a person to accept and a second to verify',
+    ai: { engine: 'CONSENT', taskType: 'planning_conditions', capability: 'REASONING' },
+    schema: { type: 'object', required: ['ingestionId'], properties: { ingestionId: { type: 'string', minLength: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) =>
+      planningagents.readConditions(projectContext(platform, ctx), { consentId: ctx.params.consentId as string, ingestionId: body<{ ingestionId: string }>(ctx).ingestionId }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/applications/:applicationId/agents/study-scopes',
+    description: 'The study-scope agent: drafts the consultant’s brief for each study the application needs',
+    ai: { engine: 'CONSENT', taskType: 'planning_study_scopes', capability: 'REASONING' },
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => planningagents.draftStudyScopes(projectContext(platform, ctx), { applicationId: ctx.params.applicationId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/applications/:applicationId/agents/statement',
+    description: 'The statement agent: drafts the planning statement from the record, marking anything unknown to be confirmed',
+    ai: { engine: 'CONSENT', taskType: 'planning_statement', capability: 'REASONING' },
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => planningagents.draftStatement(projectContext(platform, ctx), { applicationId: ctx.params.applicationId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/applications/:applicationId/agents/next-actions',
+    description: 'The next-actions agent: proposes an owner and a needed-by date for each open requirement, working back from the target submission',
+    ai: { engine: 'CONSENT', taskType: 'planning_next_actions', capability: 'REASONING' },
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => planningagents.adviseNextActions(projectContext(platform, ctx), { applicationId: ctx.params.applicationId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/agents/proposals/:proposalId/decide',
+    description: 'Accept or reject an agent’s proposal. Accepting runs the ordinary command under your own authority; rejecting changes nothing',
+    schema: {
+      type: 'object',
+      required: ['decision'],
+      properties: { decision: { type: 'string', enum: ['ACCEPT', 'REJECT'] }, note: { type: 'string', maxLength: 1000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningagents.decideProposal(projectContext(platform, ctx), ctx.params.proposalId as string, body<{ decision: string; note?: string }>(ctx)),
   },
   {
     method: 'GET',

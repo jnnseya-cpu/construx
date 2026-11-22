@@ -55,6 +55,8 @@ export type Study = {
   dependsOn: string[];
   validUntil?: string;
   applicabilityNote?: string;
+  /** The consultant's brief: what the study must answer, the survey work, the outputs. */
+  scope?: string;
 };
 
 export const studies = (ctx: EngineContext, applicationId?: string): Array<Study & { version: number }> =>
@@ -117,6 +119,7 @@ export function updateStudy(
     surveyWindow?: { from: string; to: string } | null;
     dependsOn?: string[];
     validUntil?: string;
+    scope?: string;
   },
 ): Study {
   guard(ctx, 'U');
@@ -135,6 +138,7 @@ export function updateStudy(
     next.status = input.status as Study['status'];
   }
   if (input.consultant !== undefined) next.consultant = input.consultant.trim();
+  if (input.scope !== undefined) next.scope = text(input.scope, 'scope', 20, 'A brief says what the study must answer and deliver.');
   for (const [field, value] of [['commissionBy', input.commissionBy], ['validUntil', input.validUntil]] as const) {
     if (value === undefined) continue;
     if (!isDate(value)) throw new DomainError('STUDY_DATE', 'A date is YYYY-MM-DD.', 422, [{ field, message: 'date' }]);

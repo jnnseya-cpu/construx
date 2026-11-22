@@ -35515,3 +35515,128 @@ gates listing accepted risks and checks that no longer applied as blockers.
   permissions.
 - **Requirement filters** are kept for the screen's session; they are not in the
   URL.
+
+## 2026-11 CONSTRUX Planning: any site, any need, and the planning agents
+
+Three changes on top of increments 1 and 2, made because the owner's brief was
+that every user brings their own land size and their own planning need
+(housing, a school, a substation, temporary accommodation or anything else), and
+that the AI agents carry the work.
+
+### Any site size (built)
+
+A site is recorded by its **stated area alone** (entered in hectares on the
+screen, held in square metres), by a drawn boundary, or both. The rules and the
+fee read the confirmed area where there is one; a drawn boundary is measured on
+the ellipsoid and the two are compared for divergence only when both exist.
+Neither given is refused (`SITE_AREA_REQUIRED`). `planning.ts`
+`recordSiteVersion`, `geometry.ts` `areaDivergence`.
+
+### Any planning need (built)
+
+A proposal carries a **development category** — housing, education, health,
+community, office, retail, industrial, hotel, temporary accommodation,
+electricity substation, energy generation or storage, mixed, other — with its
+description, floorspace, dwellings (housing and mixed only), capacity in its own
+unit (pupils, beds, bedspaces), a temporary period in months and capacity in MW
+as each applies. The rule pack (`england-planning-rules-2026-11`, hashed over
+the thresholds **and** the categories) reads the category for the flood
+vulnerability class and the zone compatibility table (sequential and exception
+tests), the EIA Schedule 2 description and threshold for the use, the consenting
+route to settle first (permitted development, section 37, a development consent
+order), and a time-limited permission for temporary development. A threshold the
+pack does not hold for a use is **a review, not a guess**. Fees for anything
+other than new dwellings go to review with their reason. Studies required by the
+need are added (transport for schools and health; noise and utilities for a
+substation). `rules.ts` `DEVELOPMENT_CATEGORIES`, `FLOOD_COMPATIBILITY`.
+
+### The planning agents (built)
+
+A tenth AI engine, **Planning consent** (`CONSENT` in `ENGINE_CONTRACTS`, active
+in every phase), and six agents on it in `backend/src/domain/planning/agents.ts`.
+Each agent files **proposals**, never the record itself:
+
+- **Intake** — the need in the user's own words becomes a proposed site area
+  (where no site is recorded) and a structured proposal with its assumptions and
+  the questions to answer. Only numbers the words state or that follow from them
+  are kept; a category outside the rules' list is dropped; dwellings are dropped
+  for a non-housing use.
+- **Site facts** — reads the project's planning documents and proposes each fact
+  the rules read, with the document and the sentence it came from. A value
+  outside the fact's list, or a quote that is not in the documents, is dropped in
+  code before anyone sees it.
+- **Conditions** — reads a decision notice and proposes each condition **word
+  for word** with its trigger and phases; a paraphrase is dropped. An accepted
+  condition still needs a second person to verify its wording, as before.
+- **Study briefs**, **the planning statement** (sections, with anything unknown
+  marked to be confirmed) and **next actions** (an owner and a needed-by date per
+  open requirement; anything that is not a real date is dropped).
+
+**A person decides.** `PLANNING_AGENT_PROPOSED` is written by the AI actor;
+`PLANNING_AGENT_PROPOSAL_DECIDED` is human. Accepting runs the ordinary command —
+`recordSiteVersion` and `recordProposal`, `recordSiteFact` (the source is the
+document and the quote), `recordCondition`, `updateStudy({ scope })`,
+`updateRequirement({ owner, dueOn })` — **under the accepting person's own
+permissions**; rejecting changes nothing. No agent approves a gate, verifies a
+condition or accepts a requirement. A decided proposal cannot be decided again.
+The screen shows what awaits a decision, what was accepted or rejected, and the
+counts (`agentShare`).
+
+**Planning documents.** `POST /planning/documents` files a document as
+`PLANNING_DOCUMENT` evidence; its bytes are scanned and read on arrival by the
+same hook that reads tender documents. `packDocuments`/`packText` in
+`evidence/pipeline.ts` gained a `purpose`: a file filed **only** as a planning
+document is left out of the tender pack, and the planning agents read only files
+filed as planning documents.
+
+**Cost and clearance.** Every agent route declares its task and is quoted before
+it runs. The text read from an upload is classified Legal-L4 (as every ingested
+file already was), so the site-facts and conditions agents reach a vendor only
+where `AI_PROVIDER_CLEARANCE` clears it that far; the others run at the default
+clearance. With no reasoning model configured the agents refuse with
+`PLANNING_AGENT_NEEDS_A_MODEL` rather than present the local stand-in's output
+as planning work. **No provider key is configured in this environment**, so the
+agents have not been run against a live model here.
+
+**Also changed.** README, the architecture diagram, the sign-in page, the public
+landing grid, the newsletter, the marketing copy and the footer link now say ten
+engines and name this one (`docfacts.test.ts` holds them to `ENGINE_CONTRACTS`).
+A study carries its brief (`scope`), shown on the studies card and editable in
+its update panel.
+
+**Verified.** `npm test` 8,713 pass, typecheck clean.
+`tests/planningagents.test.ts` (12 tests), against a stub model that slips in
+an ungrounded quote, a value outside a fact's list, a paraphrased condition, an
+unknown study id, a non-date and an unknown category: the intake recording
+nothing until accepted and then the site at 1.8 ha (authority still to confirm)
+and an education proposal; a second decision refused; the read-only planner
+refused; the no-model refusal; a planning document kept out of the tender pack;
+the grounded flood-zone fact proposed and the other two dropped; study briefs,
+an owner and date and the statement accepted and a rejection changing nothing;
+the statement drafted from the recorded facts; a verbatim condition accepted,
+unverified, its self-verification refused and a second person's accepted; the
+counts; every agent route quoted on the `CONSENT` engine and the decision route
+not an AI route. Walked in a real browser on a fresh local journal with a
+scratchpad stub model: the need typed in, the proposal accepted (site and
+proposal recorded), two documents uploaded and read on arrival, the flood-zone
+fact proposed with its quote and accepted, study briefs drafted, one accepted
+and one rejected, the statement drafted, accepted and downloaded, an owner and
+date accepted onto its requirement, the conditions read from a decision notice
+on a granted permission and the accepted condition shown awaiting verification;
+the read-only planner sees the card with no controls; no page errors; no
+horizontal scroll at phone width.
+
+**Not built, stated.**
+- **No live model run.** The prompts and the code-side checks are tested; what
+  a real model proposes for a real flood map or decision notice has not been
+  seen here (no key in this environment).
+- **Scanned PDFs** are read only as far as the existing pipeline reads them; a
+  notice that is an image with no text layer yields nothing for the agents.
+- **Bulk acceptance** is not offered: each proposal is accepted on its own.
+- The intake proposes the site from a **stated** area only; it does not draw or
+  look up a boundary (spatial lookups remain unbuilt, as above).
+- The **"95% of the work"** aim is not measured as a percentage: the screen
+  counts proposals made, accepted and rejected, which is a count of agent work,
+  not of effort.
+- **Q1 and Q2 were committed without this section** (commit `88a11aa`); this
+  section records them.

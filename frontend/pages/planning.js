@@ -3,6 +3,7 @@ import { command, commandBar } from '../lib/command.js';
 import { badge, date, exact as money, html, humanise, notice, raw, render, table } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
 import { bindConsentExtras, consentCards, consentCommands } from './planningconsent.js';
+import { agentCommands, agentsCard, bindAgentExtras, loadAgents } from './planningagents.js';
 
 /**
  * CONSTRUX Planning — the appraisal half of the first release.
@@ -43,8 +44,9 @@ export async function planning(root) {
   const base = `/v1/projects/${projectId}/planning`;
   let view;
   let reg;
+  let agentsLoaded;
   try {
-    [view, reg] = await Promise.all([api.get(base), api.get(`/v1/projects/${projectId}/planning/register`).catch((error) => ({ error }))]);
+    [view, reg, agentsLoaded] = await Promise.all([api.get(base), api.get(`/v1/projects/${projectId}/planning/register`).catch((error) => ({ error })), loadAgents(projectId)]);
   } catch (error) {
     render(
       root,
@@ -134,6 +136,7 @@ export async function planning(root) {
         }
       </section>
 
+      ${agentsCard(agentsLoaded, reg, view, { canCreate, canUpdate })}
       ${siteCard(view, canUpdate)}
       ${scenariosCard(view, canCreate)}
       ${consentCards(reg, view, { canCreate, canUpdate, canApprove })}
@@ -412,6 +415,7 @@ export async function planning(root) {
   };
 
   Object.assign(COMMANDS, consentCommands(reg, view, base));
+  Object.assign(COMMANDS, agentCommands(agentsLoaded, reg, base));
 
   root.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
@@ -421,6 +425,7 @@ export async function planning(root) {
     if (await command(make(button, root))) await draw();
   });
   bindConsentExtras(root, base, draw);
+  bindAgentExtras(root, agentsLoaded);
 }
 
 function costFields(vocab, line) {

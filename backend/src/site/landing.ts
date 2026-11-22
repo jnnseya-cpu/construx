@@ -67,6 +67,9 @@ export const ENGINES = [
   // it explains what the others compute — but it runs, bills and is contracted
   // like any engine, so it is named here too.
   ['Guide', 'Plain-English help on the step you are on, grounded in the record and charged to your own ACU wallet only when you ask for it.'],
+  // The tenth: planning consent. It reads the planning documents and drafts the
+  // planning work, and every word of it is a proposal a person accepts.
+  ['Planning consent', 'Reads flood maps, surveys and decision notices, quoting each passage it relies on, and drafts the study briefs and the statement for a person to accept.'],
 ];
 
 /**

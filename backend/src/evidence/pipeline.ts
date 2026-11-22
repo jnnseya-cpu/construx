@@ -978,9 +978,28 @@ export async function ingestionPosition(ctx: EngineContext, store: EvidenceStore
  */
 export function packDocuments(
   ctx: EngineContext,
+  options: { purpose?: 'TENDER' | 'PLANNING' } = {},
 ): Array<{ ingestionId: string; label: string; kind: string; text: string }> {
+  /*
+   * A project can carry a tender and a planning application at once. The
+   * documents filed for planning — flood map extracts, desk studies, decision
+   * notices — are not the tender pack, and a bid drafted from them would be
+   * answering a question the client never asked. A file filed only as a
+   * planning document is left out of the tender pack; the planning agents
+   * read only files filed as planning documents.
+   */
+  const filings = new Map<string, Set<string>>();
+  for (const record of ctx.ledger.list(ctx.projectId, 'EvidenceItem')) {
+    const state = record.state as { hash?: string; type?: string };
+    if (!state.hash) continue;
+    if (!filings.has(state.hash)) filings.set(state.hash, new Set());
+    filings.get(state.hash)!.add(String(state.type));
+  }
+  const planning = (hash: string) => filings.get(hash)?.has('PLANNING_DOCUMENT') ?? false;
+  const planningOnly = (hash: string) => planning(hash) && filings.get(hash)!.size === 1;
   return ingestedFiles(ctx)
     .filter((file) => file.status === 'INGESTED')
+    .filter((file) => (options.purpose === 'PLANNING' ? planning(file.hash) : !planningOnly(file.hash)))
     .map((file) => ({
       ingestionId: file.ingestionId,
       label: file.filename ?? file.classification?.kind ?? file.hash.slice(0, 8),
@@ -1000,13 +1019,13 @@ export function packDocuments(
  */
 export function packText(
   ctx: EngineContext,
-  options: { maxCharacters?: number; only?: ReadonlyArray<string> } = {},
+  options: { maxCharacters?: number; only?: ReadonlyArray<string>; purpose?: 'TENDER' | 'PLANNING' } = {},
 ): {
   text: string;
   files: Array<{ ingestionId: string; filename: string; kind: string; characters: number }>;
   omitted: string[];
 } {
-  const docs = packDocuments(ctx)
+  const docs = packDocuments(ctx, options.purpose ? { purpose: options.purpose } : {})
     .filter((doc) => !options.only || options.only.includes(doc.ingestionId))
     .sort(
     (a, b) =>

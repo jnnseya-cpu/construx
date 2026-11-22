@@ -853,6 +853,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PLANNING_RELEASE_REVOKED', 'PlanningRelease', 'UPDATE', 'DESIGN'),
   def('PLANNING_STUDY_RECORDED', 'PlanningStudy', 'CREATE', 'DESIGN', { creates: true }),
   def('PLANNING_STUDY_UPDATED', 'PlanningStudy', 'UPDATE', 'DESIGN'),
+  // The planning agents' proposals: written by the agent, decided by a person.
+  // Accepting one runs the ordinary command as that person.
+  def('PLANNING_AGENT_PROPOSED', 'PlanningAgentProposal', 'CREATE', 'DESIGN', { creates: true, aiAllowed: true }),
+  def('PLANNING_AGENT_PROPOSAL_DECIDED', 'PlanningAgentProposal', 'UPDATE', 'DESIGN'),
   def('BID_SIGN_OFF_RECORDED', 'BidSignOff', 'APPROVE', 'PROCUREMENT', { creates: true }),
   def('SUBMISSION_FILE_RECORDED', 'BidSignOff', 'UPDATE', 'PROCUREMENT', { creates: true }),
   // A compliance undertaking confirmed: the agent drafts the statement, a person
