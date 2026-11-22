@@ -196,9 +196,10 @@ describe('fees: published by two people before anything is payable', () => {
 });
 
 describe('costs: the known subtotal, and the liabilities kept apart', () => {
-  it('reproduces the specification’s full-application range from the allowances and the December fee', () => {
-    planning.seedIllustrativeAllowances(as('pm'));
-    refused(() => planning.seedIllustrativeAllowances(as('pm')), 'ALLOWANCES_EXIST');
+  it('adds the project’s own allowances and the December fee into one known range', () => {
+    // The project's own lines, entered with their source — no example figures.
+    planning.recordCostLine(as('pm'), { label: 'Planning and design', costCode: 'PL-01', kind: 'ALLOWANCE', gate: 'G1', source: 'Planning consultant’s fee range, Oct 2026', lowMinor: 1_500_000, highMinor: 3_500_000, vatBasis: 'EXCLUDED', confidence: 'LOW', estimateDate: '2026-11-22', cashTrigger: 'Appointment and stage payments' });
+    planning.recordCostLine(as('pm'), { label: 'Ecology and BNG design', costCode: 'PL-03', kind: 'ALLOWANCE', gate: 'G1', source: 'Ecologist’s budget range, Oct 2026', lowMinor: 500_000, highMinor: 2_000_000, vatBasis: 'EXCLUDED', confidence: 'LOW', estimateDate: '2026-11-22', cashTrigger: 'Commission, by survey window' });
     const quote = planning.feeQuotes(as('pm')).find((entry) => entry.status === 'CALCULATED')!;
     planning.recordCostLine(as('pm'), { label: 'Full planning fee', costCode: 'PL-10', gate: 'G2', vatBasis: 'NOT_APPLICABLE', confidence: 'HIGH', estimateDate: '2026-11-22', cashTrigger: 'On submission', feeQuoteId: quote.id });
     refused(
@@ -206,10 +207,10 @@ describe('costs: the known subtotal, and the liabilities kept apart', () => {
       'FEE_QUOTE_ALREADY_COSTED',
     );
     const summary = planning.costSummary(as('pm'));
-    assert.equal(summary.known.lowMinor, 6_772_000);
-    assert.equal(summary.known.highMinor, 13_272_000);
+    assert.equal(summary.known.lowMinor, 5_272_000);
+    assert.equal(summary.known.highMinor, 8_772_000);
     assert.equal(summary.known.baseMinor, null, 'the allowances give a range, not a base');
-    assert.equal(summary.known.baseMissing, 4);
+    assert.equal(summary.known.baseMissing, 2);
     assert.ok(summary.unresolved.some((entry) => /CIL: liability unknown/.test(entry)));
   });
 
@@ -225,18 +226,18 @@ describe('costs: the known subtotal, and the liabilities kept apart', () => {
   it('keeps a liability out of the cash total, and an unknown amount unknown', () => {
     planning.recordCostLine(as('pm'), { label: 'Section 106 contributions', costCode: 'PL-20', kind: 'LIABILITY', gate: 'G3', source: 'Heads of terms not yet issued', lowMinor: null, baseMinor: null, highMinor: null, vatBasis: 'NOT_APPLICABLE', confidence: 'LOW', estimateDate: '2026-11-22', cashTrigger: 'Per the agreement’s triggers' });
     const summary = planning.costSummary(as('pm'));
-    assert.equal(summary.known.lowMinor, 6_772_000, 'unchanged');
+    assert.equal(summary.known.lowMinor, 5_272_000, 'unchanged');
     assert.equal(summary.liabilities.length, 1);
     assert.equal(summary.liabilities[0]!.lowMinor, null);
     assert.ok(!summary.unresolved.some((entry) => /Section 106/.test(entry)));
   });
 
   it('revises a line as a new version, refuses a stale one, and will not rewrite a fee line’s figure', () => {
-    const line = planning.costLines(as('pm')).find((entry) => entry.label === 'Technical surveys')!;
+    const line = planning.costLines(as('pm')).find((entry) => entry.label === 'Ecology and BNG design')!;
     refused(() => planning.reviseCostLine(as('pm'), line.id, { lowMinor: 4_000_000 }), 'COST_ORDER');
-    planning.reviseCostLine(as('pm'), line.id, { lowMinor: 1_400_000, source: 'Quote from Example Surveys Ltd, 21 Nov 2026', confidence: 'MEDIUM' });
+    planning.reviseCostLine(as('pm'), line.id, { lowMinor: 400_000, source: 'Quote from Example Ecology Ltd, 21 Nov 2026', confidence: 'MEDIUM' });
     const stale = { ...as('pm'), expectedVersion: line.version };
-    refused(() => planning.reviseCostLine(stale, line.id, { lowMinor: 1_300_000 }), 'VERSION_CONFLICT');
+    refused(() => planning.reviseCostLine(stale, line.id, { lowMinor: 300_000 }), 'VERSION_CONFLICT');
     const fee = planning.costLines(as('pm')).find((entry) => entry.kind === 'STATUTORY_FEE')!;
     refused(() => planning.reviseCostLine(as('pm'), fee.id, { lowMinor: 1 }), 'COST_LINE_FROM_QUOTE');
     // Commitments and actuals feed the outturn: actual + committed-unpaid + uncommitted base.
@@ -246,12 +247,12 @@ describe('costs: the known subtotal, and the liabilities kept apart', () => {
     const outturn = planning.costSummary(as('pm')).outturn;
     assert.equal(outturn.actualMinor, 500_000);
     assert.equal(outturn.committedMinor, 1_700_000);
-    // The fee line (base £32,720) is uncommitted; the allowances without a base cannot be forecast.
+    // The fee line (base £32,720) is uncommitted; the allowance without a base cannot be forecast.
     assert.equal(outturn.uncommittedMinor, 3_272_000);
     assert.equal(outturn.minor, 500_000 + 1_700_000 + 3_272_000);
-    assert.equal(outturn.unforecast, 3);
-    planning.reviseCostLine(as('pm'), line.id, { withdraw: { reason: 'Surveys now in the consultant appointment' } });
-    assert.equal(planning.costSummary(as('pm')).known.lowMinor, 6_772_000 - 1_200_000);
+    assert.equal(outturn.unforecast, 1);
+    planning.reviseCostLine(as('pm'), line.id, { withdraw: { reason: 'Ecology now in the consultant appointment' } });
+    assert.equal(planning.costSummary(as('pm')).known.lowMinor, 5_272_000 - 500_000);
   });
 });
 
@@ -295,7 +296,7 @@ describe('the routes', () => {
       'POST /v1/projects/:projectId/planning/fee-quotes',
       'POST /v1/projects/:projectId/planning/costs',
       'PATCH /v1/projects/:projectId/planning/costs/:costLineId',
-      'POST /v1/projects/:projectId/planning/costs/illustrative-allowances',
+      'POST /v1/projects/:projectId/planning/applications/:applicationId/budget',
       'POST /v1/projects/:projectId/planning/rule-versions/:version/prepare',
       'POST /v1/projects/:projectId/planning/rule-versions/:version/publish',
       'POST /v1/projects/:projectId/planning/rule-versions/:version/return',

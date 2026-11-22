@@ -64,7 +64,6 @@ export async function planning(root) {
   const sites = view.siteRevisions;
   const lead = view.scenarios.find((entry) => entry.evaluation) ?? view.scenarios[0];
   const quotedIds = new Set(view.lines.filter((line) => line.status === 'ACTIVE' && line.feeQuoteId).map((line) => line.feeQuoteId));
-  const anyAllowance = view.lines.some((line) => line.status === 'ACTIVE' && line.kind === 'ALLOWANCE');
   const publishedFees = view.rules.filter((rule) => rule.kind === 'FEE_SCHEDULE' && rule.status === 'PUBLISHED').length;
 
   render(
@@ -141,7 +140,7 @@ export async function planning(root) {
       ${scenariosCard(view, canCreate)}
       ${consentCards(reg, view, { canCreate, canUpdate, canApprove })}
       ${feesCard(view, quotedIds, canCreate, publishedFees)}
-      ${costsCard(view, canCreate, canUpdate, anyAllowance)}
+      ${costsCard(view, canCreate, canUpdate, reg)}
       ${rulesCard(view, canUpdate, canApprove)}
     `,
   );
@@ -380,14 +379,15 @@ export async function planning(root) {
         transform: (v) => ({ withdraw: { reason: v.reason } }),
       };
     },
-    'pl-allowances': () => ({
-      title: 'Start from the illustrative allowances',
+    'pl-budget': (button) => ({
+      title: `Start ${button.dataset.reference}’s budget`,
       intent:
-        'Four allowances from the CONSTRUX Planning specification — planning and design £15k–£35k, technical surveys £12k–£30k, ecology and BNG ' +
-        'design £5k–£20k, legal and pre-application £3k–£15k — each labelled as an assumption to replace with a quote, excluding VAT, with no base figure.',
-      path: `${base}/costs/illustrative-allowances`,
-      submitLabel: 'Add the four allowances',
+        'One line for planning and design, one for legal and pre-application work, and one for each study this application’s own need calls for — ' +
+        'each named for it and left without a figure until it is priced from a quote or an estimate. Lines already there are not added twice.',
+      path: `/v1/projects/${projectId}/planning/applications/${button.dataset.application}/budget`,
+      submitLabel: 'Add the lines',
       fields: [],
+      report: (res) => ({ title: 'Lines added', message: `${res.length} line${res.length === 1 ? '' : 's'} to price.`, tone: 'ok' }),
     }),
     'pl-rule-prepare': (button) => ({
       title: `Check ${button.dataset.version}`,
@@ -578,12 +578,13 @@ function feesCard(view, quotedIds, canCreate, publishedFees) {
   </section>`;
 }
 
-function costsCard(view, canCreate, canUpdate, anyAllowance) {
+function costsCard(view, canCreate, canUpdate, reg) {
+  const budgetable = reg.error ? [] : reg.applications.filter((application) => reg.studies.some((study) => study.applicationId === application.id));
   const costs = view.costs;
   const active = view.lines.filter((line) => line.status === 'ACTIVE');
   const withdrawn = view.lines.filter((line) => line.status === 'WITHDRAWN');
   return html`<section class="card" style="margin-bottom:14px" aria-labelledby="pl-cost-h" data-planning-costs>
-    <h2 id="pl-cost-h">Planning costs ${canCreate && !anyAllowance ? html`<button class="btn quiet sm" data-command="pl-allowances">Start from illustrative allowances</button>` : ''}</h2>
+    <h2 id="pl-cost-h">Planning costs ${canCreate ? budgetable.map((application) => html`<button class="btn quiet sm" data-command="pl-budget" data-application="${application.id}" data-reference="${application.reference}">Start ${application.reference}’s budget</button> `) : ''}</h2>
     <div class="grid g4" style="margin-top:8px">
       <div><h3>Known subtotal</h3>${
         costs.known.lines === 0
@@ -604,7 +605,7 @@ function costsCard(view, canCreate, canUpdate, anyAllowance) {
     ${table({
       headers: ['Line', 'Kind', 'Gate', 'Low – high', 'Base', 'VAT', 'Confidence', 'Source', ''],
       empty: 'No cost line yet',
-      emptyDetail: 'Add a line, add a calculated fee, or start from the illustrative allowances.',
+      emptyDetail: 'Add a line, add a calculated fee, or start an application’s budget once its studies are planned.',
       rows: active.map((line) => [
         html`${line.label}<br><span class="metric-sub">${line.costCode}${line.phase ? ` · ${line.phase}` : ''} · ${line.cashTrigger}</span>`,
         humanise(line.kind),

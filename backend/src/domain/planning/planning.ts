@@ -430,8 +430,8 @@ export function recordProposal(
     /** Accepted from earlier clients: HOUSING is RESIDENTIAL. */
     use?: string;
     description?: string;
-    dwellingCount: number | null;
-    createdGiaM2: number | null;
+    dwellingCount?: number | null;
+    createdGiaM2?: number | null;
     temporaryMonths?: number | null;
     capacityMW?: number | null;
     capacityUnits?: { count: number; unit: string } | null;
@@ -807,39 +807,6 @@ export function reviseCostLine(ctx: EngineContext, id: string, input: CostInput 
   write(ctx, { eventType: 'PLANNING_COST_LINE_REVISED', entity: { refType: 'PlanningCostLine', refId: id }, nextState: next, reason: input.withdraw ? `${next.label} withdrawn: ${next.withdrawnReason}` : `${next.label} revised` });
   planningChanged(ctx);
   return next;
-}
-
-/**
- * The specification's illustrative full-application allowances, as a starting
- * point a person chooses to take. Each is labelled as an allowance to replace
- * with a quote, low confidence, VAT excluded, no base figure — the source gives
- * a range, not a most-likely number, and none is invented here.
- */
-export const ILLUSTRATIVE_ALLOWANCES = [
-  { label: 'Planning and design', costCode: 'PL-01', lowMinor: 1_500_000, highMinor: 3_500_000, cashTrigger: 'Appointment and stage payments to submission' },
-  { label: 'Technical surveys', costCode: 'PL-02', lowMinor: 1_200_000, highMinor: 3_000_000, cashTrigger: 'Commission, by survey window' },
-  { label: 'Ecology and BNG design', costCode: 'PL-03', lowMinor: 500_000, highMinor: 2_000_000, cashTrigger: 'Commission, by survey window' },
-  { label: 'Legal and pre-application', costCode: 'PL-04', lowMinor: 300_000, highMinor: 1_500_000, cashTrigger: 'Pre-application request and title work' },
-] as const;
-
-export function seedIllustrativeAllowances(ctx: EngineContext): CostLine[] {
-  guard(ctx, 'C');
-  if (costLines(ctx).some((line) => line.status === 'ACTIVE' && line.kind === 'ALLOWANCE')) {
-    throw new DomainError('ALLOWANCES_EXIST', 'This project already has allowances; add or revise them one by one.', 409);
-  }
-  const today = new Date().toISOString().slice(0, 10);
-  return ILLUSTRATIVE_ALLOWANCES.map((allowance) =>
-    recordCostLine(ctx, {
-      ...allowance,
-      kind: 'ALLOWANCE',
-      gate: 'G1',
-      source: 'Illustrative allowance from the CONSTRUX Planning specification — scenario assumption, replace with a quote',
-      baseMinor: null,
-      vatBasis: 'EXCLUDED',
-      confidence: 'LOW',
-      estimateDate: today,
-    }),
-  );
 }
 
 export type CostSummary = {

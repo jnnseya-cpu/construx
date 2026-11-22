@@ -35274,9 +35274,10 @@ specification says owns it; widening L3 clearance was not done silently.
   sends PATCH with If-Match). Withdrawal keeps the line with its reason. The
   summary gives the **known subtotal**, the cash lines with unknown amounts, the
   liabilities **apart from the cash figure**, and the unresolved liabilities (CIL
-  without schedule evidence; section 106 with no line). The specification's four
-  illustrative allowances can be taken as a starting point, labelled as
-  assumptions to replace with quotes, VAT excluded, no base figure invented.
+  without schedule evidence; section 106 with no line). *(The specification's
+  four illustrative allowances, fixed sums from its 3 ha / 40-home example, were
+  offered here as a starting point; they were retired — see "the budget from the
+  need" below.)*
 - **The planning watch agent** (`AGT-PLANNING-WATCH`, module PLANNING,
   observe-only): a rule version changed since publication, a material red-line
   area discrepancy, a latest proposal version never evaluated, and a current
@@ -35598,14 +35599,41 @@ clearance. With no reasoning model configured the agents refuse with
 as planning work. **No provider key is configured in this environment**, so the
 agents have not been run against a live model here.
 
+### The budget from the need (built; the example allowances retired)
+
+The specification's four illustrative allowances were fixed sums from its own
+example (3 ha, 40 homes) and were offered to every project whatever its need —
+a substation and a care home were offered the same £35k–£100k as the example
+housing scheme. They are removed (function, route and button). In their place,
+**`POST /planning/applications/:applicationId/budget`** (`studies.ts`
+`budgetFromNeed`) starts the budget from **that application's own need and
+studies**: a line for planning and design, one for legal and pre-application
+work and one for each study not ruled out, each named for the application, its
+source naming the need, low confidence, VAT excluded and **no figure** until
+somebody prices it from a quote or an estimate. It needs the studies planned
+first (`STUDIES_FIRST`), adds only lines not already there
+(`BUDGET_LINES_EXIST` when none are missing), and the screen offers it per
+application once its studies are planned. The lines count as unknown amounts and
+as unquoted allowances at G1 until priced.
+
+**Dwellings no longer demanded of every need.** The proposals route required
+`dwellingCount` and `createdGiaM2` on every request, so a substation or a school
+recorded through the API had to send a dwelling count of null; the domain
+already treated both as optional. The schema now requires only the site, the
+scenario name and the route.
+
 **Also changed.** README, the architecture diagram, the sign-in page, the public
 landing grid, the newsletter, the marketing copy and the footer link now say ten
 engines and name this one (`docfacts.test.ts` holds them to `ENGINE_CONTRACTS`).
 A study carries its brief (`scope`), shown on the studies card and editable in
 its update panel.
 
-**Verified.** `npm test` 8,713 pass, typecheck clean.
-`tests/planningagents.test.ts` (12 tests), against a stub model that slips in
+**Verified.** `npm test` 8,715 pass, typecheck clean. `tests/planningagents.test.ts` (14 tests, including a
+school's budget started from its own studies, with the transport study costed
+and no figure on any line, and a substation recorded by its MW alone). Walked in a
+browser for a 0.45 ha substation: the budget button appears once its studies are
+planned, adds twelve lines named for its application with no figure, and a
+second press is refused; no page errors, no horizontal scroll at phone width, against a stub model that slips in
 an ungrounded quote, a value outside a fact's list, a paraphrased condition, an
 unknown study id, a non-date and an unknown category: the intake recording
 nothing until accepted and then the site at 1.8 ha (authority still to confirm)

@@ -28549,7 +28549,9 @@ export const ROUTES: Route[] = [
     description: 'Record a proposal version for a scenario: the site it sits on, full or outline, the planning need (housing, a school, a substation, temporary accommodation or anything else), its dwellings, floorspace, capacity or period (any may be unknown) and its assumptions',
     schema: {
       type: 'object',
-      required: ['siteVersionId', 'scenarioName', 'route', 'dwellingCount', 'createdGiaM2'],
+      // Dwellings and floorspace are optional: a substation has no dwellings, and
+      // either may be unknown at appraisal. The need decides which measures apply.
+      required: ['siteVersionId', 'scenarioName', 'route'],
       properties: {
         siteVersionId: { type: 'string', minLength: 1 },
         scenarioName: { type: 'string', minLength: 1, maxLength: 120 },
@@ -28655,10 +28657,10 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
-    pattern: '/v1/projects/:projectId/planning/costs/illustrative-allowances',
-    description: 'Start the planning budget from the specification’s four illustrative allowances, labelled as assumptions to replace with quotes',
+    pattern: '/v1/projects/:projectId/planning/applications/:applicationId/budget',
+    description: 'Start the planning budget from this application’s own need and studies: a line for planning and design, legal and pre-application work and each study, each with no figure until it is priced',
     schema: { type: 'object', properties: {}, additionalProperties: false },
-    handler: (platform, ctx) => planningconsent.seedIllustrativeAllowances(projectContext(platform, ctx)),
+    handler: (platform, ctx) => planningstudies.budgetFromNeed(projectContext(platform, ctx), ctx.params.applicationId as string),
   },
   {
     method: 'POST',

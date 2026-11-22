@@ -2,7 +2,7 @@ import { DomainError } from '../../core/errors.ts';
 import { ulid } from '../../core/ids.ts';
 import { write, type EngineContext } from '../../engines/context.ts';
 import { applications, today } from './applications.ts';
-import { evaluations, guard, planningChanged, proposals, text } from './planning.ts';
+import { costLines, evaluations, guard, planningChanged, proposals, recordCostLine, text, type CostLine } from './planning.ts';
 import { DEVELOPMENT_CATEGORIES } from './rules.ts';
 
 /**
@@ -233,3 +233,43 @@ export function studySchedule(ctx: EngineContext, applicationId: string): StudyS
 export const studiesForRegister = (ctx: EngineContext) =>
   applications(ctx).flatMap((application) => (studies(ctx, application.id).length ? studySchedule(ctx, application.id) : []));
 
+
+/**
+ * The planning budget's lines, from this application's own need and studies.
+ *
+ * Every project brings its own site and its own need — a school, a substation,
+ * temporary accommodation — so the budget is not started from anybody's
+ * example figures. It is one line for planning and design, one for legal and
+ * pre-application work, and one for each study the application still needs,
+ * each named for this application, with **no figure**: the amount comes from a
+ * quote or an estimate somebody puts their name to. Lines already there are not
+ * added twice.
+ */
+export function budgetFromNeed(ctx: EngineContext, applicationId: string): CostLine[] {
+  guard(ctx, 'C');
+  const application = applications(ctx).find((entry) => entry.id === applicationId);
+  if (!application) throw new DomainError('APPLICATION_NOT_FOUND', 'No such application on this project.', 404);
+  const planned = studies(ctx, applicationId).filter((study) => study.applicability !== 'NOT_REQUIRED');
+  if (studies(ctx, applicationId).length === 0) {
+    throw new DomainError('STUDIES_FIRST', `Plan ${application.reference}’s studies first, so the budget has a line for each study its need calls for.`, 409);
+  }
+  const subject = application.proposalId ? proposals(ctx).find((entry) => entry.id === application.proposalId) : undefined;
+  const need = subject ? `${DEVELOPMENT_CATEGORIES[subject.category]?.label.toLowerCase() ?? subject.category}, ${subject.scenarioName}` : application.route.replace(/_/g, ' ');
+  const source = `A line for ${application.reference} (${need}) — no figure yet: price it from a quote or an estimate`;
+  const wanted = [
+    { label: `Planning and design — ${application.reference}`, costCode: 'PL-01', cashTrigger: 'Appointment and stage payments to submission' },
+    { label: `Legal and pre-application — ${application.reference}`, costCode: 'PL-04', cashTrigger: 'Pre-application request and title work' },
+    ...planned.map((study, index) => ({
+      label: `${study.title} — ${application.reference}`,
+      costCode: `PL-S${String(index + 1).padStart(2, '0')}`,
+      cashTrigger: study.surveyWindow ? 'Commission, by survey window' : 'Commission',
+    })),
+  ];
+  const existing = new Set(costLines(ctx).filter((line) => line.status === 'ACTIVE').map((line) => line.label));
+  const missing = wanted.filter((line) => !existing.has(line.label));
+  if (missing.length === 0) throw new DomainError('BUDGET_LINES_EXIST', `${application.reference}’s budget already has a line for each item; revise them one by one.`, 409);
+  const on = today();
+  return missing.map((line) =>
+    recordCostLine(ctx, { ...line, kind: 'ALLOWANCE', gate: 'G1', source, lowMinor: null, baseMinor: null, highMinor: null, vatBasis: 'EXCLUDED', confidence: 'LOW', estimateDate: on }),
+  );
+}

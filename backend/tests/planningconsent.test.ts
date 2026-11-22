@@ -97,7 +97,7 @@ before(async () => {
     planning.prepareRuleVersion(as('pm'), { version, checkNote: 'Checked against the published source, figure by figure' });
     planning.publishRuleVersion(as('owner'), { version, note: 'Second check' });
   }
-  planning.seedIllustrativeAllowances(as('pm'));
+  planning.recordCostLine(as('pm'), { label: 'Planning and design', costCode: 'PL-01', kind: 'ALLOWANCE', gate: 'G1', source: 'Planning consultant’s fee range, Oct 2026', lowMinor: 1_500_000, highMinor: 3_500_000, vatBasis: 'EXCLUDED', confidence: 'LOW', estimateDate: '2026-10-01', cashTrigger: 'Appointment and stage payments' });
 });
 
 describe('G0 and the application', () => {

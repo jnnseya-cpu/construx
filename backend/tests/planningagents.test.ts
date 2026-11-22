@@ -178,7 +178,6 @@ before(async () => {
     planning.prepareRuleVersion(as('pm'), { version, checkNote: 'Checked against the published source, figure by figure' });
     planning.publishRuleVersion(as('owner'), { version, note: 'Second check' });
   }
-  planning.seedIllustrativeAllowances(as('pm'));
 });
 
 after(() => {
@@ -292,6 +291,23 @@ describe('the application agents', () => {
     assert.equal(studies.studies(as('pm'), application.id).filter((study) => study.scope).length, 1, 'a rejected brief changes nothing');
   });
 
+  it('starts the school’s budget from its own need and studies, with no figure until it is priced', () => {
+    const fresh = apps.draftApplication(as('pm'), { route: 'full', proposalId: school.id, targetSubmissionOn: '2027-06-30' });
+    assert.throws(() => studies.budgetFromNeed(as('pm'), fresh.id), (error: { code?: string }) => error.code === 'STUDIES_FIRST');
+    assert.throws(() => studies.budgetFromNeed(as('planner'), application.id), (error: { code?: string }) => error.code === 'ACCESS_DENIED');
+    const lines = studies.budgetFromNeed(as('pm'), application.id);
+    const planned = studies.studies(as('pm'), application.id).filter((study) => study.applicability !== 'NOT_REQUIRED');
+    assert.equal(lines.length, planned.length + 2);
+    assert.ok(lines.some((line) => line.label === `Transport assessment or statement, and access — ${application.reference}`), 'a school’s transport study is costed');
+    for (const line of lines) {
+      assert.equal(line.lowMinor, null);
+      assert.equal(line.highMinor, null);
+      assert.match(line.source, /school, college or nursery/);
+    }
+    assert.equal(planning.costSummary(as('pm')).unknownCashLines.length, lines.length, 'every line waits to be priced');
+    assert.throws(() => studies.budgetFromNeed(as('pm'), application.id), (error: { code?: string }) => error.code === 'BUDGET_LINES_EXIST');
+  });
+
   it('proposes an owner and a needed-by date, dropping one that is not a date', async () => {
     const run = await agents.adviseNextActions(as('pm'), { applicationId: application.id });
     assert.equal(run.proposed, 1);
@@ -311,6 +327,19 @@ describe('the application agents', () => {
     const sent = requests.at(-1)!.payload as Record<string, any>;
     assert.equal(sent.facts.FLOOD_ZONE.value, '3a', 'the statement is drafted from the recorded facts');
     assert.equal(agents.decideProposal(as('pm'), statement!.id, { decision: 'ACCEPT' }).status, 'ACCEPTED');
+  });
+});
+
+describe('a need with no dwellings', () => {
+  it('records a substation by its own measures alone — no dwelling count or floorspace demanded', () => {
+    const route = ROUTES.find((entry) => entry.method === 'POST' && entry.pattern === '/v1/projects/:projectId/planning/proposals')!;
+    const required = (route.schema as { required: string[] }).required;
+    assert.ok(!required.includes('dwellingCount') && !required.includes('createdGiaM2'));
+    const substation = planning.recordProposal(as('pm'), { siteVersionId: planning.siteVersions(as('pm')).at(-1)!.id, scenarioName: '132/33 kV substation', route: 'full', category: 'ELECTRICITY_SUBSTATION', capacityMW: 90 });
+    assert.equal(substation.dwellings, null);
+    assert.equal(substation.createdGiaM2, null);
+    assert.equal(substation.capacityMW, 90);
+    planning.evaluateProposal(as('pm'), { proposalId: substation.id });
   });
 });
 
