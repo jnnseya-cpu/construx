@@ -110,6 +110,9 @@ async function send(method, path, body, options, token) {
   if (token && !options.anonymous) headers.Authorization = `Bearer ${token}`;
   // Commands are retried by users far more often than anyone admits.
   if (method !== 'GET') headers['Idempotency-Key'] = options.idempotencyKey ?? crypto.randomUUID();
+  // The version the person read, for a revision of an existing record: the
+  // platform refuses with 412 if somebody else has changed it since.
+  if (options.ifMatch !== undefined) headers['If-Match'] = String(options.ifMatch);
 
   return fetch(path, {
     method,
@@ -399,6 +402,7 @@ export const api = {
   read: (path, area, sensitivity) => read(path, area, sensitivity),
   post: (path, body, options) => request('POST', path, body ?? {}, options),
   put: (path, body, options) => request('PUT', path, body ?? {}, options),
+  patch: (path, body, options) => request('PATCH', path, body ?? {}, options),
   // No body. The one DELETE the console issues cancels an erasure request, and
   // the route's schema is a closed empty object — it refuses a stray body
   // rather than ignoring one.

@@ -6,7 +6,7 @@ An AI-agent Construction Operating System covering the full asset lifecycle:
 Concept → Design → Tender → Construction → Commissioning → Handover → 30+ year O&M
 ```
 
-One data spine, nine AI engines, one set of governance rules — for building
+One data spine, ten AI engines, one set of governance rules — for building
 construction, civil infrastructure and specialised works alike. No sector
 verticals, no duplicated logic.
 
@@ -78,7 +78,7 @@ together or not at all.
   that applies what the primary ships, answers every read and refuses every
   write. See `docs/RUNBOOK.md`, "The ledger store".
 
-### Nine AI engines
+### Ten AI engines
 
 | Engine | Covers | Deterministic maths it owns |
 |---|---|---|
@@ -90,6 +90,7 @@ together or not at all.
 | Contracts, Change & Claims | Contracts, variations, delay events, claims, notices | Delay attribution with concurrency, entitlement scoring |
 | Handover & O&M | Commissioning, handover, assets, defects, maintenance | Reliability-adjusted lifecycle forecasting |
 | Executive | Portfolio scenario modelling and the weekly board position | Ranked actions with reasons, portfolio exposure |
+| Planning consent | The planning need, site facts read from planning documents, conditions read from the decision notice, study briefs, the planning statement and next actions — each a proposal a person accepts | None — the planning rules, fees, gates and study schedule are computed by the planning domain; the engine reads and drafts, citing its source |
 | Guide | Plain-English help on the step you are on, grounded in the record, charged to your own ACU wallet on request | None — it explains the arithmetic the other engines own, and invents no figure |
 
 The split between computed and inferred is deliberate and visible. Critical

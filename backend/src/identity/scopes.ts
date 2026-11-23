@@ -47,6 +47,8 @@ export type Scope =
   // radius an integration token has anywhere in this platform.
   | 'bidservices:read'
   | 'bidservices:write'
+  | 'planning:read'
+  | 'planning:write'
   | 'media:upload'
   | 'media:read'
   | 'admin:*';
@@ -82,6 +84,7 @@ const AREA_SCOPES: Record<CapabilityArea, { read: Scope; write: Scope }> = {
   BILLING_ACU: { read: 'billing:read', write: 'billing:write' },
   SITE_SERVICES: { read: 'siteservices:read', write: 'siteservices:write' },
   BID_SERVICES: { read: 'bidservices:read', write: 'bidservices:write' },
+  PLANNING_CONSENT: { read: 'planning:read', write: 'planning:write' },
 };
 
 const WRITE_CODES = new Set<PermissionCode>(['C', 'U', 'A', 'I', 'G']);

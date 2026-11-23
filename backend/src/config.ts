@@ -1781,6 +1781,9 @@ export const config = {
     business: {
       legalName: str('SITE_LEGAL_NAME', 'CONSTRUX'),
       email: str('SITE_CONTACT_EMAIL', 'contact@construxvg.com'),
+      // The operator's registration with the Information Commissioner's Office,
+      // given by the owner. Shown in the footer and on the Privacy Policy.
+      icoRegistration: str('SITE_ICO_REGISTRATION', 'C2089949'),
       phone: str('SITE_CONTACT_PHONE', ''),
       addressStreet: str('SITE_ADDRESS_STREET', ''),
       addressLocality: str('SITE_ADDRESS_LOCALITY', ''),

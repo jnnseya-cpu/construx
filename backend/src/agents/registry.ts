@@ -4,6 +4,7 @@ import * as planning from '../engines/planning.ts';
 import { LIFECYCLE_AGENTS } from './lifecycle.ts';
 import { ETABLIX_AGENTS } from './etablix.ts';
 import { BID_ON_AGENTS } from './bidon.ts';
+import { PLANNING_AGENTS } from './planning.ts';
 import { FIELD_AGENTS } from './field.ts';
 import { PLATFORM_AGENTS } from './platform.ts';
 import type { AgentDefinition, AgentOutput, Finding, ProposedCommand } from './types.ts';
@@ -1440,6 +1441,8 @@ export const AGENTS: AgentDefinition[] = [
   // `module: 'BID_ON'` for the same reason the ETABLIX fleet carries its own:
   // the runtime refuses to run it for a tenancy without the grant.
   ...BID_ON_AGENTS,
+  // The CONSTRUX Planning watch, carrying `module: 'PLANNING'` for the same reason.
+  ...PLANNING_AGENTS,
 ];
 
 export function agentsByDivision(division: AgentDefinition['division']): AgentDefinition[] {

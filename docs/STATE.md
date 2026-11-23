@@ -35144,3 +35144,527 @@ errors.
 
 **Not proved here:** whether a real model finds the published scale in a real
 pack — the stand-in returns a fixed reading, and no provider is called.
+
+## 2026-11 the ICO registration on the public site
+
+The owner's registration number with the Information Commissioner's Office,
+**C2089949**, is now on the public site.
+
+- `config.site.business.icoRegistration` (`SITE_ICO_REGISTRATION`, default
+  `C2089949`, listed in `.env.example`). `site/business.ts` `icoRegistrationOf`
+  keeps it only in the form the register prints, letters then digits; a
+  malformed value is not shown.
+- **Footer of every page:** "ICO registration C2089949" beside the legal name
+  and contact email.
+- **Privacy Policy:** a new "Who we are" section naming the operator (the
+  configured legal name), the ICO registration and the contact address for data
+  requests. "Your rights" now states the right to complain to the ICO, linked to
+  ico.org.uk. The policy's own date moved to 17 November 2026; the Terms and
+  Policies dates did not.
+
+**Verified:** `npm test` 8,625 pass, typecheck clean;
+`tests/sitebusiness.test.ts` covers the format rule, the policy text and the
+footer. Rendered in a real browser at desktop and phone width with no page errors
+and no horizontal scroll.
+
+**Not verified here:** the entry on the ICO's public register. ico.org.uk is not
+reachable from this environment, so the number is shown as given and is not
+linked to a register page.
+
+**Recorded, not changed:** the Privacy Policy does not say when CONSTRUX is the
+controller and when the customer company is (and CONSTRUX its processor) for
+project data. The configured legal name is still "CONSTRUX"; if a registered
+company operates it, set `SITE_LEGAL_NAME` to that company's name.
+
+## 2026-11 CONSTRUX Planning, increment 1: the red line, the rules, the fee, the costs
+
+The owner's *CONSTRUX Planning — implementation specification v1.0* (22 November
+2026) and its fee reference kernel (`CONSTRUX_Planning_Fee_Reference.py`). This
+increment is the specification's delivery steps 1 and 2 (foundation and
+appraisal). Steps 3 to 5 — applications, consents, gates and the production
+checks — are **not built yet**; see "Not built" below.
+
+**Where it lives.** `backend/src/domain/planning/` (`fees.ts`, `geometry.ts`,
+`rules.ts`, `planning.ts`), `backend/src/agents/planning.ts`, routes under
+`/v1/projects/:projectId/planning`, and the Planning screen
+(`frontend/pages/planning.js`) in the Deliver group of the menu.
+
+**Feature flag: the PLANNING module.** The specification asks for a feature flag;
+the platform's existing mechanism for one is the module grant
+(`identity/modules.ts`), so Planning is a restricted module the operator grants
+company by company, like Bid-On. Every planning command calls `requireModule`,
+and the screen is absent from the menu for a company without it. No price is
+attached to the module.
+
+**Permission area: `PLANNING_CONSENT`** (new). Authoring: DEVELOPMENT_MANAGER,
+PM, QS, COMMERCIAL_MANAGER, DESIGNER, PRINCIPAL_DESIGNER (EPC also approves).
+Approval: EXECUTIVE, PROJECT_DIRECTOR, EPC and OWNER. Read only: ENTERPRISE_ADMIN,
+PLANNER, SAFETY, QAQC, BIM, CONSTRUCTION_MANAGER, VIEWER. Scope pair
+`planning:read`/`planning:write`. Console page `planning`.
+
+**Decision recorded, for the owner to confirm:** planning records — including
+cost lines and fee quotes — are **Internal**, not Commercial-L3. The
+development director who approves a planning budget holds the DEVELOPMENT_MANAGER
+or EXECUTIVE role, and neither is cleared for Commercial-L3 (`identity/abac.ts`).
+Classifying the costs L3 would have hidden the forecast from the person the
+specification says owns it; widening L3 clearance was not done silently.
+
+### What is built
+
+- **The red line** (`geometry.ts`). GeoJSON Polygon, MultiPolygon, Feature or a
+  one-feature collection in EPSG:4326. Refused with the reason, never repaired:
+  unclosed rings, fewer than four positions, out-of-range or projected
+  coordinates, a ring crossing itself or another, a hole outside its shell,
+  overlapping parts (an island inside another part's hole is allowed), more than
+  5,000 positions. **Area on the WGS84 ellipsoid without a GIS library**: authalic
+  latitude onto the equal-area sphere, a Lambert azimuthal equal-area projection
+  centred on the site, planar ring sums; holes subtract and parts add. A 100 m
+  square in England measures within a square metre. Each recording is a new,
+  immutable revision. The **confirmed legal area is held apart** from the drawn
+  one; a difference over 2%, or one either side of 0.5, 1, 2.5 or 5 ha, is raised
+  for review. A reviewer **accepts** the latest revision; only an accepted one
+  feeds an outline fee.
+- **Site facts**, a closed list the rules read (flood zone, critical drainage
+  area, surface water, future flood risk, EIA sensitive area, cumulative
+  development, the screening opinion, HRA screening, protected species, BNG
+  applicability, the local validation list, the CIL charging schedule), each with
+  its source. Spatial lookups (Planning Data API, Flood Map for Planning) are not
+  connected; a fact nobody has recorded is **unknown**, never Flood Zone 1.
+- **Proposals**: scenarios on a red-line revision, full or outline, housing (mixed
+  and other go to manual review), dwellings and created floorspace each allowed
+  to be unknown. Each change is a new version.
+- **Rule evaluation** (`rules.ts`), deterministic, pinned with its inputs and the
+  rule pack's content hash. Findings carry code, status (`applies`,
+  `does_not_apply`, `review_required`, `unavailable`), reason, inputs, evidence
+  needed, gate and source (legislation, national guidance, local, project). Major
+  development keeps each reason independently (known count ≥10; unknown count on a
+  housing site ≥0.5 ha; site ≥1 ha; created floorspace ≥1,000 m²); an unknown that
+  cannot change the outcome is `unavailable`, not a review. FRA: Flood Zone 2/3,
+  or Flood Zone 1 at ≥1 ha, or a recorded other source; ruled out under 1 ha only
+  when critical drainage, surface water and future risk are all recorded clear.
+  EIA: >150 dwellings or >5 ha raises screening; below them screening stays open
+  until the sensitive-area and cumulative checks are recorded; a formal opinion
+  settles it. HRA and protected species are independent of EIA. BNG defaults to
+  an applicability review. Local validation stays unresolved until the local list
+  is verified. CIL is unknown without schedule evidence. The determination period
+  is 16 weeks with an ES, 13 for major, 8 otherwise. An evaluation reports itself
+  **stale** when the red line, the proposal, a site fact or the rule pack has
+  moved on, and is kept as it stood.
+- **Fees** (`fees.ts`): a port of the owner's reference kernel — full, outline,
+  reserved matters, condition details, section 73 major and section 96A
+  non-householder — for the two 2026 schedules, integer pence, areas as integer
+  hundredths of a square metre so "started 0.1 ha" is never a float ceiling, the
+  published upper-band bases written out rather than derived, caps as an explicit
+  adjustment line. A date outside both schedules, a non-standard case, unverified
+  reserved-matters history, an unknown count or an unaccepted red line returns
+  **review required with no payable figure**. Each quote is an append-only
+  snapshot with its inputs, breakdown, date basis (assumed or evidenced) and the
+  schedule's content hash.
+- **Rule versions: two people.** The rule pack and each fee schedule produce
+  nothing relied on until one person records the check against the published
+  source and a **different** person with approval publishes it (the same person
+  is refused). A version whose content changes after publication shows as changed
+  and stops counting as published. An unpublished schedule still shows what a
+  quote would come to, labelled not payable.
+- **Costs**: lines with low/base/high in pence (any may be unknown, never zero),
+  kind (allowance, statutory fee, liability, in-kind obligation), gate, phase,
+  source, VAT basis, confidence, estimate date and cash trigger. A calculated fee
+  quote becomes a statutory fee line carrying the quote's figure (once). Revisions
+  are new versions under **If-Match** (412 on a stale version; the console now
+  sends PATCH with If-Match). Withdrawal keeps the line with its reason. The
+  summary gives the **known subtotal**, the cash lines with unknown amounts, the
+  liabilities **apart from the cash figure**, and the unresolved liabilities (CIL
+  without schedule evidence; section 106 with no line). *(The specification's
+  four illustrative allowances, fixed sums from its 3 ha / 40-home example, were
+  offered here as a starting point; they were retired — see "the budget from the
+  need" below.)*
+- **The planning watch agent** (`AGT-PLANNING-WATCH`, module PLANNING,
+  observe-only): a rule version changed since publication, a material red-line
+  area discrepancy, a latest proposal version never evaluated, and a current
+  evaluation gone stale — each with the record it read.
+- **The screen**: where it stands (site, authority, major development, what is
+  blocking with the evidence needed and the source), the site and its facts,
+  proposals with every finding, fee quotes with their breakdown, costs, and rule
+  versions with check, publish (locked to the person who checked) and return.
+
+**Verified.** `npm test` 8,669 pass, typecheck clean. `tests/planningkernel.test.ts`
+(the reference kernel's seven fixture groups verbatim, the specification's fee
+examples and its outline JSON breakdown, the §8 acceptance rows for major
+development, FRA, EIA and the period, and the geometry refusals and area
+accuracy) and `tests/planning.test.ts` (module gate, permission area, the red
+line, acceptance, facts, evaluation and staleness, two-person publication, quote
+snapshots, accepted-area rule, costs reproducing the specification's
+£67,720–£132,720, liabilities apart, If-Match, the watch agent, the routes). The
+reference kernel itself was run (7 tests pass) before porting. Walked in a real
+browser on a fresh local journal: the module granted, a red line pasted as
+GeoJSON (a Point refused with the reason), accepted, a flood-zone fact, a 40-home
+proposal evaluated (major; five findings for review), a December quote refused as
+unpublished, the PM checking the schedule and the owner publishing it, the quote
+then £32,720.00, added as a cost, the four allowances added, the known subtotal
+£67,720.00 – £132,720.00, a line revised under If-Match; the site manager has no
+Planning in the menu; no horizontal scroll at phone width; no page errors. The
+walk found and fixed: the cost route's schema demanded a `source` a fee line
+supplies itself; fees were shown abbreviated (£32.7K) instead of exact; an empty
+budget read "£0".
+
+**Not verified here.** The fee figures and thresholds against their published
+sources: gov.uk, legislation.gov.uk and the planning data services are not
+reachable from this environment. They are the specification's figures, and the
+platform will not treat them as relied on until a person in the company checks
+and a second publishes each version.
+
+### Not built (the specification's steps 3 to 5) — *built in increment 2 below, except where it says otherwise*
+
+- Applications and dated events (draft → ready → submitted → valid → determined,
+  invalid and withdrawn paths, consultations, extensions, committee, decision
+  evidence, appeals linked to the original record), the statutory clock from the
+  validated date, requirements and reviews with CDE evidence revisions, immutable
+  submission packs, and gates G0–G3 with blockers.
+- Consents, conditions and condition requests with per-condition outcomes,
+  section 106 obligations and triggers, phase-scoped release (G4/G5) with
+  revocation and hand-off to Programme, Risk and Cost Control.
+- Rule-version source diffs and the impact preview on open projects; the
+  `planning.*` integrator events (writes already go through the ledger's outbox,
+  but the specification's named event types are not defined); study scheduling;
+  spatial lookups and their caching; jobs (evaluation runs synchronously — it is
+  fast and in-process, so a queue would be a layer with no problem behind it).
+
+## 2026-11 CONSTRUX Planning, increment 2: applications to the release of works
+
+The rest of the specification (delivery steps 3 to 5): applications and their
+events, the statutory clock, requirements and evidence, submission packs, gates
+G0 to G5, permissions and their lineage, conditions and discharge, obligations,
+the phase-scoped release of works and occupation, study scheduling, rule
+administration, the integrator events, and the watch agent's delivery findings.
+Same module grant and permission area as increment 1.
+
+**Where it lives.** `backend/src/domain/planning/applications.ts` (evidence,
+applications, events, clock, requirements, packs), `consents.ts` (permissions,
+conditions, condition requests, obligations), `gates.ts` (blockers, approvals,
+releases, re-validation), `studies.ts`, `register.ts` (the one read for the
+screen); `frontend/pages/planningconsent.js` (the sections after the
+appraisal); routes under `/v1/projects/:projectId/planning/…`.
+
+### What is built
+
+- **Evidence** is a CDE revision (`InformationContainer`) or a filed document
+  (`IngestedFile`) **on the same project**, which the reader is allowed to open
+  (design-information read; audit read at Legal-L4 for filed documents). Anything
+  else — another tenant's, another project's, or one the reader may not open — is
+  answered as a scoped 404. A container whose file the scanner quarantined is
+  flagged, and a superseded or archived revision is noticed.
+- **Applications**: full and outline promoted from a proposal (outline records
+  each of access, appearance, landscaping, layout and scale as determined or
+  reserved); reserved matters, section 73 and section 96A drafted against an
+  effective permission (reserved matters only for matters reserved and still
+  outstanding, per phase). Status draft → ready → submitted → valid → determined,
+  with invalid, resubmitted, invalidated (evidenced authority correction) and
+  withdrawn; consultation (statutory or developer-led), amended plans, extension,
+  committee resolution and forecast are **dated events that move no status**; an
+  event cannot be in the future. Determined needs the **issued notice**, attested
+  and attached — a draft or committee report does not record a decision. Appeals
+  against refusal or non-determination (only after the period or extension has
+  passed) stay linked to the original record, which keeps its refusal.
+- **The clock** starts from the validated date the authority records: 13, 16 or 8
+  weeks from the latest evaluation, or stated with its basis where no evaluation
+  settles it. The authority's target, an agreed extension, the forecast and the
+  land-option expiry are separate fields; a forecast never rewrites the
+  statutory date.
+- **Requirements** generated per application, never twice and never removed: the
+  G1 items (site control and access, consultant scopes, local policy review),
+  national items (form, fee, certificates and notices, location and site plans,
+  a Design and Access Statement for major development, BNG information where it
+  applies) and one per rule finding that needs evidence; local items and
+  external consents added by hand with their basis. Owner, due date, progress
+  and evidence under If-Match. **Acceptance needs evidence and a second person**
+  (the person who attached it is refused); non-applicability needs a source;
+  new evidence on an accepted requirement sends it back to review.
+- **Packs** freeze the proposal, the evaluation, the rule versions, the fee quote,
+  the documents and the submission-critical requirements, with a manifest hash.
+  A pack reports itself stale when any frozen item has moved on. Its manifest is
+  **refused for export while any document in it is quarantined**. An approved
+  pack stays retrievable exactly as it was.
+- **Gates.** Blockers are computed from the records and re-checked inside the
+  approval; two approvals of one gate accept one. Each blocker is statutory,
+  evidence, commercial or time; an internal **risk acceptance clears only a
+  commercial assumption** (unquoted allowances, a land option expiring before a
+  decision could come), with its rationale. G0 appraise; G1 commit to route
+  (G0, the latest proposal version, the G1 requirements, a target submission
+  date, a budget); G2 approve the pack (G1, a current pack, a determined fee,
+  every submission-critical requirement accepted or sourced-not-applicable, no
+  quarantined document, the rule pack published, the reserved-matters deadline)
+  — approving it approves the pack and makes the application ready; G3 record
+  the decision (the issued notice, no pending appeal, the permission recorded,
+  every condition entered and its wording verified by a second person, an
+  executed s106 where the resolution required one, no approved drawing
+  superseded). A committee resolution without the signed notice keeps G3
+  blocked.
+- **Re-validation.** After every planning write, approvals still in force (G0
+  always; G1 while the application is a draft; G2 while it is ready; G3 while its
+  permission is effective) and live releases are re-checked; one that no longer
+  holds is **invalidated or revoked on the record with its reasons**, and a ready
+  application goes back to draft. An approved gate shows only what still bites.
+- **Permissions**: recorded from a grant (or an appeal allowed) with type,
+  lineage, phases, the time limits from the notice and the approved drawings;
+  section 96A amends its parent instead. Where BNG applies, the **statutory
+  biodiversity gain condition** is recorded on the permission. Conditions are
+  entered verbatim with interpretation, trigger (before commencement, above
+  ground, before occupation, ongoing, bespoke) and phase scope, and verified by
+  a second person; a person confirms the count on the notice. Permissions can be
+  marked lapsed or superseded.
+- **Condition requests** cover several conditions of one permission with one fee
+  quote; the authority's answer is recorded **condition by condition**, and only
+  an explicit approval discharges. Three approved and one refused in one request
+  keeps four outcomes and one fee line.
+- **Obligations** (section 106, section 278, undertakings, CIL notices, other):
+  instrument, clause, financial/deliverable/notice, amount (or unknown),
+  indexation, cap, repayment, security, phases, triggers (before or on
+  commencement, before or on occupation, an occupation count, a date, ongoing,
+  other) and an owner; estimated → executed → satisfied on evidence, and
+  acknowledged. When a release records commencement or occupation, the
+  obligations it triggers are **marked due**.
+- **Release of works and occupation** (G4/G5), one phase and one operation
+  (commencement, above-ground, occupation), requested by one person and
+  approved by another holding approval. G4 checks: the permission effective and
+  covering the phase; not an outline alone; G3 approved; the commencement
+  deadline (until the first release under it); every reserved matter approved
+  for the phase; every before-commencement (and, above ground, above-ground)
+  condition in scope on the permission and its lineage discharged and verified;
+  bespoke triggers reviewed; obligations due before commencement satisfied and
+  those due on it executed; a CIL commencement notice served where CIL is
+  charged; external consents accepted; no approved drawing superseded. G5 checks
+  the live commencement release, before-occupation conditions and occupation
+  obligations. **Phase 1 can be released while phase 2 waits.** A release links
+  to a programme task.
+- **Study scheduling**: the specification's ten templates per application —
+  required where a finding applies (FRA and SuDS, ecology and BNG), otherwise for
+  a planner's applicability decision with its reason; consultant, commission
+  date, duration, survey window (month-days, wrapping the year end), dependencies
+  (loops refused) and validity. Scheduled forward through dependencies and the
+  next open window; flagged on the critical path when it finishes after the
+  target submission or the land option, was not commissioned in time, or its
+  findings expire before submission.
+- **Rule administration**: each rule version keeps the content it was checked
+  with; the screen shows the differences from the previous version (figure by
+  figure), any change since the check, and the impact on the company's projects
+  (payable and unpayable quotes on it, evaluations pinned to older content, open
+  packs pinning it).
+- **Integrator events**: `PLANNING_PACK_APPROVED`, `PLANNING_DECISION_RECORDED`,
+  `PLANNING_GATE_APPROVED`, `PLANNING_GATE_INVALIDATED` and
+  `PLANNING_OBLIGATION_DUE` are the specification's `planning.pack.approved`,
+  `planning.decision.recorded`, `planning.gate.approved`,
+  `planning.gate.invalidated` and `planning.obligation.due`, published through the
+  ledger's existing transactional outbox (unique event ids, so consumers
+  deduplicate) like every other event.
+- **Costs**: committed and paid figures with their order or invoice, and a
+  **forecast outturn** — actuals, plus committed-unpaid, plus the base on
+  uncommitted lines — with lines that cannot be forecast counted.
+- **The watch agent** also reports: a release revoked (urgent), works recorded on
+  a programme task (progress above zero) with no live release (urgent),
+  obligations due or falling due within 30 days, and applications past their
+  determination date.
+
+**Verified.** `npm test` 8,693 pass, typecheck clean. `tests/planningconsent.test.ts`
+(24 tests): an outline permission for 44 homes in two phases from G0 to a works
+release; same-person and evidence-less acceptance refused; cross-project evidence
+refused; a commercial risk accepted and a statutory one refused; a quarantined
+document blocking export and G2; a material change after G2 invalidating G0 and
+G2, returning the application to draft, with the approved manifest still
+retrievable; the event lifecycle, the made date, the 13-week clock and the
+forecast kept apart; committee resolution without the notice keeping G3 blocked;
+the draft notice refused; the statutory BNG condition; s106 execution; reserved
+matters only for outstanding matters; a release refused under the outline alone;
+a pre-commencement condition refused as a risk; one request answering three
+approved and one refused with one fee; phase 1 released while phase 2 waits on
+its CIL notice; the s106 contribution marked due; occupation blocked on the
+refused condition; a live release revoked by a new condition, with the agent's
+urgent finding; works recorded with no release; a refusal, its appeal and the
+permission the inspector grants; studies and survey windows on the critical path;
+the register; every route; the fee-schedule differences and impact.
+`tests/planning.test.ts` adds the outturn. Walked in a real browser on a fresh
+local journal through the whole lifecycle from the screen — G0, promotion,
+requirement evidence and review (the attacher's own acceptance refused), G1
+refused then approved with the risk accepted, pack, G2, submission, validation,
+committee resolution, G3 refused until the notice, the decision, a condition
+(self-verification refused, verified by a second person), G3, discharge requests
+and answers, an obligation executed, a release (self-approval refused, approved
+by a second person) with the obligation then due, the rule differences, the
+requirement filter, the manifest export, the studies with a survey window on the
+critical path; no page errors, no horizontal scroll at phone width. The walk found
+and fixed: the gate Approve buttons lost their application id (the attribute was
+escaped as text); manifest hashes shown with their algorithm prefix; approved
+gates listing accepted risks and checks that no longer applied as blockers.
+
+**Not built, stated.**
+- **Spatial lookups** (Planning Data API, Flood Map for Planning, designations,
+  heritage, TPOs) and their caching and retries: the hosts are not reachable from
+  this environment, so site facts are recorded by a person with their source —
+  which the specification permits ("manually verified evidence").
+- **Direct portal submission, automated appeal filing, the statutory biodiversity
+  metric, nationwide local-rule ingestion and other UK jurisdictions** — deferred
+  by the specification itself.
+- **Programme milestones from a release** are not written into the programme
+  baseline: a release links to a programme task and the agent flags works
+  recorded without one, but the release does not create or move programme
+  activities (the authority over the programme is another area's).
+- **Cost Control** budget, commitments and actuals are entered on the planning
+  cost line with their reference, not read from Cost Control.
+- **Jobs**: evaluations and packs run synchronously in-process (they are fast);
+  the specification's 202-and-poll shape is not used.
+- **Redacted public submission variants** and per-consultant assignment scoping
+  of evidence are not built; evidence access follows the reader's own document
+  permissions.
+- **Requirement filters** are kept for the screen's session; they are not in the
+  URL.
+
+## 2026-11 CONSTRUX Planning: any site, any need, and the planning agents
+
+Three changes on top of increments 1 and 2, made because the owner's brief was
+that every user brings their own land size and their own planning need
+(housing, a school, a substation, temporary accommodation or anything else), and
+that the AI agents carry the work.
+
+### Any site size (built)
+
+A site is recorded by its **stated area alone** (entered in hectares on the
+screen, held in square metres), by a drawn boundary, or both. The rules and the
+fee read the confirmed area where there is one; a drawn boundary is measured on
+the ellipsoid and the two are compared for divergence only when both exist.
+Neither given is refused (`SITE_AREA_REQUIRED`). `planning.ts`
+`recordSiteVersion`, `geometry.ts` `areaDivergence`.
+
+### Any planning need (built)
+
+A proposal carries a **development category** — housing, education, health,
+community, office, retail, industrial, hotel, temporary accommodation,
+electricity substation, energy generation or storage, mixed, other — with its
+description, floorspace, dwellings (housing and mixed only), capacity in its own
+unit (pupils, beds, bedspaces), a temporary period in months and capacity in MW
+as each applies. The rule pack (`england-planning-rules-2026-11`, hashed over
+the thresholds **and** the categories) reads the category for the flood
+vulnerability class and the zone compatibility table (sequential and exception
+tests), the EIA Schedule 2 description and threshold for the use, the consenting
+route to settle first (permitted development, section 37, a development consent
+order), and a time-limited permission for temporary development. A threshold the
+pack does not hold for a use is **a review, not a guess**. Fees for anything
+other than new dwellings go to review with their reason. Studies required by the
+need are added (transport for schools and health; noise and utilities for a
+substation). `rules.ts` `DEVELOPMENT_CATEGORIES`, `FLOOD_COMPATIBILITY`.
+
+### The planning agents (built)
+
+A tenth AI engine, **Planning consent** (`CONSENT` in `ENGINE_CONTRACTS`, active
+in every phase), and six agents on it in `backend/src/domain/planning/agents.ts`.
+Each agent files **proposals**, never the record itself:
+
+- **Intake** — the need in the user's own words becomes a proposed site area
+  (where no site is recorded) and a structured proposal with its assumptions and
+  the questions to answer. Only numbers the words state or that follow from them
+  are kept; a category outside the rules' list is dropped; dwellings are dropped
+  for a non-housing use.
+- **Site facts** — reads the project's planning documents and proposes each fact
+  the rules read, with the document and the sentence it came from. A value
+  outside the fact's list, or a quote that is not in the documents, is dropped in
+  code before anyone sees it.
+- **Conditions** — reads a decision notice and proposes each condition **word
+  for word** with its trigger and phases; a paraphrase is dropped. An accepted
+  condition still needs a second person to verify its wording, as before.
+- **Study briefs**, **the planning statement** (sections, with anything unknown
+  marked to be confirmed) and **next actions** (an owner and a needed-by date per
+  open requirement; anything that is not a real date is dropped).
+
+**A person decides.** `PLANNING_AGENT_PROPOSED` is written by the AI actor;
+`PLANNING_AGENT_PROPOSAL_DECIDED` is human. Accepting runs the ordinary command —
+`recordSiteVersion` and `recordProposal`, `recordSiteFact` (the source is the
+document and the quote), `recordCondition`, `updateStudy({ scope })`,
+`updateRequirement({ owner, dueOn })` — **under the accepting person's own
+permissions**; rejecting changes nothing. No agent approves a gate, verifies a
+condition or accepts a requirement. A decided proposal cannot be decided again.
+The screen shows what awaits a decision, what was accepted or rejected, and the
+counts (`agentShare`).
+
+**Planning documents.** `POST /planning/documents` files a document as
+`PLANNING_DOCUMENT` evidence; its bytes are scanned and read on arrival by the
+same hook that reads tender documents. `packDocuments`/`packText` in
+`evidence/pipeline.ts` gained a `purpose`: a file filed **only** as a planning
+document is left out of the tender pack, and the planning agents read only files
+filed as planning documents.
+
+**Cost and clearance.** Every agent route declares its task and is quoted before
+it runs. The text read from an upload is classified Legal-L4 (as every ingested
+file already was), so the site-facts and conditions agents reach a vendor only
+where `AI_PROVIDER_CLEARANCE` clears it that far; the others run at the default
+clearance. With no reasoning model configured the agents refuse with
+`PLANNING_AGENT_NEEDS_A_MODEL` rather than present the local stand-in's output
+as planning work. **No provider key is configured in this environment**, so the
+agents have not been run against a live model here.
+
+### The budget from the need (built; the example allowances retired)
+
+The specification's four illustrative allowances were fixed sums from its own
+example (3 ha, 40 homes) and were offered to every project whatever its need —
+a substation and a care home were offered the same £35k–£100k as the example
+housing scheme. They are removed (function, route and button). In their place,
+**`POST /planning/applications/:applicationId/budget`** (`studies.ts`
+`budgetFromNeed`) starts the budget from **that application's own need and
+studies**: a line for planning and design, one for legal and pre-application
+work and one for each study not ruled out, each named for the application, its
+source naming the need, low confidence, VAT excluded and **no figure** until
+somebody prices it from a quote or an estimate. It needs the studies planned
+first (`STUDIES_FIRST`), adds only lines not already there
+(`BUDGET_LINES_EXIST` when none are missing), and the screen offers it per
+application once its studies are planned. The lines count as unknown amounts and
+as unquoted allowances at G1 until priced.
+
+**Dwellings no longer demanded of every need.** The proposals route required
+`dwellingCount` and `createdGiaM2` on every request, so a substation or a school
+recorded through the API had to send a dwelling count of null; the domain
+already treated both as optional. The schema now requires only the site, the
+scenario name and the route.
+
+**Also changed.** README, the architecture diagram, the sign-in page, the public
+landing grid, the newsletter, the marketing copy and the footer link now say ten
+engines and name this one (`docfacts.test.ts` holds them to `ENGINE_CONTRACTS`).
+A study carries its brief (`scope`), shown on the studies card and editable in
+its update panel.
+
+**Verified.** `npm test` 8,715 pass, typecheck clean. `tests/planningagents.test.ts` (14 tests, including a
+school's budget started from its own studies, with the transport study costed
+and no figure on any line, and a substation recorded by its MW alone). Walked in a
+browser for a 0.45 ha substation: the budget button appears once its studies are
+planned, adds twelve lines named for its application with no figure, and a
+second press is refused; no page errors, no horizontal scroll at phone width, against a stub model that slips in
+an ungrounded quote, a value outside a fact's list, a paraphrased condition, an
+unknown study id, a non-date and an unknown category: the intake recording
+nothing until accepted and then the site at 1.8 ha (authority still to confirm)
+and an education proposal; a second decision refused; the read-only planner
+refused; the no-model refusal; a planning document kept out of the tender pack;
+the grounded flood-zone fact proposed and the other two dropped; study briefs,
+an owner and date and the statement accepted and a rejection changing nothing;
+the statement drafted from the recorded facts; a verbatim condition accepted,
+unverified, its self-verification refused and a second person's accepted; the
+counts; every agent route quoted on the `CONSENT` engine and the decision route
+not an AI route. Walked in a real browser on a fresh local journal with a
+scratchpad stub model: the need typed in, the proposal accepted (site and
+proposal recorded), two documents uploaded and read on arrival, the flood-zone
+fact proposed with its quote and accepted, study briefs drafted, one accepted
+and one rejected, the statement drafted, accepted and downloaded, an owner and
+date accepted onto its requirement, the conditions read from a decision notice
+on a granted permission and the accepted condition shown awaiting verification;
+the read-only planner sees the card with no controls; no page errors; no
+horizontal scroll at phone width.
+
+**Not built, stated.**
+- **No live model run.** The prompts and the code-side checks are tested; what
+  a real model proposes for a real flood map or decision notice has not been
+  seen here (no key in this environment).
+- **Scanned PDFs** are read only as far as the existing pipeline reads them; a
+  notice that is an image with no text layer yields nothing for the agents.
+- **Bulk acceptance** is not offered: each proposal is accepted on its own.
+- The intake proposes the site from a **stated** area only; it does not draw or
+  look up a boundary (spatial lookups remain unbuilt, as above).
+- The **"95% of the work"** aim is not measured as a percentage: the screen
+  counts proposals made, accepted and rejected, which is a count of agent work,
+  not of effort.
+- **Q1 and Q2 were committed without this section** (commit `88a11aa`); this
+  section records them.

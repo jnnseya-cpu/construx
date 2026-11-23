@@ -170,6 +170,35 @@ export const MODULES = {
       customerSelfActivation: false,
     },
   },
+  /**
+   * CONSTRUX Planning — a red-line site from acquisition appraisal to a
+   * documented planning decision and a phase-specific release for works.
+   *
+   * A module rather than a screen every tenancy sees, because it is the
+   * specification's own feature flag: its statutory rule pack and fee
+   * schedules must be checked and published by a planner in the company before
+   * it is relied on, and it launches company by company once that is done.
+   * Granted by the operator like the others; no price is attached here.
+   */
+  PLANNING: {
+    name: 'CONSTRUX Planning',
+    summary:
+      'Planning consent for new housing in England: the red line and its measured area, proposals and scenarios, ' +
+      'the statutory rules (major development, flood risk, EIA screening, biodiversity, validation, CIL) evaluated ' +
+      'with their sources, standard planning fees from published schedules, and planning costs with the liabilities ' +
+      'kept apart.',
+    restricted:
+      'Released company by company: the statutory rule pack and fee schedules are relied on only after a planner in ' +
+      'the company has checked them against their published sources and a second person has published them.',
+    registry: {
+      moduleKey: 'construx.planning.consent',
+      productCode: 'construx',
+      visibility: 'restricted',
+      requires: ['construx.core'],
+      eligibilityPolicy: 'explicit_tenant_grant',
+      customerSelfActivation: false,
+    },
+  },
 } as const;
 
 export type ModuleId = keyof typeof MODULES;

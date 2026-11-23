@@ -182,6 +182,13 @@ import * as answercheck from '../domain/answercheck.ts';
 import * as pricecheck from '../domain/pricecheck.ts';
 import { RISK_CATEGORIES } from '../engines/maths/risk.ts';
 import * as bidsignoff from '../domain/bidsignoff.ts';
+import * as planningconsent from '../domain/planning/planning.ts';
+import * as planningapps from '../domain/planning/applications.ts';
+import * as planningconsents from '../domain/planning/consents.ts';
+import * as planninggates from '../domain/planning/gates.ts';
+import * as planningregister from '../domain/planning/register.ts';
+import * as planningstudies from '../domain/planning/studies.ts';
+import * as planningagents from '../domain/planning/agents.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -916,13 +923,15 @@ async function readTenderDocumentOnArrival(
     .listByTenant(engineCtx.tenantId, 'EvidenceItem')
     .filter((entry) => {
       const state = entry.state as { hash?: string; type?: string };
-      return state.hash === hash && state.type === 'TENDER_DOCUMENT';
+      // Planning documents are read on arrival for the same reason: the planning
+      // agents read what was read, and a document nobody read is one they cannot cite.
+      return state.hash === hash && (state.type === 'TENDER_DOCUMENT' || state.type === 'PLANNING_DOCUMENT');
     })
     .reverse();
   let outcome: Record<string, unknown> = {};
   let alreadyRead: Record<string, unknown> | undefined;
   for (const filing of filings) {
-    const filename = String((filing.state as { description?: string }).description ?? '').replace(/^Tender document:\s*/, '') || undefined;
+    const filename = String((filing.state as { description?: string }).description ?? '').replace(/^(Tender|Planning) document:\s*/, '') || undefined;
     const onProject =
       filing.projectId === engineCtx.projectId
         ? engineCtx
@@ -28482,6 +28491,638 @@ export const ROUTES: Route[] = [
     description:
       'The executive brief: the recommendation, the binding deadlines, the decision drivers and the approvals; the nine outputs of the bid review, each Ready for Review, In Draft or Blocked with what stands in the way; and the submission manifest',
     handler: (platform, ctx) => tenderbrief.tenderBrief(projectContext(platform, ctx)),
+  },
+  // --- CONSTRUX Planning (the PLANNING module) -------------------------------
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/planning',
+    readOnly: true,
+    description: 'The planning overview: the red line, the site facts, each scenario with its latest evaluation and whether it is stale, what is blocking, fee quotes, costs with liabilities apart, and the rule versions',
+    handler: (platform, ctx) => planningconsent.planningOverview(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/site-versions',
+    description: 'Record a site revision: its stated area, and/or a red-line boundary as GeoJSON in EPSG:4326 measured on the ellipsoid, with the determining authority',
+    schema: {
+      type: 'object',
+      required: ['authority', 'boundarySource'],
+      properties: {
+        geometry: { type: 'object' },
+        confirmedAreaM2: { type: ['number', 'null'], minimum: 0 },
+        authority: {
+          type: 'object',
+          required: ['name', 'confirmed'],
+          properties: { name: { type: 'string', minLength: 1, maxLength: 200 }, code: { type: 'string', maxLength: 50 }, confirmed: { type: 'boolean' }, source: { type: 'string', maxLength: 300 } },
+          additionalProperties: false,
+        },
+        boundarySource: { type: 'string', minLength: 1, maxLength: 300 },
+      },
+      additionalProperties: false,
+    },
+    maxBytes: 2_000_000,
+    handler: (platform, ctx) => planningconsent.recordSiteVersion(projectContext(platform, ctx), body<Parameters<typeof planningconsent.recordSiteVersion>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/site-versions/:siteVersionId/accept',
+    description: 'Accept the latest red-line revision as the one fees and rules read, saying what it was checked against',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 1, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) =>
+      planningconsent.acceptSiteVersion(projectContext(platform, ctx), { siteVersionId: ctx.params.siteVersionId as string, note: body<{ note: string }>(ctx).note }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/facts',
+    description: 'Record a fact about the site the rules read — flood zone, sensitive area, screening opinions, BNG applicability, the local list, the CIL schedule — with its source',
+    schema: {
+      type: 'object',
+      required: ['key', 'value', 'source'],
+      properties: { key: { type: 'string', maxLength: 60 }, value: { type: 'string', maxLength: 60 }, source: { type: 'string', minLength: 1, maxLength: 500 }, note: { type: 'string', maxLength: 1000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningconsent.recordSiteFact(projectContext(platform, ctx), body<Parameters<typeof planningconsent.recordSiteFact>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/proposals',
+    description: 'Record a proposal version for a scenario: the site it sits on, full or outline, the planning need (housing, a school, a substation, temporary accommodation or anything else), its dwellings, floorspace, capacity or period (any may be unknown) and its assumptions',
+    schema: {
+      type: 'object',
+      // Dwellings and floorspace are optional: a substation has no dwellings, and
+      // either may be unknown at appraisal. The need decides which measures apply.
+      required: ['siteVersionId', 'scenarioName', 'route'],
+      properties: {
+        siteVersionId: { type: 'string', minLength: 1 },
+        scenarioName: { type: 'string', minLength: 1, maxLength: 120 },
+        route: { type: 'string', enum: ['full', 'outline'] },
+        category: { type: 'string', enum: ['RESIDENTIAL', 'EDUCATION', 'HEALTH', 'COMMUNITY', 'OFFICE', 'RETAIL', 'INDUSTRIAL', 'HOTEL', 'TEMPORARY_ACCOMMODATION', 'ELECTRICITY_SUBSTATION', 'ENERGY_GENERATION', 'MIXED', 'OTHER'] },
+        use: { type: 'string', enum: ['HOUSING', 'MIXED', 'OTHER'] },
+        description: { type: 'string', maxLength: 4000 },
+        temporaryMonths: { type: ['number', 'null'], minimum: 0 },
+        capacityMW: { type: ['number', 'null'], minimum: 0 },
+        capacityUnits: { type: ['object', 'null'], properties: { count: { type: 'integer', minimum: 1 }, unit: { type: 'string', minLength: 1, maxLength: 60 } }, additionalProperties: false },
+        dwellingCount: { type: ['integer', 'null'], minimum: 1 },
+        createdGiaM2: { type: ['number', 'null'], minimum: 0 },
+        assumptions: { type: 'array', maxItems: 50, items: { type: 'string', maxLength: 500 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningconsent.recordProposal(projectContext(platform, ctx), body<Parameters<typeof planningconsent.recordProposal>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/evaluations',
+    description: 'Evaluate a proposal against the rule pack: each finding with its status, reason, inputs, evidence needed, gate, source and rule version, pinned as it stood',
+    schema: { type: 'object', required: ['proposalId'], properties: { proposalId: { type: 'string', minLength: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => planningconsent.evaluateProposal(projectContext(platform, ctx), body<{ proposalId: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/fee-quotes',
+    description: 'Quote the standard planning fee for a route and made date, kept as an append-only snapshot; no payable figure unless the schedule is published and the case is standard',
+    schema: {
+      type: 'object',
+      required: ['route', 'madeOn', 'dateBasis'],
+      properties: {
+        route: { type: 'string', enum: ['full', 'outline', 'reserved_matters', 'condition_details', 'section_73_major', 'section_96a_non_householder'] },
+        madeOn: { type: 'string', minLength: 10, maxLength: 10 },
+        dateBasis: { type: 'string', enum: ['ASSUMED', 'EVIDENCED'] },
+        proposalId: { type: 'string' },
+        dwellings: { type: ['integer', 'null'], minimum: 1 },
+        reservedHistoryThresholdMet: { type: ['boolean', 'null'] },
+        nonStandard: { type: 'string', maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningconsent.quoteFeeFor(projectContext(platform, ctx), body<Parameters<typeof planningconsent.quoteFeeFor>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/costs',
+    description: 'Record a planning cost line: low, base and high in pence (any may be unknown), the VAT basis, confidence, gate and cash trigger — or a statutory fee line from a calculated quote',
+    schema: {
+      type: 'object',
+      // `source` is not required here: a line made from a fee quote carries the quote as its source.
+      // The platform still refuses any other line without one.
+      required: ['label', 'costCode', 'gate', 'vatBasis', 'confidence', 'estimateDate', 'cashTrigger'],
+      properties: {
+        label: { type: 'string', minLength: 1, maxLength: 200 },
+        costCode: { type: 'string', minLength: 1, maxLength: 40 },
+        kind: { type: 'string', enum: ['ALLOWANCE', 'STATUTORY_FEE', 'LIABILITY', 'IN_KIND_OBLIGATION'] },
+        gate: { type: 'string', enum: ['G0', 'G1', 'G2', 'G3', 'G4', 'G5'] },
+        phase: { type: 'string', maxLength: 100 },
+        source: { type: 'string', minLength: 1, maxLength: 500 },
+        lowMinor: { type: ['integer', 'null'], minimum: 0 },
+        baseMinor: { type: ['integer', 'null'], minimum: 0 },
+        highMinor: { type: ['integer', 'null'], minimum: 0 },
+        vatBasis: { type: 'string', enum: ['EXCLUDED', 'INCLUDED', 'NOT_APPLICABLE', 'RECOVERABLE'] },
+        confidence: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH'] },
+        estimateDate: { type: 'string', minLength: 10, maxLength: 10 },
+        cashTrigger: { type: 'string', minLength: 1, maxLength: 300 },
+        feeQuoteId: { type: 'string' },
+        committedMinor: { type: ['integer', 'null'], minimum: 0 },
+        actualMinor: { type: ['integer', 'null'], minimum: 0 },
+        commitmentRef: { type: 'string', maxLength: 200 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningconsent.recordCostLine(projectContext(platform, ctx), body<Parameters<typeof planningconsent.recordCostLine>[1]>(ctx)),
+  },
+  {
+    method: 'PATCH',
+    pattern: '/v1/projects/:projectId/planning/costs/:costLineId',
+    description: 'Revise or withdraw a planning cost line, as a new version of it (send If-Match with the version you read)',
+    schema: {
+      type: 'object',
+      properties: {
+        label: { type: 'string', minLength: 1, maxLength: 200 },
+        source: { type: 'string', minLength: 1, maxLength: 500 },
+        lowMinor: { type: ['integer', 'null'], minimum: 0 },
+        baseMinor: { type: ['integer', 'null'], minimum: 0 },
+        highMinor: { type: ['integer', 'null'], minimum: 0 },
+        confidence: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH'] },
+        vatBasis: { type: 'string', enum: ['EXCLUDED', 'INCLUDED', 'NOT_APPLICABLE', 'RECOVERABLE'] },
+        estimateDate: { type: 'string', minLength: 10, maxLength: 10 },
+        cashTrigger: { type: 'string', minLength: 1, maxLength: 300 },
+        committedMinor: { type: ['integer', 'null'], minimum: 0 },
+        actualMinor: { type: ['integer', 'null'], minimum: 0 },
+        commitmentRef: { type: 'string', maxLength: 200 },
+        withdraw: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 1, maxLength: 500 } }, additionalProperties: false },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      planningconsent.reviseCostLine(projectContext(platform, ctx), ctx.params.costLineId as string, body<Parameters<typeof planningconsent.reviseCostLine>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/applications/:applicationId/budget',
+    description: 'Start the planning budget from this application’s own need and studies: a line for planning and design, legal and pre-application work and each study, each with no figure until it is priced',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => planningstudies.budgetFromNeed(projectContext(platform, ctx), ctx.params.applicationId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/rule-versions/:version/prepare',
+    description: 'Record that a rule version — the evaluation rules or a fee schedule — was checked against its published sources, ready for a second person to publish',
+    schema: { type: 'object', required: ['checkNote'], properties: { checkNote: { type: 'string', minLength: 1, maxLength: 4000 } }, additionalProperties: false },
+    handler: (platform, ctx) =>
+      planningconsent.prepareRuleVersion(projectContext(platform, ctx), { version: ctx.params.version as string, checkNote: body<{ checkNote: string }>(ctx).checkNote }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/rule-versions/:version/publish',
+    description: 'Publish a prepared rule version for the company — by a different person from the one who prepared it',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 1, maxLength: 2000 } }, additionalProperties: false },
+    handler: (platform, ctx) => planningconsent.publishRuleVersion(projectContext(platform, ctx), { version: ctx.params.version as string, note: body<{ note: string }>(ctx).note }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/rule-versions/:version/return',
+    description: 'Return a prepared rule version to its editor with what is wrong',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 1, maxLength: 2000 } }, additionalProperties: false },
+    handler: (platform, ctx) => planningconsent.returnRuleVersion(projectContext(platform, ctx), { version: ctx.params.version as string, reason: body<{ reason: string }>(ctx).reason }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/planning/register',
+    readOnly: true,
+    description: 'Applications and their clocks, requirements, packs, permissions with lineage and conditions, condition requests, obligations, every gate where it stands, and the documents the reader may cite',
+    handler: (platform, ctx) => planningregister.planningRegister(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/planning/rule-versions/:version',
+    readOnly: true,
+    description: 'A rule version: its differences from the previous version and from the content as checked, and its impact on the company’s planning records',
+    handler: (platform, ctx) => planningconsent.ruleVersionDetail(projectContext(platform, ctx), ctx.params.version as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/applications',
+    description: 'Promote a proposal to an application (full or outline), or draft a reserved matters, section 73 or section 96A application against its permission',
+    schema: {
+      type: 'object',
+      required: ['route'],
+      properties: {
+        route: { type: 'string', enum: ['full', 'outline', 'reserved_matters', 'section_73', 'section_96a'] },
+        proposalId: { type: 'string' },
+        parentConsentId: { type: 'string' },
+        phases: { type: 'array', maxItems: 50, items: { type: 'string', minLength: 1, maxLength: 80 } },
+        matters: { type: 'object', additionalProperties: { type: 'string', enum: ['DETERMINED', 'RESERVED'] } },
+        reservedMatters: { type: 'array', maxItems: 5, items: { type: 'string', enum: ['access', 'appearance', 'landscaping', 'layout', 'scale'] } },
+        targetSubmissionOn: { type: 'string', minLength: 10, maxLength: 10 },
+        landOptionExpiresOn: { type: 'string', minLength: 10, maxLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningapps.draftApplication(projectContext(platform, ctx), body<Parameters<typeof planningapps.draftApplication>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/applications/:applicationId/events',
+    description: 'Record a dated event on an application — submitted, invalid, validated, consultation, amended plans, extension, committee resolution, forecast, determined, appeal — with its evidence',
+    schema: {
+      type: 'object',
+      required: ['type', 'occurredOn'],
+      properties: {
+        type: { type: 'string', enum: ['submitted', 'invalid', 'resubmitted', 'validated', 'invalidated', 'withdrawn', 'consultation', 'amended_plans', 'extension', 'committee_resolution', 'forecast', 'determined', 'appeal_lodged', 'appeal_decided'] },
+        occurredOn: { type: 'string', minLength: 10, maxLength: 10 },
+        evidence: { type: 'array', maxItems: 100, items: { type: 'object', required: ['refType', 'refId'], properties: { refType: { type: 'string', enum: ['InformationContainer', 'IngestedFile'] }, refId: { type: 'string', minLength: 1 } }, additionalProperties: false } },
+        payload: { type: 'object' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      planningapps.recordApplicationEvent(projectContext(platform, ctx), ctx.params.applicationId as string, body<Parameters<typeof planningapps.recordApplicationEvent>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/applications/:applicationId/requirements/generate',
+    description: 'Add the requirements an application now needs from the national list, the gates and its rule findings; never removes one',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => planningapps.generateRequirements(projectContext(platform, ctx), ctx.params.applicationId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/requirements',
+    description: 'Add a local requirement or an external consent, with its basis',
+    schema: {
+      type: 'object',
+      required: ['applicationId', 'title', 'kind', 'gate', 'basis'],
+      properties: {
+        applicationId: { type: 'string' },
+        title: { type: 'string', minLength: 1, maxLength: 300 },
+        kind: { type: 'string', enum: ['LOCAL', 'EXTERNAL_CONSENT'] },
+        gate: { type: 'string', enum: ['G1', 'G2', 'G3', 'G4', 'G5'] },
+        phase: { type: 'string', maxLength: 80 },
+        basis: { type: 'string', minLength: 1, maxLength: 500 },
+        submissionCritical: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningapps.addRequirement(projectContext(platform, ctx), body<Parameters<typeof planningapps.addRequirement>[1]>(ctx)),
+  },
+  {
+    method: 'PATCH',
+    pattern: '/v1/projects/:projectId/planning/requirements/:requirementId',
+    description: 'Set a requirement’s owner, due date, delivery progress or evidence (send If-Match); new evidence puts an accepted requirement back to review',
+    schema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string', maxLength: 200 },
+        dueOn: { type: 'string', minLength: 10, maxLength: 10 },
+        delivery: { type: 'string', enum: ['NOT_STARTED', 'COMMISSIONED', 'IN_PROGRESS', 'SUBMITTED_FOR_REVIEW'] },
+        evidence: { type: 'array', maxItems: 100, items: { type: 'object', required: ['refType', 'refId'], properties: { refType: { type: 'string', enum: ['InformationContainer', 'IngestedFile'] }, refId: { type: 'string', minLength: 1 } }, additionalProperties: false } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningapps.updateRequirement(projectContext(platform, ctx), ctx.params.requirementId as string, body<Parameters<typeof planningapps.updateRequirement>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/requirements/:requirementId/reviews',
+    description: 'A reviewer accepts a requirement on its evidence, returns it, or records sourced non-applicability',
+    schema: {
+      type: 'object',
+      required: ['decision', 'rationale'],
+      properties: {
+        decision: { type: 'string', enum: ['ACCEPTED', 'RETURNED', 'NOT_APPLICABLE'] },
+        rationale: { type: 'string', minLength: 1, maxLength: 2000 },
+        source: { type: 'string', maxLength: 500 },
+        evidence: { type: 'array', maxItems: 100, items: { type: 'object', required: ['refType', 'refId'], properties: { refType: { type: 'string', enum: ['InformationContainer', 'IngestedFile'] }, refId: { type: 'string', minLength: 1 } }, additionalProperties: false } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningapps.reviewRequirement(projectContext(platform, ctx), ctx.params.requirementId as string, body<Parameters<typeof planningapps.reviewRequirement>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/packs',
+    description: 'Assemble an immutable submission pack: the proposal, the evaluation, the rule versions, the fee quote and the documents, with a manifest hash',
+    schema: {
+      type: 'object',
+      required: ['applicationId', 'feeQuoteId', 'documents'],
+      properties: { applicationId: { type: 'string' }, evaluationId: { type: 'string' }, feeQuoteId: { type: 'string' }, documents: { type: 'array', maxItems: 100, items: { type: 'object', required: ['refType', 'refId'], properties: { refType: { type: 'string', enum: ['InformationContainer', 'IngestedFile'] }, refId: { type: 'string', minLength: 1 } }, additionalProperties: false } } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningapps.assemblePack(projectContext(platform, ctx), body<Parameters<typeof planningapps.assemblePack>[1]>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/planning/packs/:packId',
+    readOnly: true,
+    description: 'A pack’s manifest for export, refused while any document in it is quarantined',
+    handler: (platform, ctx) => planningapps.packManifest(projectContext(platform, ctx), ctx.params.packId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/gates/:gate/reviews',
+    description: 'Approve a gate. The blockers are re-evaluated inside the approval; a commercial assumption may be accepted as a risk with its rationale, nothing statutory can',
+    schema: {
+      type: 'object',
+      required: ['rationale'],
+      properties: {
+        applicationId: { type: 'string' },
+        releaseId: { type: 'string' },
+        rationale: { type: 'string', minLength: 1, maxLength: 4000 },
+        riskAcceptances: {
+          type: 'array',
+          maxItems: 20,
+          items: { type: 'object', required: ['blockerId', 'rationale'], properties: { blockerId: { type: 'string' }, rationale: { type: 'string', minLength: 1, maxLength: 2000 } }, additionalProperties: false },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planninggates.approveGate(projectContext(platform, ctx), ctx.params.gate as string, body<Parameters<typeof planninggates.approveGate>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/consents/:consentId/conditions',
+    description: 'Record a condition exactly as the notice words it, with its interpretation, trigger and phases',
+    schema: {
+      type: 'object',
+      required: ['number', 'wording', 'interpretation', 'trigger'],
+      properties: {
+        number: { type: 'string', minLength: 1, maxLength: 20 },
+        wording: { type: 'string', minLength: 1, maxLength: 8000 },
+        interpretation: { type: 'string', minLength: 1, maxLength: 4000 },
+        trigger: { type: 'string', enum: ['BEFORE_COMMENCEMENT', 'ABOVE_GROUND', 'BEFORE_OCCUPATION', 'ONGOING', 'BESPOKE'] },
+        triggerText: { type: 'string', maxLength: 1000 },
+        phases: { type: 'array', maxItems: 50, items: { type: 'string', maxLength: 80 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningconsents.recordCondition(projectContext(platform, ctx), ctx.params.consentId as string, body<Parameters<typeof planningconsents.recordCondition>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/conditions/:conditionId/verify',
+    description: 'A second person verifies a condition’s wording against the issued notice',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => planningconsents.verifyCondition(projectContext(platform, ctx), ctx.params.conditionId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/consents/:consentId/conditions-complete',
+    description: 'Confirm every condition on the notice is entered, by its count',
+    schema: { type: 'object', required: ['count'], properties: { count: { type: 'integer', minimum: 0 } }, additionalProperties: false },
+    handler: (platform, ctx) => planningconsents.confirmConditionsComplete(projectContext(platform, ctx), ctx.params.consentId as string, body<{ count: number }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/consents/:consentId/status',
+    description: 'Mark a permission superseded or lapsed, with the reason; it stays on the record',
+    schema: { type: 'object', required: ['status', 'reason'], properties: { status: { type: 'string', enum: ['SUPERSEDED', 'LAPSED'] }, reason: { type: 'string', minLength: 1, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => planningconsents.setConsentStatus(projectContext(platform, ctx), ctx.params.consentId as string, body<{ status: string; reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/condition-requests',
+    description: 'Record a request to discharge one or more conditions of a permission, with the details submitted and its fee quote',
+    schema: {
+      type: 'object',
+      required: ['consentId', 'conditionIds', 'madeOn', 'evidence'],
+      properties: {
+        consentId: { type: 'string' },
+        conditionIds: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string' } },
+        phase: { type: 'string', maxLength: 80 },
+        madeOn: { type: 'string', minLength: 10, maxLength: 10 },
+        externalRef: { type: 'string', maxLength: 100 },
+        feeQuoteId: { type: 'string' },
+        evidence: { type: 'array', maxItems: 100, items: { type: 'object', required: ['refType', 'refId'], properties: { refType: { type: 'string', enum: ['InformationContainer', 'IngestedFile'] }, refId: { type: 'string', minLength: 1 } }, additionalProperties: false } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningconsents.recordConditionRequest(projectContext(platform, ctx), body<Parameters<typeof planningconsents.recordConditionRequest>[1]>(ctx)),
+  },
+  {
+    method: 'PATCH',
+    pattern: '/v1/projects/:projectId/planning/condition-requests/:requestId',
+    description: 'Record the authority’s answer to a condition request, condition by condition, with its decision',
+    schema: {
+      type: 'object',
+      required: ['on', 'outcomes', 'evidence'],
+      properties: {
+        on: { type: 'string', minLength: 10, maxLength: 10 },
+        outcomes: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 100,
+          items: { type: 'object', required: ['conditionId', 'outcome', 'note'], properties: { conditionId: { type: 'string' }, outcome: { type: 'string', enum: ['APPROVED', 'REFUSED'] }, note: { type: 'string', minLength: 1, maxLength: 2000 } }, additionalProperties: false },
+        },
+        evidence: { type: 'array', maxItems: 100, items: { type: 'object', required: ['refType', 'refId'], properties: { refType: { type: 'string', enum: ['InformationContainer', 'IngestedFile'] }, refId: { type: 'string', minLength: 1 } }, additionalProperties: false } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningconsents.recordConditionResponse(projectContext(platform, ctx), ctx.params.requestId as string, body<Parameters<typeof planningconsents.recordConditionResponse>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/obligations',
+    description: 'Register an obligation — section 106, section 278, an undertaking or a CIL notice — with its clause, triggers, phases and owner',
+    schema: {
+      type: 'object',
+      required: ['instrument', 'instrumentRef', 'clause', 'kind', 'description', 'triggers', 'owner'],
+      properties: {
+        applicationId: { type: 'string' },
+        instrument: { type: 'string', enum: ['S106', 'S278', 'UNILATERAL_UNDERTAKING', 'CIL', 'OTHER'] },
+        instrumentRef: { type: 'string', minLength: 1, maxLength: 200 },
+        clause: { type: 'string', minLength: 1, maxLength: 100 },
+        kind: { type: 'string', enum: ['FINANCIAL', 'DELIVERABLE', 'NOTICE'] },
+        description: { type: 'string', minLength: 1, maxLength: 2000 },
+        amountMinor: { type: ['integer', 'null'], minimum: 0 },
+        indexation: { type: 'string', maxLength: 300 },
+        cap: { type: 'string', maxLength: 300 },
+        repayment: { type: 'string', maxLength: 300 },
+        security: { type: 'string', maxLength: 300 },
+        phases: { type: 'array', maxItems: 50, items: { type: 'string', maxLength: 80 } },
+        triggers: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 20,
+          items: {
+            type: 'object',
+            required: ['event'],
+            properties: {
+              event: { type: 'string', enum: ['BEFORE_COMMENCEMENT', 'ON_COMMENCEMENT', 'BEFORE_OCCUPATION', 'ON_OCCUPATION', 'OCCUPATION_COUNT', 'DATE', 'ONGOING', 'OTHER'] },
+              count: { type: 'integer', minimum: 1 },
+              on: { type: 'string', minLength: 10, maxLength: 10 },
+              text: { type: 'string', maxLength: 1000 },
+            },
+            additionalProperties: false,
+          },
+        },
+        owner: { type: 'string', minLength: 1, maxLength: 200 },
+        monitoring: { type: 'object', properties: { termYears: { type: 'integer', minimum: 1 }, nextReviewOn: { type: 'string', minLength: 10, maxLength: 10 } }, additionalProperties: false },
+        evidence: { type: 'array', maxItems: 100, items: { type: 'object', required: ['refType', 'refId'], properties: { refType: { type: 'string', enum: ['InformationContainer', 'IngestedFile'] }, refId: { type: 'string', minLength: 1 } }, additionalProperties: false } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningconsents.recordObligation(projectContext(platform, ctx), body<Parameters<typeof planningconsents.recordObligation>[1]>(ctx)),
+  },
+  {
+    method: 'PATCH',
+    pattern: '/v1/projects/:projectId/planning/obligations/:obligationId',
+    description: 'Move an obligation to executed, acknowledged or satisfied, on its evidence',
+    schema: {
+      type: 'object',
+      required: ['to', 'on', 'evidence'],
+      properties: { to: { type: 'string', enum: ['EXECUTED', 'ACKNOWLEDGED', 'SATISFIED'] }, on: { type: 'string', minLength: 10, maxLength: 10 }, evidence: { type: 'array', maxItems: 100, items: { type: 'object', required: ['refType', 'refId'], properties: { refType: { type: 'string', enum: ['InformationContainer', 'IngestedFile'] }, refId: { type: 'string', minLength: 1 } }, additionalProperties: false } }, note: { type: 'string', maxLength: 1000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningconsents.progressObligation(projectContext(platform, ctx), ctx.params.obligationId as string, body<Parameters<typeof planningconsents.progressObligation>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/releases',
+    description: 'Request the release of works (G4: commencement or above-ground) or of occupation (G5) for one phase, against its permission',
+    schema: {
+      type: 'object',
+      required: ['gate', 'phase', 'operation', 'description', 'consentId'],
+      properties: {
+        gate: { type: 'string', enum: ['G4', 'G5'] },
+        phase: { type: 'string', minLength: 1, maxLength: 80 },
+        operation: { type: 'string', enum: ['COMMENCEMENT', 'ABOVE_GROUND', 'OCCUPATION'] },
+        description: { type: 'string', minLength: 1, maxLength: 1000 },
+        consentId: { type: 'string' },
+        programmeTaskId: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planninggates.requestRelease(projectContext(platform, ctx), body<Parameters<typeof planninggates.requestRelease>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/applications/:applicationId/studies/generate',
+    description: 'Add the candidate studies an application needs — required where a finding applies, otherwise for a planner’s applicability decision',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => planningstudies.generateStudies(projectContext(platform, ctx), ctx.params.applicationId as string),
+  },
+  {
+    method: 'PATCH',
+    pattern: '/v1/projects/:projectId/planning/studies/:studyId',
+    description: 'A study’s applicability, status, consultant, commission date, duration, survey window, dependencies and validity',
+    schema: {
+      type: 'object',
+      properties: {
+        applicability: { type: 'string', enum: ['REQUIRED', 'NOT_REQUIRED'] },
+        applicabilityNote: { type: 'string', maxLength: 1000 },
+        status: { type: 'string', enum: ['CANDIDATE', 'COMMISSIONED', 'IN_PROGRESS', 'COMPLETE'] },
+        consultant: { type: 'string', maxLength: 200 },
+        commissionBy: { type: 'string', minLength: 10, maxLength: 10 },
+        durationWeeks: { type: 'integer', minimum: 1, maximum: 104 },
+        surveyWindow: { type: ['object', 'null'], properties: { from: { type: 'string', minLength: 5, maxLength: 5 }, to: { type: 'string', minLength: 5, maxLength: 5 } }, additionalProperties: false },
+        dependsOn: { type: 'array', maxItems: 20, items: { type: 'string' } },
+        validUntil: { type: 'string', minLength: 10, maxLength: 10 },
+        scope: { type: 'string', minLength: 20, maxLength: 8000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningstudies.updateStudy(projectContext(platform, ctx), ctx.params.studyId as string, body<Parameters<typeof planningstudies.updateStudy>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/releases/:releaseId/withdraw',
+    description: 'Withdraw a release request',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 1, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => planninggates.withdrawRelease(projectContext(platform, ctx), ctx.params.releaseId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/documents',
+    description: 'File a planning document — a flood map extract, a desk study, a survey, the authority’s letter, a decision notice — so the planning agents can read it. The bytes follow by the upload route and are scanned and read on arrival',
+    schema: {
+      type: 'object',
+      required: ['hash', 'filename'],
+      properties: { hash: { type: 'string', minLength: 64, maxLength: 71 }, filename: { type: 'string', minLength: 1, maxLength: 300 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningagents.recordPlanningDocument(projectContext(platform, ctx), body<{ hash: string; filename: string }>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/planning/documents',
+    readOnly: true,
+    description: 'The planning documents on the project and how much of each was read',
+    handler: (platform, ctx) => planningagents.planningDocuments(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/planning/agents/proposals',
+    readOnly: true,
+    description: 'What the planning agents proposed, what was accepted or rejected and by whom, and the share of the work they carried',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      return { proposals: planningagents.agentProposals(engineCtx), share: planningagents.agentShare(engineCtx) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/agents/intake',
+    description: 'The intake agent: the planning need in your own words becomes a proposed site area and structured proposal, with its assumptions and the questions to answer',
+    ai: { engine: 'CONSENT', taskType: 'planning_intake', capability: 'REASONING' },
+    schema: { type: 'object', required: ['need'], properties: { need: { type: 'string', minLength: 10, maxLength: 4000 } }, additionalProperties: false },
+    handler: (platform, ctx) => planningagents.runIntake(projectContext(platform, ctx), body<{ need: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/agents/site-facts',
+    description: 'The site-facts agent: reads the planning documents and proposes each fact the rules read — flood zone, heritage, ecology, designations — quoting the passage it came from',
+    ai: {
+      engine: 'CONSENT',
+      taskType: 'planning_site_facts',
+      capability: 'REASONING',
+      quoteInputText: (engineCtx) => ingestion.packText(engineCtx, { purpose: 'PLANNING' }).text || undefined,
+    },
+    schema: { type: 'object', properties: { ingestionIds: { type: 'array', maxItems: 50, items: { type: 'string' } } }, additionalProperties: false },
+    handler: (platform, ctx) => planningagents.readSiteFacts(projectContext(platform, ctx), body<{ ingestionIds?: string[] }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/consents/:consentId/agents/conditions',
+    description: 'The conditions agent: reads the decision notice and proposes every condition word for word, with its trigger and phases, for a person to accept and a second to verify',
+    ai: { engine: 'CONSENT', taskType: 'planning_conditions', capability: 'REASONING' },
+    schema: { type: 'object', required: ['ingestionId'], properties: { ingestionId: { type: 'string', minLength: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) =>
+      planningagents.readConditions(projectContext(platform, ctx), { consentId: ctx.params.consentId as string, ingestionId: body<{ ingestionId: string }>(ctx).ingestionId }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/applications/:applicationId/agents/study-scopes',
+    description: 'The study-scope agent: drafts the consultant’s brief for each study the application needs',
+    ai: { engine: 'CONSENT', taskType: 'planning_study_scopes', capability: 'REASONING' },
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => planningagents.draftStudyScopes(projectContext(platform, ctx), { applicationId: ctx.params.applicationId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/applications/:applicationId/agents/statement',
+    description: 'The statement agent: drafts the planning statement from the record, marking anything unknown to be confirmed',
+    ai: { engine: 'CONSENT', taskType: 'planning_statement', capability: 'REASONING' },
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => planningagents.draftStatement(projectContext(platform, ctx), { applicationId: ctx.params.applicationId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/applications/:applicationId/agents/next-actions',
+    description: 'The next-actions agent: proposes an owner and a needed-by date for each open requirement, working back from the target submission',
+    ai: { engine: 'CONSENT', taskType: 'planning_next_actions', capability: 'REASONING' },
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => planningagents.adviseNextActions(projectContext(platform, ctx), { applicationId: ctx.params.applicationId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/planning/agents/proposals/:proposalId/decide',
+    description: 'Accept or reject an agent’s proposal. Accepting runs the ordinary command under your own authority; rejecting changes nothing',
+    schema: {
+      type: 'object',
+      required: ['decision'],
+      properties: { decision: { type: 'string', enum: ['ACCEPT', 'REJECT'] }, note: { type: 'string', maxLength: 1000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planningagents.decideProposal(projectContext(platform, ctx), ctx.params.proposalId as string, body<{ decision: string; note?: string }>(ctx)),
   },
   {
     method: 'GET',

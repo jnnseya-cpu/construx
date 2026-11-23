@@ -108,6 +108,9 @@ export const NAV = [
       // authorise themselves separately from BUDGET_COST and
       // PROGRAMME_BASELINES, panel by panel.
       { id: 'concept', label: 'Concept', area: 'PROJECT_SETUP', icon: 'target' },
+      // CONSTRUX Planning: the red line to a planning decision. `module` makes it
+      // absent rather than locked for a company that has not been granted it.
+      { id: 'planning', label: 'Planning', area: 'PLANNING_CONSENT', module: 'PLANNING', icon: 'layers' },
       // Also the lookahead and the work packages, which is the site
       // supervisor's own tool: the weekly work plan and the constraints against
       // it are theirs to keep, and gating this on the baseline alone shut the

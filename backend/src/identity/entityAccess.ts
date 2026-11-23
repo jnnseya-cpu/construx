@@ -415,6 +415,27 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   TenderResponse: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   ITTAnalysis: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   BidResponsePack: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
+  // CONSTRUX Planning. Internal rather than Commercial-L3, including the cost
+  // lines and fee quotes: they are planning budgets and published statutory
+  // fees, and the development director who approves them holds no L3 clearance.
+  PlanningRuleVersion: { area: 'PLANNING_CONSENT' },
+  PlanningSiteVersion: { area: 'PLANNING_CONSENT' },
+  PlanningSiteFact: { area: 'PLANNING_CONSENT' },
+  PlanningProposal: { area: 'PLANNING_CONSENT' },
+  PlanningEvaluation: { area: 'PLANNING_CONSENT' },
+  PlanningFeeQuote: { area: 'PLANNING_CONSENT' },
+  PlanningCostLine: { area: 'PLANNING_CONSENT' },
+  PlanningApplication: { area: 'PLANNING_CONSENT' },
+  PlanningRequirement: { area: 'PLANNING_CONSENT' },
+  PlanningPack: { area: 'PLANNING_CONSENT' },
+  PlanningGateReview: { area: 'PLANNING_CONSENT' },
+  PlanningConsent: { area: 'PLANNING_CONSENT' },
+  PlanningCondition: { area: 'PLANNING_CONSENT' },
+  PlanningConditionRequest: { area: 'PLANNING_CONSENT' },
+  PlanningObligation: { area: 'PLANNING_CONSENT' },
+  PlanningRelease: { area: 'PLANNING_CONSENT' },
+  PlanningStudy: { area: 'PLANNING_CONSENT' },
+  PlanningAgentProposal: { area: 'PLANNING_CONSENT' },
   // The bid's approvals and where each return goes on the buyer's portal.
   BidSignOff: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   // The reading of the tender documents. Legal-L4: it carries the executed

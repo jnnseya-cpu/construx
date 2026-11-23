@@ -44,7 +44,9 @@ export type Engine =
   | 'CONTRACTS_CLAIMS'
   | 'HANDOVER_OM'
   | 'EXECUTIVE'
-  | 'GUIDE';
+  | 'GUIDE'
+  /** Planning consent: reading planning documents, drafting and advising, for a person to confirm. */
+  | 'CONSENT';
 
 /**
  * The routing matrix. Perception observes the physical world; reasoning decides
@@ -58,6 +60,10 @@ export const ROUTING_MATRIX: Record<Engine, { perception: string[]; reasoning: s
   PLANNING: {
     perception: ['Progress recognition from site imagery'],
     reasoning: ['CPM logic', 'Delay attribution', 'Recovery scenarios'],
+  },
+  CONSENT: {
+    perception: ['Reading decision notices, flood maps, surveys and site documents'],
+    reasoning: ['Classifying the planning need', 'Study scoping', 'Planning statement drafting', 'Next actions against the gates'],
   },
   RESOURCE_COST: {
     perception: ['Quantity and resource observation', 'Plant and equipment recognition from site imagery'],
@@ -202,6 +208,15 @@ export const ENGINE_CONTRACTS: Record<Engine, EngineContract> = {
     activeInPhases: ALL_PHASES,
     inputs: ['Every project position', 'Agent findings', 'Wallet and commercial state'],
     outputs: ['Ranked actions with reasons', 'Portfolio exposure'],
+  },
+  CONSENT: {
+    name: 'Planning consent',
+    purpose: 'Read planning documents and draft the planning work — the need, the site facts, the conditions, the study scopes, the statement and the next actions — as proposals a person accepts',
+    // Every phase: planning starts before a project has a design, and its
+    // conditions and obligations run on through construction and occupation.
+    activeInPhases: ALL_PHASES,
+    inputs: ['The planning need in words', 'Planning documents on the project', 'Rule findings, gates and requirements'],
+    outputs: ['Proposals, each with the passage it came from, for a person to accept or reject'],
   },
   GUIDE: {
     name: 'Guide',
