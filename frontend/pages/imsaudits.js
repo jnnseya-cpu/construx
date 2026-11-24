@@ -46,6 +46,8 @@ function programmeCard(view, perms) {
               )}</ul></details>`
             : '—',
           html`${lead && perms.update && audit.status !== 'COMPLETED' && audit.status !== 'CANCELLED' ? html`<button class="btn quiet sm" data-command="ims-audit-checklist" data-audit="${audit.id}">Checklist</button> ` : ''}${
+            perms.update && audit.status !== 'COMPLETED' && audit.status !== 'CANCELLED' ? html`<button class="btn quiet sm" data-command="ims-agent-checklist" data-audit="${audit.id}">Draft checklist (AI)</button> ` : ''
+          }${
             lead && perms.update && audit.status === 'PLANNED' ? html`<button class="btn sm" data-command="ims-audit-start" data-audit="${audit.id}">Start</button> ` : ''
           }${lead && perms.update && audit.status === 'IN_PROGRESS' ? html`<button class="btn sm" data-command="ims-audit-finding" data-audit="${audit.id}">Record a finding</button> <button class="btn quiet sm" data-command="ims-audit-complete" data-audit="${audit.id}">Complete</button> ` : ''}${
             perms.approve && (audit.status === 'PLANNED' || audit.status === 'IN_PROGRESS') && audit.findings.length === 0 ? html`<button class="btn quiet sm" data-command="ims-audit-cancel" data-audit="${audit.id}">Cancel</button>` : ''
@@ -82,7 +84,7 @@ function actionsCard(view, perms) {
             action.rootCause ? html`<p style="margin:4px 0"><b>Root cause:</b> ${action.rootCause}</p>` : ''
           }${action.plannedActions ? html`<p style="margin:4px 0"><b>Actions:</b> ${action.plannedActions}</p>` : ''}${action.implemented ? html`<p style="margin:4px 0"><b>Done:</b> ${action.implemented.note}</p>` : ''}</div></details>`
         : html`<span class="metric-sub">not investigated</span>`,
-      html`${perms.update && action.status === 'OPEN' ? html`<button class="btn quiet sm" data-command="ims-action-investigate" data-action="${action.id}">Investigate</button> <button class="btn quiet sm" data-command="ims-action-implement" data-action="${action.id}">Done</button>` : ''}${
+      html`${perms.update && action.status === 'OPEN' ? html`<button class="btn quiet sm" data-command="ims-action-investigate" data-action="${action.id}">Investigate</button> <button class="btn quiet sm" data-command="ims-agent-root-cause" data-action="${action.id}">Root cause (AI)</button> <button class="btn quiet sm" data-command="ims-action-implement" data-action="${action.id}">Done</button>` : ''}${
         perms.update && action.status === 'IMPLEMENTED' && action.implemented?.by !== view.me ? html`<button class="btn sm" data-command="ims-action-verify" data-action="${action.id}">Verify</button>` : ''
       }${action.status === 'IMPLEMENTED' && action.implemented?.by === view.me ? html`<span class="metric-sub">awaiting somebody else to verify</span>` : ''}`,
     ]);

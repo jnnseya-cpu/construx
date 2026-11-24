@@ -7,6 +7,7 @@ import { auditCards, auditCommands } from './imsaudits.js';
 import { registerCards, registerCommands } from './imsregisters.js';
 import { monitoringCards, monitoringCommands } from './imsmonitoring.js';
 import { bindOverview, overviewCard, reviewCard, reviewCommands } from './imsreview.js';
+import { agentCommands, agentsCard, loadAgents } from './imsagents.js';
 
 /**
  * The company's integrated management system — ISO 9001, 14001 and 45001 kept
@@ -20,6 +21,7 @@ import { bindOverview, overviewCard, reviewCard, reviewCommands } from './imsrev
 let tab = 'overview';
 const TABS = [
   ['overview', 'Overview'],
+  ['agents', 'AI agents'],
   ['documents', 'Documents'],
   ['audits', 'Audits'],
   ['actions', 'Actions'],
@@ -53,7 +55,7 @@ function documentsCard(view, perms) {
       html`<button class="btn quiet sm" data-ims-read="${document.id}">Read</button>${
         document.acknowledgement.mustAcknowledge ? html` <button class="btn sm" data-command="ims-ack" data-document="${document.id}">Read and understood</button>` : ''
       }${perms.approve && document.draft ? html` <button class="btn quiet sm" data-command="ims-approve" data-document="${document.id}">Approve</button> <button class="btn quiet sm" data-command="ims-return" data-document="${document.id}">Return</button>` : ''}${
-        perms.update && document.status !== 'WITHDRAWN' ? html` <button class="btn quiet sm" data-command="ims-redraft" data-document="${document.id}">Redraft</button>` : ''
+        perms.update && document.status !== 'WITHDRAWN' ? html` <button class="btn quiet sm" data-command="ims-redraft" data-document="${document.id}">Redraft</button> <button class="btn quiet sm" data-command="ims-agent-clauses" data-document="${document.id}">Map clauses (AI)</button>` : ''
       }${perms.update && document.status === 'EFFECTIVE' && !document.draft ? html` <button class="btn quiet sm" data-command="ims-review" data-document="${document.id}">Reviewed, no change</button>` : ''}${
         perms.approve && document.status !== 'WITHDRAWN' ? html` <button class="btn quiet sm" data-command="ims-withdraw" data-document="${document.id}">Withdraw</button>` : ''
       }`,
@@ -103,8 +105,9 @@ function documentFields(view, document) {
 
 export async function ims(root) {
   let view;
+  let agents;
   try {
-    view = await api.get('/v1/ims');
+    [view, agents] = await Promise.all([api.get('/v1/ims'), loadAgents()]);
   } catch (error) {
     render(
       root,
@@ -120,10 +123,12 @@ export async function ims(root) {
     root,
     html`<div class="view-head"><div><h1>Management System</h1>
         <p class="metric-sub">ISO 9001, ISO 14001 and ISO 45001 as one system for the whole company, reading the records every project already keeps.</p></div></div>
+      ${!agents.proposals.error && agents.proposals.share.pending && tab !== 'agents' ? notice(html`The AI agents have ${agents.proposals.share.pending} proposal${agents.proposals.share.pending === 1 ? '' : 's'} awaiting a decision — see the AI agents tab.`, 'info') : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px" role="tablist" aria-label="Management system sections">
         ${TABS.map(([id, label]) => html`<button class="btn ${raw(tab === id ? '' : 'ghost')}" role="tab" aria-selected="${tab === id ? 'true' : 'false'}" data-ims-tab="${id}">${label}</button>`)}
       </div>
       ${tab === 'overview' ? overviewCard(view) : ''}
+      ${tab === 'agents' ? agentsCard(view, agents, perms) : ''}
       ${tab === 'documents' ? documentsCard(view, perms) : ''}
       ${tab === 'audits' || tab === 'actions' ? auditCards(view, perms, tab) : ''}
       ${tab === 'registers' ? registerCards(view, perms) : ''}
@@ -138,6 +143,7 @@ export async function ims(root) {
     ...registerCommands(view),
     ...monitoringCommands(view),
     ...reviewCommands(view),
+    ...agentCommands(view, agents),
     'ims-draft': () => ({
       title: 'Draft a controlled document',
       intent: 'It is a draft until somebody other than you approves it. Write the document here, or attach the file it is kept in.',

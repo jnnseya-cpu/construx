@@ -78,7 +78,7 @@ export function reviewCard(view, perms, canApproveReview) {
           }
           ${
             review.status === 'DRAFT'
-              ? html`<p style="margin:8px 0">${perms.update ? html`<button class="btn quiet sm" data-command="ims-review-output" data-review="${review.id}">Add a decision or action</button> <button class="btn quiet sm" data-command="ims-review-refresh" data-review="${review.id}">Freeze the inputs again</button> ` : ''}${
+              ? html`<p style="margin:8px 0">${perms.update ? html`<button class="btn quiet sm" data-command="ims-review-output" data-review="${review.id}">Add a decision or action</button> <button class="btn quiet sm" data-command="ims-agent-minutes" data-review="${review.id}">Draft the minutes (AI)</button> <button class="btn quiet sm" data-command="ims-review-refresh" data-review="${review.id}">Freeze the inputs again</button> ` : ''}${
                   canApproveReview && review.preparedBy !== view.me ? html`<button class="btn sm" data-command="ims-review-approve" data-review="${review.id}">Approve</button>` : ''
                 }</p>`
               : ''

@@ -35875,3 +35875,78 @@ chosen period; the quality lead opens MR-001 chaired by the owner, minutes all
 twelve inputs, records an improvement with an owner and date (raising its
 action); the quality lead has no Approve button on their own review; the owner
 approves it; no page errors; no horizontal scroll at phone width.
+
+### Increment 6: the AI agents (built)
+
+`backend/src/domain/ims/agents.ts`; `frontend/pages/imsagents.js` (the AI agents
+tab, a notice on every tab while proposals wait, and a run button beside each
+document, audit, action and review).
+
+Eight agents on the existing **Risk, Safety & Compliance** engine (no new
+engine), each filing **proposals**, never the record:
+
+- **Procedure** — a policy in the library, or a brief, turned into a working
+  procedure with the clauses it meets and the roles it is issued to.
+- **Clause mapping** — which clauses of its standards a document meets, each with
+  what meets it; accepting makes a draft revision to approve.
+- **Audit checklist** — questions and records to see, against the audit's
+  clauses and sampled procedures.
+- **Root cause** — the likely cause through the system and the actions on it.
+- **Review minutes** — a minute for each input that has figures, from the frozen
+  figures only, and proposed outputs. Inputs the records cannot hold are left for
+  the meeting; a minute somebody wrote stays theirs.
+- **Aspects** — the environmental aspects of the company's activities, scored.
+- **Legal register** — requirements chosen **only from the legislation list**.
+- **Objectives** — measurable objectives for the year ahead from the company
+  position.
+
+**Checked in code before anybody sees it**: a clause that is not a clause of the
+document's standards, a role that does not exist, a checklist item outside the
+audit's scope, a minute for an input the review lacks or has no figures for, an
+output of no kind, a score outside 1–5, a duplicate aspect, an Act not on the
+list, a date in the past — each dropped and counted. `IMS_AGENT_PROPOSED` is
+written by the AI actor. **Accepting runs the ordinary command as the person
+accepting**, with their edits to the fields each kind allows (anything else is
+refused, `IMS_AGENT_EDIT`) and the owner they choose: an AI-drafted procedure is
+a draft authored by the accepting person, which somebody else must approve;
+drafted minutes are part of a review top management must still approve.
+Rejecting records nothing. With no reasoning model configured, every agent
+refuses (`IMS_AGENT_NEEDS_A_MODEL`).
+
+**A pre-existing defect fixed on the way.** `POST /v1/ai/quote` refused every
+AI route with no project in its path unless the caller was the operator. So
+every company-level AI action — Bid-On's agents, declared `quoteScope: 'TENANT'`,
+and now the management system's — could never be quoted from the console, and
+its submit button stayed disabled waiting for a price that never came. A
+`quoteScope: 'TENANT'` route is now quoted against the tenancy's governance
+project, whose wallet it spends, under the caller's AI permission.
+`GET /v1/ims/agents/estimate` publishes each IMS agent's quote.
+
+**Verified.** `npm test` 8,793 pass, typecheck clean. `tests/imsagents.test.ts` (12 tests), against a stub model that
+slips in one invalid answer of each kind, plus the company-level quote over
+HTTP. Walked in a browser on a fresh journal with a scratchpad stub model: the
+cost shown before a run; a procedure drafted from a brief, accepted with an
+edited title as a draft, and approved by the safety lead; two aspects accepted
+(one with edited controls) into the register; two legal requirements from the
+list accepted; no page errors; no horizontal scroll at phone width.
+
+### The management system: not built, stated
+
+- **No live model run.** No provider key is configured in this environment; what
+  a real model drafts for a real company has not been seen here.
+- **No ISO certification is claimed.** The platform holds and evidences the
+  system; certification is a third-party audit of the company, not of software.
+- **The standards' text** is not held — clause numbers and headings only; the
+  company uses its own licensed copies.
+- **The legislation list** is a starting point of thirty UK instruments (titles,
+  years, extent); it is not a legal determination, and Scotland and Northern
+  Ireland instruments are not listed.
+- **Document text and files**: a document is written in the platform or attached
+  as a file; the agents read written text only, not attached files.
+- **Customer satisfaction and complaints** (ISO 9001 9.1.2) are recorded only as
+  the source of an action; there is no survey or complaints register.
+- **Emergency preparedness drills** (8.2) and **worker consultation records**
+  (ISO 45001 5.4) are not recorded as their own registers; the review minutes
+  them.
+- **Read and understood** counts the company's active identities in the roles a
+  document is issued to; operatives without a platform identity are not counted.

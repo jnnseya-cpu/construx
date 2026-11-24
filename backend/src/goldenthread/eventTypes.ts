@@ -905,6 +905,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('IMS_REVIEW_MINUTED', 'ImsManagementReview', 'UPDATE', 'GOVERNANCE'),
   def('IMS_REVIEW_OUTPUT_ADDED', 'ImsManagementReview', 'UPDATE', 'GOVERNANCE'),
   def('IMS_REVIEW_APPROVED', 'ImsManagementReview', 'APPROVE', 'GOVERNANCE'),
+  // The management system's agents: written by the agent, decided by a person,
+  // whose acceptance runs the ordinary command under their own authority.
+  def('IMS_AGENT_PROPOSED', 'ImsAgentProposal', 'CREATE', 'GOVERNANCE', { creates: true, aiAllowed: true }),
+  def('IMS_AGENT_PROPOSAL_DECIDED', 'ImsAgentProposal', 'UPDATE', 'GOVERNANCE'),
   def('BID_SIGN_OFF_RECORDED', 'BidSignOff', 'APPROVE', 'PROCUREMENT', { creates: true }),
   def('SUBMISSION_FILE_RECORDED', 'BidSignOff', 'UPDATE', 'PROCUREMENT', { creates: true }),
   // A compliance undertaking confirmed: the agent drafts the statement, a person

@@ -198,6 +198,7 @@ import * as imsRegisters from '../domain/ims/registers.ts';
 import * as imsMonitoring from '../domain/ims/monitoring.ts';
 import * as riddor from '../domain/riddor.ts';
 import * as imsReview from '../domain/ims/review.ts';
+import * as imsAgents from '../domain/ims/agents.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -28001,6 +28002,29 @@ export const ROUTES: Route[] = [
       // first had made the one honest path impossible.
       if (!projectId) {
         const actor = auth(ctx);
+        /*
+         * A company-level AI action — one declaring `quoteScope: 'TENANT'` — is
+         * quoted against the tenancy's governance project, which is where it
+         * runs and whose wallet it spends. Without this the quote refused every
+         * such action ("quoted against a project"), so the console's submit
+         * stayed disabled waiting for a price that never came: Bid-On's agents
+         * and the management system's alike were unreachable from the screen.
+         */
+        if (matched.route.quoteScope === 'TENANT' && !actor.roles.includes('PLATFORM_ADMIN')) {
+          const tenantCtx = tenantContext(platform, ctx);
+          authorise(tenantCtx, 'AI_EXECUTION', 'X');
+          const inputText = matched.route.ai.quoteInputText?.(tenantCtx, new URLSearchParams(input.path.split('?')[1] ?? ''));
+          const passes = (matched.route.ai.passes ?? 1) * (input.repeat ?? 1);
+          return platform.orchestrator.quote({
+            ...(inputText ? { inputText } : {}),
+            capability: matched.route.ai.capability,
+            engine: matched.route.ai.engine,
+            taskType: matched.route.ai.taskType,
+            ...(passes > 1 ? { passes } : {}),
+            wallet: tenantCtx.wallet,
+            projectId: tenantCtx.projectId,
+          });
+        }
         if (!actor.roles.includes('PLATFORM_ADMIN')) {
           throw new DomainError('QUOTE_SCOPE', 'AI actions are quoted against a project', 400);
         }
@@ -29629,6 +29653,125 @@ export const ROUTES: Route[] = [
     description: 'Approve the review (top management, not the person who prepared it), once every input is minuted and an output recorded. It does not change afterwards',
     schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 2000 } }, additionalProperties: false },
     handler: (platform, ctx) => imsReview.approveReview(tenantContext(platform, ctx), ctx.params.reviewId as string, body<{ note: string }>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/ims/agents/estimate',
+    readOnly: true,
+    description: 'What each management system agent costs to run, before it starts — the quote every IMS agent route is shown against',
+    handler: (platform, ctx) => {
+      const engineCtx = tenantContext(platform, ctx);
+      imsCore.guard(engineCtx, 'R');
+      const tasks = ['ims_procedure', 'ims_clause_mapping', 'ims_audit_checklist', 'ims_root_cause', 'ims_review_minutes', 'ims_aspects', 'ims_obligations', 'ims_objectives'];
+      return { estimates: tasks.map((taskType) => platform.orchestrator.quote({ capability: 'REASONING', engine: 'RISK_SAFETY', taskType, wallet: engineCtx.wallet, projectId: engineCtx.projectId })) };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/ims/agents/proposals',
+    readOnly: true,
+    description: 'What the management system agents proposed, what was accepted or rejected and by whom, and the share of the work they carried',
+    handler: (platform, ctx) => imsAgents.agentShare(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/agents/procedure',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_procedure', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The procedure agent: a policy — or a brief — turned into a working procedure, with the clauses it meets and the roles it is issued to, for a person to accept as a draft',
+    schema: {
+      type: 'object',
+      required: ['title', 'standards'],
+      properties: {
+        title: { type: 'string', minLength: 3, maxLength: 200 },
+        type: { type: 'string', enum: ['POLICY', 'MANUAL', 'PROCEDURE', 'WORK_INSTRUCTION', 'FORM', 'PLAN'] },
+        standards: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } },
+        policyDocumentId: { type: 'string' },
+        brief: { type: 'string', maxLength: 8000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsAgents.draftProcedure(tenantContext(platform, ctx), body<Parameters<typeof imsAgents.draftProcedure>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/agents/clauses',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_clause_mapping', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The clause-mapping agent: which clauses of its standards a document meets, each with what meets it',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.mapClauses(tenantContext(platform, ctx), { documentId: ctx.params.documentId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/audits/:auditId/agents/checklist',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_audit_checklist', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The checklist agent: the questions and records an audit works through, against its clauses and the procedures it samples',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.draftChecklist(tenantContext(platform, ctx), { auditId: ctx.params.auditId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/actions/:actionId/agents/root-cause',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_root_cause', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The root-cause agent: the likely cause of a problem through the system, and the actions on it, for a person to confirm',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.proposeRootCause(tenantContext(platform, ctx), { actionId: ctx.params.actionId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/reviews/:reviewId/agents/minutes',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_review_minutes', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The review agent: a minute for each input of a management review from its frozen figures, and the decisions they suggest',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.draftReviewMinutes(tenantContext(platform, ctx), { reviewId: ctx.params.reviewId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/agents/aspects',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_aspects', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The aspects agent: the environmental aspects of the company’s activities, with impacts, conditions, scores and controls',
+    schema: { type: 'object', required: ['activities'], properties: { activities: { type: 'string', minLength: 10, maxLength: 8000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.proposeAspects(tenantContext(platform, ctx), body<{ activities: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/agents/obligations',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_obligations', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The legal-register agent: which requirements apply to the company’s activities, chosen only from the legislation list, with how each applies and how the company complies',
+    schema: { type: 'object', properties: { activities: { type: 'string', maxLength: 8000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.proposeObligations(tenantContext(platform, ctx), body<{ activities?: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/agents/objectives',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_objectives', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The objectives agent: measurable quality, environmental and OH&S objectives for the year ahead, each from a figure in the company position',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.proposeObjectives(tenantContext(platform, ctx), imsPeople(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/agents/proposals/:proposalId/decide',
+    description: 'Accept or reject an agent’s proposal, with any edits. Accepting runs the ordinary command under your own authority; rejecting changes nothing',
+    schema: {
+      type: 'object',
+      required: ['decision'],
+      properties: {
+        decision: { type: 'string', enum: ['ACCEPT', 'REJECT'] },
+        note: { type: 'string', maxLength: 1000 },
+        ownerId: { type: 'string' },
+        edits: { type: 'object', additionalProperties: { type: 'string', maxLength: 100000 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsAgents.decideProposal(tenantContext(platform, ctx), imsPeople(platform, ctx), ctx.params.proposalId as string, body<Parameters<typeof imsAgents.decideProposal>[3]>(ctx)),
   },
   {
     method: 'GET',
