@@ -61,6 +61,31 @@ export function imsFindings(ctx: EngineContext, on: string): Finding[] {
       }
     }
   }
+
+  for (const record of list('ImsAction')) {
+    const action = record.state as Row;
+    if (action.status === 'OPEN' && typeof action.dueOn === 'string' && action.dueOn < on) {
+      findings.push({
+        key: `ims:action-overdue:${record.refId}`,
+        severity: (action.source as Row | undefined)?.kind === 'AUDIT_FINDING' || action.kind === 'CORRECTIVE' ? 'ATTENTION' : 'INFO',
+        summary: `${String(action.reference)} was due on ${action.dueOn} and is still open: ${String(action.description).slice(0, 120)}`,
+        consequence: 'An open corrective action past its date is a nonconformity left uncorrected — an auditor reads it as the system not working.',
+        evidence: [{ refType: 'ImsAction', refId: record.refId, note: `Due ${action.dueOn}` }],
+      });
+    }
+  }
+  for (const record of list('ImsAudit')) {
+    const audit = record.state as Row;
+    if (audit.status === 'PLANNED' && typeof audit.plannedOn === 'string' && audit.plannedOn < on) {
+      findings.push({
+        key: `ims:audit-overdue:${record.refId}`,
+        severity: 'ATTENTION',
+        summary: `${String(audit.reference)} ${String(audit.title)} was planned for ${audit.plannedOn} and has not started.`,
+        consequence: 'The audit programme is not being kept; the clauses it covers go unaudited.',
+        evidence: [{ refType: 'ImsAudit', refId: record.refId, note: `Planned ${audit.plannedOn}` }],
+      });
+    }
+  }
   return findings;
 }
 
@@ -77,9 +102,11 @@ export const imsWatchAgent: AgentDefinition = {
     { kind: 'SCHEDULE', at: '06:30' },
     { kind: 'EVENT', eventType: 'IMS_DOCUMENT_APPROVED' },
     { kind: 'EVENT', eventType: 'IMS_DOCUMENT_DRAFTED' },
+    { kind: 'EVENT', eventType: 'IMS_ACTION_RAISED' },
+    { kind: 'EVENT', eventType: 'IMS_AUDIT_PLANNED' },
   ],
-  inputs: ['Controlled documents and their revisions', 'Read-and-understood acknowledgements'],
-  outputs: ['Documents past their review date', 'Drafts waiting for approval', 'Revisions in force that nobody has acknowledged'],
+  inputs: ['Controlled documents and their revisions', 'Read-and-understood acknowledgements', 'Corrective and improvement actions', 'The audit programme'],
+  outputs: ['Documents past their review date', 'Drafts waiting for approval', 'Revisions in force that nobody has acknowledged', 'Actions past their due date', 'Audits not started on their planned date'],
   emits: [],
   hitl: 'REVIEW',
   confidenceFloor: 0.9,

@@ -35722,3 +35722,47 @@ fresh journal: QA/QC drafts PRO-001, their own approval refused; the safety lead
 returns it; redrafted and approved; the owner reads it; settings changed with a
 reason; the read-only planner sees no controls; no page errors; no horizontal
 scroll at phone width.
+
+### Increment 2: internal audit and corrective action (built)
+
+`backend/src/domain/ims/audits.ts`, `actions.ts`; `frontend/pages/imsaudits.js`
+(the Audits and Actions tabs).
+
+- **Audit programme** (9.2): each audit against clauses of the standards
+  audited, the procedures sampled and the projects visited, with a planned date
+  and a lead auditor. **Objectivity is enforced**: an auditor who owns, drafted
+  or approved the revision in force of an audited document is refused
+  (`IMS_AUDITOR_NOT_INDEPENDENT`), as is one whose roles may not record in the
+  system. A checklist is set within scope. Only the lead auditor starts the
+  audit, records findings and completes it.
+- **Findings** graded major nonconformity, minor nonconformity, observation or
+  opportunity, against a clause, with what was seen. **A nonconformity raises its
+  corrective action as it is recorded**, with an owner and a due date, so no audit
+  closes with a nonconformity nobody is acting on. A completed audit takes no
+  more findings; an audit with findings cannot be cancelled.
+- **Clause coverage**: clause by clause for every standard in use, when it was
+  last audited and when it is next planned; one not audited in twelve months and
+  not planned is reported as not covered.
+- **Corrective and improvement actions** (10.2), raised from an audit finding,
+  an incident or NCR on any of the company's projects, a supplier, a management
+  review, a compliance evaluation, a complaint or anything else; a named source
+  must exist in this company (another company's is answered as not found). The
+  investigation records the correction, the root cause and the actions on it; a
+  corrective action **cannot be marked done without a root cause**; effectiveness
+  is **verified by somebody other than the person who did it**, and "not
+  effective" reopens it with the history kept.
+- **The company list of incidents, NCRs and suppliers** an action can be raised
+  from carries only reference, project, category or severity, date and status —
+  never the description, the location or the people involved — so a reader of the
+  management system who is not on a project does not see its incident detail.
+- **The watch agent** also reports actions past their due date and audits not
+  started on their planned date.
+
+**Verified.** `npm test` 8,747 pass, typecheck clean. `tests/imsaudits.test.ts` (12 tests);
+`tests/consoleforms.test.ts` now also resolves PATCH paths, which it had not
+checked. Walked in a browser on a fresh journal: the quality lead's plan naming themselves as auditor of their own
+procedure refused; planned with the PM as lead auditor; checklist, start, a
+nonconformity refused without an action owner then recorded with one, the audit
+completed; the corrective action refused as done before its root cause, then
+investigated, done, and verified effective by the PM; an action raised from a
+complaint; no page errors; no horizontal scroll at phone width.

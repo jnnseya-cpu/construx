@@ -870,6 +870,19 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('IMS_DOCUMENT_REVIEWED', 'ImsDocument', 'UPDATE', 'GOVERNANCE'),
   def('IMS_DOCUMENT_WITHDRAWN', 'ImsDocument', 'UPDATE', 'GOVERNANCE'),
   def('IMS_DOCUMENT_ACKNOWLEDGED', 'ImsAcknowledgement', 'CREATE', 'GOVERNANCE', { creates: true }),
+  // Internal audit: the lead auditor records; a nonconformity raises its
+  // corrective action as it is recorded. An action is verified effective by
+  // somebody other than the person who implemented it.
+  def('IMS_AUDIT_PLANNED', 'ImsAudit', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_AUDIT_CHECKLIST_SET', 'ImsAudit', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_AUDIT_STARTED', 'ImsAudit', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_AUDIT_COMPLETED', 'ImsAudit', 'APPROVE', 'GOVERNANCE'),
+  def('IMS_AUDIT_CANCELLED', 'ImsAudit', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_AUDIT_FINDING_RAISED', 'ImsAuditFinding', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_ACTION_RAISED', 'ImsAction', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_ACTION_UPDATED', 'ImsAction', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_ACTION_IMPLEMENTED', 'ImsAction', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_ACTION_VERIFIED', 'ImsAction', 'APPROVE', 'GOVERNANCE'),
   def('BID_SIGN_OFF_RECORDED', 'BidSignOff', 'APPROVE', 'PROCUREMENT', { creates: true }),
   def('SUBMISSION_FILE_RECORDED', 'BidSignOff', 'UPDATE', 'PROCUREMENT', { creates: true }),
   // A compliance undertaking confirmed: the agent drafts the statement, a person

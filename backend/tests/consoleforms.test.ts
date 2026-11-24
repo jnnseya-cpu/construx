@@ -92,7 +92,7 @@ describe('every path the console calls resolves to a route', () => {
         // Matching against any verb is the right check: the question is whether
         // the *endpoint* exists, and a wrong verb fails loudly at runtime with
         // a 404 the person can see, unlike an empty picker.
-        const resolved = ['GET', 'POST', 'PUT', 'DELETE'].some((method) => matchRoute(method, path));
+        const resolved = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].some((method) => matchRoute(method, path));
         if (!resolved) dead.push(declared);
       }
 

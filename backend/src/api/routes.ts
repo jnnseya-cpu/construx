@@ -192,6 +192,8 @@ import * as planningagents from '../domain/planning/agents.ts';
 import * as imsCore from '../domain/ims/ims.ts';
 import * as imsDocuments from '../domain/ims/documents.ts';
 import * as imsOverview from '../domain/ims/overview.ts';
+import * as imsAudits from '../domain/ims/audits.ts';
+import * as imsActions from '../domain/ims/actions.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -29251,6 +29253,138 @@ export const ROUTES: Route[] = [
     description: 'Read and understood: your own acknowledgement of the revision in force',
     schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (platform, ctx) => imsDocuments.acknowledgeDocument(tenantContext(platform, ctx), ctx.params.documentId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/audits',
+    description: 'Plan an internal audit against clauses, procedures and projects, with a lead auditor independent of the work audited',
+    schema: {
+      type: 'object',
+      required: ['title', 'standards', 'clauses', 'plannedOn', 'leadAuditorId'],
+      properties: {
+        title: { type: 'string', minLength: 3, maxLength: 200 },
+        standards: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } },
+        clauses: { type: 'array', minItems: 1, maxItems: 80, items: { type: 'string' } },
+        documentIds: { type: 'array', maxItems: 50, items: { type: 'string' } },
+        projectIds: { type: 'array', maxItems: 50, items: { type: 'string' } },
+        plannedOn: { type: 'string', minLength: 10, maxLength: 10 },
+        leadAuditorId: { type: 'string', minLength: 1 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsAudits.planAudit(tenantContext(platform, ctx), imsPeople(platform, ctx), body<Parameters<typeof imsAudits.planAudit>[2]>(ctx)),
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/ims/audits/:auditId/checklist',
+    description: 'The questions the auditor works through, each against a clause or document in scope',
+    schema: {
+      type: 'object',
+      required: ['items'],
+      properties: {
+        items: { type: 'array', minItems: 1, maxItems: 200, items: { type: 'object', required: ['question'], properties: { question: { type: 'string', minLength: 5, maxLength: 1000 }, clauseId: { type: 'string' }, documentId: { type: 'string' } }, additionalProperties: false } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsAudits.setChecklist(tenantContext(platform, ctx), ctx.params.auditId as string, body<{ items: imsAudits.ChecklistItem[] }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/audits/:auditId/start',
+    description: 'Start the audit (the lead auditor)',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsAudits.startAudit(tenantContext(platform, ctx), ctx.params.auditId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/audits/:auditId/findings',
+    description: 'Record a finding against a clause (the lead auditor). A major or minor nonconformity raises its corrective action with an owner and a due date',
+    schema: {
+      type: 'object',
+      required: ['grade', 'clauseId', 'statement', 'evidence'],
+      properties: {
+        grade: { type: 'string', enum: ['MAJOR_NC', 'MINOR_NC', 'OBSERVATION', 'OPPORTUNITY'] },
+        clauseId: { type: 'string', minLength: 1 },
+        documentId: { type: 'string' },
+        projectId: { type: 'string' },
+        statement: { type: 'string', minLength: 10, maxLength: 4000 },
+        evidence: { type: 'string', minLength: 5, maxLength: 4000 },
+        actionOwnerId: { type: 'string' },
+        actionDueOn: { type: 'string', minLength: 10, maxLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsAudits.recordFinding(tenantContext(platform, ctx), ctx.params.auditId as string, body<imsAudits.FindingInput>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/audits/:auditId/complete',
+    description: 'Complete the audit with its summary and conclusion (the lead auditor)',
+    schema: { type: 'object', required: ['summary', 'conclusion'], properties: { summary: { type: 'string', minLength: 10, maxLength: 8000 }, conclusion: { type: 'string', minLength: 5, maxLength: 4000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsAudits.completeAudit(tenantContext(platform, ctx), ctx.params.auditId as string, body<{ summary: string; conclusion: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/audits/:auditId/cancel',
+    description: 'Cancel an audit that has no findings, with the reason',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsAudits.cancelAudit(tenantContext(platform, ctx), ctx.params.auditId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/actions',
+    description: 'Raise a corrective or improvement action from where the problem was found — an incident or NCR on any project, a management review, a compliance evaluation, a supplier, a complaint — with its owner and due date',
+    schema: {
+      type: 'object',
+      required: ['kind', 'source', 'standards', 'description', 'ownerId', 'dueOn'],
+      properties: {
+        kind: { type: 'string', enum: ['CORRECTIVE', 'IMPROVEMENT'] },
+        source: {
+          type: 'object',
+          required: ['kind'],
+          properties: { kind: { type: 'string', enum: ['AUDIT_FINDING', 'INCIDENT', 'NCR', 'MANAGEMENT_REVIEW', 'OBLIGATION', 'SUPPLIER', 'COMPLAINT', 'OTHER'] }, refType: { type: 'string' }, refId: { type: 'string' }, label: { type: 'string', maxLength: 300 } },
+          additionalProperties: false,
+        },
+        standards: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } },
+        description: { type: 'string', minLength: 10, maxLength: 4000 },
+        correction: { type: 'string', maxLength: 4000 },
+        ownerId: { type: 'string', minLength: 1 },
+        dueOn: { type: 'string', minLength: 10, maxLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsActions.raiseAction(tenantContext(platform, ctx), body<imsActions.RaiseActionInput>(ctx)),
+  },
+  {
+    method: 'PATCH',
+    pattern: '/v1/ims/actions/:actionId',
+    description: 'The investigation of an open action: the correction, the root cause, the actions planned on it, the owner and the due date',
+    schema: {
+      type: 'object',
+      properties: {
+        correction: { type: 'string', maxLength: 4000 },
+        rootCause: { type: 'string', minLength: 10, maxLength: 4000 },
+        plannedActions: { type: 'string', minLength: 10, maxLength: 4000 },
+        ownerId: { type: 'string', minLength: 1 },
+        dueOn: { type: 'string', minLength: 10, maxLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsActions.updateAction(tenantContext(platform, ctx), ctx.params.actionId as string, body<Parameters<typeof imsActions.updateAction>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/actions/:actionId/implement',
+    description: 'Record that the action was done. A corrective action needs its root cause and planned actions first',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 4000 }, evidenceHash: { type: 'string', minLength: 64, maxLength: 71 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsActions.implementAction(tenantContext(platform, ctx), ctx.params.actionId as string, body<{ note: string; evidenceHash?: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/actions/:actionId/verify',
+    description: 'Verify effectiveness: effective closes it, not effective reopens it. Refused to the person who implemented it',
+    schema: { type: 'object', required: ['effective', 'note'], properties: { effective: { type: 'boolean' }, note: { type: 'string', minLength: 5, maxLength: 4000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsActions.verifyAction(tenantContext(platform, ctx), ctx.params.actionId as string, body<{ effective: boolean; note: string }>(ctx)),
   },
   {
     method: 'GET',

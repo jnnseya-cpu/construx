@@ -2,6 +2,8 @@ import { api } from '../lib/api.js';
 import { command } from '../lib/command.js';
 import { badge, date, html, humanise, notice, raw, reading, render, table, toast } from '../lib/ui.js';
 import { can, draw } from '../app.js';
+import { clauseLabel, clauseOptions, nameOf, personOptions, roleOptions, standardOptions } from './imscommon.js';
+import { auditCards, auditCommands } from './imsaudits.js';
 
 /**
  * The company's integrated management system — ISO 9001, 14001 and 45001 kept
@@ -15,21 +17,12 @@ import { can, draw } from '../app.js';
 let tab = 'documents';
 const TABS = [
   ['documents', 'Documents'],
+  ['audits', 'Audits'],
+  ['actions', 'Actions'],
   ['settings', 'Settings'],
 ];
 
 const DOC_TONE = { DRAFT: 'warn', EFFECTIVE: 'ok', WITHDRAWN: 'neutral' };
-
-const clauseLabel = (view, id) => {
-  const clause = view.vocabulary.clauses.find((entry) => entry.id === id);
-  const standard = clause ? view.vocabulary.standards.find((entry) => entry.id === clause.standard) : null;
-  return clause ? `${standard?.label ?? clause.standard} ${clause.clause} ${clause.title}` : id;
-};
-const personOptions = (view) => view.people.map((person) => ({ value: person.id, label: `${person.name} (${person.roles.map((role) => humanise(role)).join(', ')})` }));
-const roleOptions = (view) => view.vocabulary.roles.map((role) => ({ value: role, label: humanise(role) }));
-const standardOptions = (view) => view.vocabulary.standards.map((standard) => ({ value: standard.id, label: `${standard.label} — ${standard.topic}` }));
-const clauseOptions = (view) => view.vocabulary.clauses.map((clause) => ({ value: clause.id, label: clauseLabel(view, clause.id) }));
-const nameOf = (view, id) => view.people.find((person) => person.id === id)?.name ?? id;
 
 function documentsCard(view, perms) {
   const live = view.documents.filter((document) => document.status !== 'WITHDRAWN');
@@ -124,11 +117,13 @@ export async function ims(root) {
         ${TABS.map(([id, label]) => html`<button class="btn ${raw(tab === id ? '' : 'ghost')}" role="tab" aria-selected="${tab === id ? 'true' : 'false'}" data-ims-tab="${id}">${label}</button>`)}
       </div>
       ${tab === 'documents' ? documentsCard(view, perms) : ''}
+      ${tab === 'audits' || tab === 'actions' ? auditCards(view, perms, tab) : ''}
       ${tab === 'settings' ? settingsCard(view, perms) : ''}`,
   );
 
   const docOf = (button) => view.documents.find((document) => document.id === button.dataset.document);
   const COMMANDS = {
+    ...auditCommands(view),
     'ims-draft': () => ({
       title: 'Draft a controlled document',
       intent: 'It is a draft until somebody other than you approves it. Write the document here, or attach the file it is kept in.',
