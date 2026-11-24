@@ -86,6 +86,30 @@ export function imsFindings(ctx: EngineContext, on: string): Finding[] {
       });
     }
   }
+  for (const record of list('ImsObligation')) {
+    const obligation = record.state as Row;
+    if (obligation.status === 'ACTIVE' && typeof obligation.nextEvaluationDue === 'string' && obligation.nextEvaluationDue < on) {
+      findings.push({
+        key: `ims:evaluation-due:${record.refId}`,
+        severity: 'ATTENTION',
+        summary: `Compliance with ${String(obligation.reference)} ${String(obligation.title)} was due for evaluation on ${obligation.nextEvaluationDue}.`,
+        consequence: 'An unevaluated legal requirement cannot be shown to be complied with (9.1.2); it is exactly what a regulator or certification body asks for.',
+        evidence: [{ refType: 'ImsObligation', refId: record.refId, note: `Due ${obligation.nextEvaluationDue}` }],
+      });
+    }
+  }
+  for (const record of list('ImsObjective')) {
+    const objective = record.state as Row;
+    if (objective.status === 'OPEN' && typeof objective.dueOn === 'string' && objective.dueOn < on) {
+      findings.push({
+        key: `ims:objective-overdue:${record.refId}`,
+        severity: 'INFO',
+        summary: `${String(objective.reference)} was due on ${objective.dueOn} and is still open: ${String(objective.objective).slice(0, 120)}`,
+        consequence: 'An objective past its date is either achieved and not closed, or missed and not reviewed; management review needs to know which.',
+        evidence: [{ refType: 'ImsObjective', refId: record.refId, note: `Due ${objective.dueOn}` }],
+      });
+    }
+  }
   return findings;
 }
 
@@ -105,8 +129,8 @@ export const imsWatchAgent: AgentDefinition = {
     { kind: 'EVENT', eventType: 'IMS_ACTION_RAISED' },
     { kind: 'EVENT', eventType: 'IMS_AUDIT_PLANNED' },
   ],
-  inputs: ['Controlled documents and their revisions', 'Read-and-understood acknowledgements', 'Corrective and improvement actions', 'The audit programme'],
-  outputs: ['Documents past their review date', 'Drafts waiting for approval', 'Revisions in force that nobody has acknowledged', 'Actions past their due date', 'Audits not started on their planned date'],
+  inputs: ['Controlled documents and their revisions', 'Read-and-understood acknowledgements', 'Corrective and improvement actions', 'The audit programme', 'The legal register', 'Objectives'],
+  outputs: ['Documents past their review date', 'Drafts waiting for approval', 'Revisions in force that nobody has acknowledged', 'Actions past their due date', 'Audits not started on their planned date', 'Legal requirements due for compliance evaluation', 'Objectives past their date'],
   emits: [],
   hitl: 'REVIEW',
   confidenceFloor: 0.9,

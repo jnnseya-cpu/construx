@@ -4,6 +4,7 @@ import { badge, date, html, humanise, notice, raw, reading, render, table, toast
 import { can, draw } from '../app.js';
 import { clauseLabel, clauseOptions, nameOf, personOptions, roleOptions, standardOptions } from './imscommon.js';
 import { auditCards, auditCommands } from './imsaudits.js';
+import { registerCards, registerCommands } from './imsregisters.js';
 
 /**
  * The company's integrated management system — ISO 9001, 14001 and 45001 kept
@@ -19,6 +20,7 @@ const TABS = [
   ['documents', 'Documents'],
   ['audits', 'Audits'],
   ['actions', 'Actions'],
+  ['registers', 'Registers'],
   ['settings', 'Settings'],
 ];
 
@@ -118,12 +120,14 @@ export async function ims(root) {
       </div>
       ${tab === 'documents' ? documentsCard(view, perms) : ''}
       ${tab === 'audits' || tab === 'actions' ? auditCards(view, perms, tab) : ''}
+      ${tab === 'registers' ? registerCards(view, perms) : ''}
       ${tab === 'settings' ? settingsCard(view, perms) : ''}`,
   );
 
   const docOf = (button) => view.documents.find((document) => document.id === button.dataset.document);
   const COMMANDS = {
     ...auditCommands(view),
+    ...registerCommands(view),
     'ims-draft': () => ({
       title: 'Draft a controlled document',
       intent: 'It is a draft until somebody other than you approves it. Write the document here, or attach the file it is kept in.',

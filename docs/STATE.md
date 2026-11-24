@@ -35766,3 +35766,35 @@ nonconformity refused without an action owner then recorded with one, the audit
 completed; the corrective action refused as done before its root cause, then
 investigated, done, and verified effective by the PM; an action raised from a
 complaint; no page errors; no horizontal scroll at phone width.
+
+### Increment 3: the environmental and legal registers and objectives (built)
+
+`backend/src/domain/ims/registers.ts`, `legislation.ts`;
+`frontend/pages/imsregisters.js` (the Registers tab).
+
+- **Environmental aspects and impacts** (ISO 14001 6.1.2): activity, aspect,
+  impact, condition (normal, abnormal, emergency), severity and likelihood 1–5,
+  controls and the procedures behind them. **Significant** when severity ×
+  likelihood meets the company's own threshold (a setting, starting at 12) or a
+  legal requirement drives it; a retired aspect is not significant.
+  Reassessment is dated; retirement keeps the entry with its reason.
+- **Legal and other requirements** (ISO 14001 and 45001 6.1.3): from a starting
+  list of thirty UK Acts and regulations (titles, years and extent only — never
+  their text) or by title for a permit, consent or client requirement; once per
+  title; what it requires, how it applies, how the company complies. **Due for
+  evaluation the day it is added** — an entry never evaluated has not been shown
+  to be complied with — then on its own interval. **An evaluation short of
+  compliant raises a corrective action** with its owner and due date. An entry
+  from the list carries that law's standards unless others are ticked.
+- **Objectives** (6.2): standard, objective, measure, target, baseline,
+  resources, owner, date; measured values recorded with their source; closed
+  achieved or not by an approver, with the final figure.
+- **The watch agent** also reports requirements due for evaluation and objectives
+  past their date.
+
+**Verified.** `npm test` 8,757 pass, typecheck clean. `tests/imsregisters.test.ts` (8 tests). Walked in a browser on a
+fresh journal: two aspects (the legally driven one significant at 12, the other
+not); the Environmental Protection Act 1990 added from the list; a partial
+evaluation refused without an action owner, then recorded and its corrective
+action shown on the Actions tab; an objective set, progressed and closed; no page
+errors; no horizontal scroll at phone width.

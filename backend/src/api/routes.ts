@@ -194,6 +194,7 @@ import * as imsDocuments from '../domain/ims/documents.ts';
 import * as imsOverview from '../domain/ims/overview.ts';
 import * as imsAudits from '../domain/ims/audits.ts';
 import * as imsActions from '../domain/ims/actions.ts';
+import * as imsRegisters from '../domain/ims/registers.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -29385,6 +29386,133 @@ export const ROUTES: Route[] = [
     description: 'Verify effectiveness: effective closes it, not effective reopens it. Refused to the person who implemented it',
     schema: { type: 'object', required: ['effective', 'note'], properties: { effective: { type: 'boolean' }, note: { type: 'string', minLength: 5, maxLength: 4000 } }, additionalProperties: false },
     handler: (platform, ctx) => imsActions.verifyAction(tenantContext(platform, ctx), ctx.params.actionId as string, body<{ effective: boolean; note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/aspects',
+    description: 'Record an environmental aspect of an activity, the impact it can have and under what conditions, scored severity × likelihood, with its controls',
+    schema: {
+      type: 'object',
+      required: ['activity', 'aspect', 'impact', 'condition', 'severity', 'likelihood', 'controls'],
+      properties: {
+        activity: { type: 'string', minLength: 3, maxLength: 300 },
+        aspect: { type: 'string', minLength: 3, maxLength: 300 },
+        impact: { type: 'string', minLength: 3, maxLength: 500 },
+        condition: { type: 'string', enum: ['NORMAL', 'ABNORMAL', 'EMERGENCY'] },
+        severity: { type: 'integer', minimum: 1, maximum: 5 },
+        likelihood: { type: 'integer', minimum: 1, maximum: 5 },
+        legalDriver: { type: 'boolean' },
+        controls: { type: 'string', minLength: 5, maxLength: 2000 },
+        documentIds: { type: 'array', maxItems: 20, items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsRegisters.recordAspect(tenantContext(platform, ctx), body<imsRegisters.AspectInput>(ctx)),
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/ims/aspects/:aspectId',
+    description: 'Reassess an environmental aspect',
+    schema: {
+      type: 'object',
+      required: ['activity', 'aspect', 'impact', 'condition', 'severity', 'likelihood', 'controls'],
+      properties: {
+        activity: { type: 'string', minLength: 3, maxLength: 300 },
+        aspect: { type: 'string', minLength: 3, maxLength: 300 },
+        impact: { type: 'string', minLength: 3, maxLength: 500 },
+        condition: { type: 'string', enum: ['NORMAL', 'ABNORMAL', 'EMERGENCY'] },
+        severity: { type: 'integer', minimum: 1, maximum: 5 },
+        likelihood: { type: 'integer', minimum: 1, maximum: 5 },
+        legalDriver: { type: 'boolean' },
+        controls: { type: 'string', minLength: 5, maxLength: 2000 },
+        documentIds: { type: 'array', maxItems: 20, items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsRegisters.reviseAspect(tenantContext(platform, ctx), ctx.params.aspectId as string, body<imsRegisters.AspectInput>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/aspects/:aspectId/retire',
+    description: 'Retire an aspect that no longer applies, with the reason',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsRegisters.retireAspect(tenantContext(platform, ctx), ctx.params.aspectId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/obligations',
+    description: 'Add a legal or other requirement to the register — from the legislation list or by its title — with how it applies and how the company complies. Due for evaluation from the day it is added',
+    schema: {
+      type: 'object',
+      required: ['requirement', 'applicability', 'howComplied'],
+      properties: {
+        standards: { type: 'array', maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } },
+        catalogueKey: { type: 'string' },
+        title: { type: 'string', maxLength: 300 },
+        extent: { type: 'string', maxLength: 100 },
+        requirement: { type: 'string', minLength: 10, maxLength: 2000 },
+        applicability: { type: 'string', minLength: 10, maxLength: 2000 },
+        howComplied: { type: 'string', minLength: 10, maxLength: 2000 },
+        documentIds: { type: 'array', maxItems: 20, items: { type: 'string' } },
+        evaluationMonths: { type: 'integer', minimum: 1, maximum: 36 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsRegisters.recordObligation(tenantContext(platform, ctx), body<imsRegisters.ObligationInput>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/obligations/:obligationId/evaluations',
+    description: 'Evaluate compliance with a requirement. Partial or non-compliant raises a corrective action with its owner and due date',
+    schema: {
+      type: 'object',
+      required: ['result', 'note'],
+      properties: { result: { type: 'string', enum: ['COMPLIANT', 'PARTIAL', 'NON_COMPLIANT'] }, note: { type: 'string', minLength: 10, maxLength: 4000 }, actionOwnerId: { type: 'string' }, actionDueOn: { type: 'string', minLength: 10, maxLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsRegisters.evaluateObligation(tenantContext(platform, ctx), ctx.params.obligationId as string, body<Parameters<typeof imsRegisters.evaluateObligation>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/obligations/:obligationId/withdraw',
+    description: 'Withdraw a requirement that no longer applies, with the reason',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsRegisters.withdrawObligation(tenantContext(platform, ctx), ctx.params.obligationId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/objectives',
+    description: 'Set an objective: what will be achieved, how it is measured, the target, the resources, who and by when',
+    schema: {
+      type: 'object',
+      required: ['standard', 'objective', 'measure', 'target', 'ownerId', 'dueOn'],
+      properties: {
+        standard: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] },
+        objective: { type: 'string', minLength: 10, maxLength: 1000 },
+        measure: { type: 'string', minLength: 5, maxLength: 500 },
+        target: { type: 'string', minLength: 1, maxLength: 200 },
+        baseline: { type: 'string', maxLength: 200 },
+        resources: { type: 'string', maxLength: 1000 },
+        ownerId: { type: 'string', minLength: 1 },
+        dueOn: { type: 'string', minLength: 10, maxLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsRegisters.setObjective(tenantContext(platform, ctx), body<imsRegisters.ObjectiveInput>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/objectives/:objectiveId/progress',
+    description: 'Record a measured value against an objective, with where it comes from',
+    schema: { type: 'object', required: ['value', 'note'], properties: { value: { type: 'string', minLength: 1, maxLength: 200 }, note: { type: 'string', minLength: 3, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsRegisters.recordProgress(tenantContext(platform, ctx), ctx.params.objectiveId as string, body<{ value: string; note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/objectives/:objectiveId/close',
+    description: 'Close an objective as achieved or not, with the final figure',
+    schema: { type: 'object', required: ['achieved', 'note'], properties: { achieved: { type: 'boolean' }, note: { type: 'string', minLength: 5, maxLength: 2000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsRegisters.closeObjective(tenantContext(platform, ctx), ctx.params.objectiveId as string, body<{ achieved: boolean; note: string }>(ctx)),
   },
   {
     method: 'GET',

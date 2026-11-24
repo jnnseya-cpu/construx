@@ -5,6 +5,8 @@ import { DOCUMENT_TYPES, documentOf, documentRegister } from './documents.ts';
 import { activePeople, guard, settings, type Person } from './ims.ts';
 import { ACTION_KINDS, SOURCE_KINDS, actionRegister, sourceCandidates } from './actions.ts';
 import { FINDING_GRADES, auditProgramme } from './audits.ts';
+import { CONDITIONS, EVALUATION_RESULTS, registersPosition } from './registers.ts';
+import { LEGISLATION } from './legislation.ts';
 
 /**
  * The one read the Management System screen is drawn from.
@@ -26,6 +28,7 @@ export function imsOverview(ctx: EngineContext, people: readonly Person[]) {
     programme: auditProgramme(ctx, people),
     actions: actionRegister(ctx, people),
     sources: sourceCandidates(ctx),
+    registers: registersPosition(ctx, people),
     people: activePeople(people).map((person) => ({ id: person.id, name: person.name, roles: person.roles })),
     me: ctx.auth.actorId,
     vocabulary: {
@@ -35,6 +38,9 @@ export function imsOverview(ctx: EngineContext, people: readonly Person[]) {
       findingGrades: FINDING_GRADES,
       actionKinds: ACTION_KINDS,
       sourceKinds: SOURCE_KINDS,
+      aspectConditions: CONDITIONS,
+      evaluationResults: EVALUATION_RESULTS,
+      legislation: LEGISLATION,
       roles: ALL_ROLES.filter((role) => role !== 'PLATFORM_ADMIN'),
     },
   };

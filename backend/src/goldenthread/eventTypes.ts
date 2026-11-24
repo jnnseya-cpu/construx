@@ -883,6 +883,17 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('IMS_ACTION_UPDATED', 'ImsAction', 'UPDATE', 'GOVERNANCE'),
   def('IMS_ACTION_IMPLEMENTED', 'ImsAction', 'UPDATE', 'GOVERNANCE'),
   def('IMS_ACTION_VERIFIED', 'ImsAction', 'APPROVE', 'GOVERNANCE'),
+  // The registers: environmental aspects, legal and other requirements (an
+  // evaluation short of compliant raises its corrective action), objectives.
+  def('IMS_ASPECT_RECORDED', 'ImsAspect', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_ASPECT_REVISED', 'ImsAspect', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_ASPECT_RETIRED', 'ImsAspect', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_OBLIGATION_RECORDED', 'ImsObligation', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_OBLIGATION_EVALUATED', 'ImsObligation', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_OBLIGATION_WITHDRAWN', 'ImsObligation', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_OBJECTIVE_SET', 'ImsObjective', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_OBJECTIVE_PROGRESS_RECORDED', 'ImsObjective', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_OBJECTIVE_CLOSED', 'ImsObjective', 'APPROVE', 'GOVERNANCE'),
   def('BID_SIGN_OFF_RECORDED', 'BidSignOff', 'APPROVE', 'PROCUREMENT', { creates: true }),
   def('SUBMISSION_FILE_RECORDED', 'BidSignOff', 'UPDATE', 'PROCUREMENT', { creates: true }),
   // A compliance undertaking confirmed: the agent drafts the statement, a person
