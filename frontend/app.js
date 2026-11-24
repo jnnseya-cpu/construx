@@ -217,6 +217,9 @@ export const NAV = [
     items: [
       { id: 'control', label: 'Project Control', area: 'PROJECT_SETUP', icon: 'checklist' },
       { id: 'risk', label: 'Risk & Safety', area: 'RISK_REGISTER', icon: 'shield' },
+      // The company's ISO 9001/14001/45001 system. Company-level, so it needs
+      // no project; `module` keeps it absent for a company not granted it.
+      { id: 'ims', label: 'Management System', area: 'MANAGEMENT_SYSTEM', module: 'IMS', icon: 'checklist', tenantScoped: true, hostOnly: true },
       { id: 'handover', label: 'Handover & O&M', area: 'HANDOVER_OM', icon: 'key' },
       { id: 'audit', label: 'Golden Thread', area: 'EVIDENCE_AUDIT', icon: 'link' },
       // The fifteen generated document types. Under EVIDENCE_AUDIT read for the

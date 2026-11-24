@@ -35668,3 +35668,57 @@ horizontal scroll at phone width.
   not of effort.
 - **Q1 and Q2 were committed without this section** (commit `88a11aa`); this
   section records them.
+
+## 2026-11 CONSTRUX Integrated Management System (ISO 9001 / 14001 / 45001)
+
+The company's management system, held once for the whole business. A private
+module (`IMS`, granted per company by the operator like Planning) behind a new
+permission area, `MANAGEMENT_SYSTEM`. Every IMS record is written on the
+tenancy's governance record — where the supplier register already lives — and
+the domain refuses to write one on a delivery project (`IMS_COMPANY_RECORD`).
+It reads the delivery records every project keeps rather than copying them.
+
+**Where it lives.** `backend/src/domain/ims/` (`clauses.ts`, `ims.ts`,
+`documents.ts`, `overview.ts`), `backend/src/agents/ims.ts`,
+`frontend/pages/ims.js` (sidebar: Assure → Management System, company-level),
+routes under `/v1/ims/…`.
+
+**Who may do what.** Read: every delivery role, the enterprise administrator
+and viewers. Author (C/U): PM, QS, commercial manager, principal designer,
+construction manager, project director, safety and QA/QC. Approve (A): the
+owner, the executive, the project director, safety and QA/QC. Acknowledging a
+procedure needs only read — it is a person's statement about themselves.
+
+### Increment 1: the clause catalogue and the controlled documents (built)
+
+- **Clause catalogue**: the harmonised structure of ISO 9001:2015, ISO
+  14001:2015 and ISO 45001:2018 — clause numbers and headings only, never the
+  standards' requirement text — so one procedure can be mapped to 7.5 in all
+  three at once.
+- **Controlled documents**: policy, manual, procedure, work instruction, form,
+  plan; each numbered in its own series (POL-001, PRO-001…), with its owner, the
+  standards and clauses it meets (a clause outside its standards is refused),
+  the roles it is issued to, and its text or an attached file (hashed and
+  registered as evidence). **A revision is in force only once somebody other than
+  its author approves it** (`IMS_APPROVAL_SAME_PERSON`); a return keeps it a
+  draft with the reason; one draft at a time, redrafted in place; approval
+  supersedes the revision in force and sets the review date.
+- **Read and understood**: each active person in the roles a document is issued
+  to acknowledges each revision in force, once; the register shows who has not;
+  a new revision asks everyone again.
+- **Periodic review**: a review that finds it right is recorded and moves the
+  date; one that finds it wrong is a redraft. **Withdrawal** keeps it on the
+  record with its reason.
+- **Settings**: the decisions the standards leave to the company (review
+  interval, aspect significance threshold, supplier evaluation interval and
+  review score, competence warning days) start from stated values and are
+  changed by an approver with a reason, within limits.
+- **The watch agent** (`AGT-IMS-WATCH`, observe-only): documents past review,
+  drafts waiting more than 30 days, and revisions in force for over 14 days that
+  nobody has acknowledged.
+
+**Verified.** `npm test` 8,731 pass, typecheck clean. `tests/imsdocuments.test.ts` (14 tests). Walked in a browser on a
+fresh journal: QA/QC drafts PRO-001, their own approval refused; the safety lead
+returns it; redrafted and approved; the owner reads it; settings changed with a
+reason; the read-only planner sees no controls; no page errors; no horizontal
+scroll at phone width.

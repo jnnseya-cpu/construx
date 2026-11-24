@@ -5,6 +5,7 @@ import { LIFECYCLE_AGENTS } from './lifecycle.ts';
 import { ETABLIX_AGENTS } from './etablix.ts';
 import { BID_ON_AGENTS } from './bidon.ts';
 import { PLANNING_AGENTS } from './planning.ts';
+import { IMS_AGENTS } from './ims.ts';
 import { FIELD_AGENTS } from './field.ts';
 import { PLATFORM_AGENTS } from './platform.ts';
 import type { AgentDefinition, AgentOutput, Finding, ProposedCommand } from './types.ts';
@@ -1443,6 +1444,8 @@ export const AGENTS: AgentDefinition[] = [
   ...BID_ON_AGENTS,
   // The CONSTRUX Planning watch, carrying `module: 'PLANNING'` for the same reason.
   ...PLANNING_AGENTS,
+  // The management system watch, carrying `module: 'IMS'`.
+  ...IMS_AGENTS,
 ];
 
 export function agentsByDivision(division: AgentDefinition['division']): AgentDefinition[] {

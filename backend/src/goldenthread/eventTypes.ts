@@ -857,6 +857,19 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // Accepting one runs the ordinary command as that person.
   def('PLANNING_AGENT_PROPOSED', 'PlanningAgentProposal', 'CREATE', 'DESIGN', { creates: true, aiAllowed: true }),
   def('PLANNING_AGENT_PROPOSAL_DECIDED', 'PlanningAgentProposal', 'UPDATE', 'DESIGN'),
+
+  // --- Integrated management system (ISO 9001 / 14001 / 45001) ---------------
+  // Company-level, on the tenancy's governance record. A document is in force
+  // only once somebody other than its author approves it; "read and understood"
+  // is each person's own acknowledgement of the revision in force.
+  def('IMS_SETTINGS_SET', 'ImsSettings', 'UPDATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_DOCUMENT_DRAFTED', 'ImsDocument', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_DOCUMENT_REDRAFTED', 'ImsDocument', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_DOCUMENT_APPROVED', 'ImsDocument', 'APPROVE', 'GOVERNANCE'),
+  def('IMS_DOCUMENT_RETURNED', 'ImsDocument', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_DOCUMENT_REVIEWED', 'ImsDocument', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_DOCUMENT_WITHDRAWN', 'ImsDocument', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_DOCUMENT_ACKNOWLEDGED', 'ImsAcknowledgement', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('BID_SIGN_OFF_RECORDED', 'BidSignOff', 'APPROVE', 'PROCUREMENT', { creates: true }),
   def('SUBMISSION_FILE_RECORDED', 'BidSignOff', 'UPDATE', 'PROCUREMENT', { creates: true }),
   // A compliance undertaking confirmed: the agent drafts the statement, a person

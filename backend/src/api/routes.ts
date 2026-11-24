@@ -189,6 +189,9 @@ import * as planninggates from '../domain/planning/gates.ts';
 import * as planningregister from '../domain/planning/register.ts';
 import * as planningstudies from '../domain/planning/studies.ts';
 import * as planningagents from '../domain/planning/agents.ts';
+import * as imsCore from '../domain/ims/ims.ts';
+import * as imsDocuments from '../domain/ims/documents.ts';
+import * as imsOverview from '../domain/ims/overview.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -740,6 +743,17 @@ function authoriseTenant(ctx: RequestContext, area: CapabilityArea, code: Permis
     throw new ForbiddenError(decision.reason ?? 'Not permitted', 'ACCESS_DENIED');
   }
   return actor;
+}
+
+/**
+ * The company's people as the management system reads them: who is active and
+ * in which roles, for who must acknowledge a procedure, who holds which
+ * competence and who owns what. Names and roles only — never an address.
+ */
+function imsPeople(platform: Platform, ctx: RequestContext): imsCore.Person[] {
+  const actor = auth(ctx);
+  externalsRefused(platform, actor, 'the management system');
+  return platform.users(actor.tenantId).map((user) => ({ id: user.id, name: user.name, roles: user.roles, status: user.status }));
 }
 
 function tenantContext(platform: Platform, ctx: RequestContext) {
@@ -29123,6 +29137,120 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => planningagents.decideProposal(projectContext(platform, ctx), ctx.params.proposalId as string, body<{ decision: string; note?: string }>(ctx)),
+  },
+  // ------------------------------------------------------------------ integrated management system
+  {
+    method: 'GET',
+    pattern: '/v1/ims',
+    readOnly: true,
+    description: 'The company’s management system: its controlled documents with what is in force, who owns each, its review date and who has not yet acknowledged it; the settings; the clause catalogue of ISO 9001, 14001 and 45001',
+    handler: (platform, ctx) => imsOverview.imsOverview(tenantContext(platform, ctx), imsPeople(platform, ctx)),
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/ims/settings',
+    description: 'The decisions the standards leave to the company: how often documents are reviewed and suppliers evaluated, when an environmental aspect is significant, when a supplier is put to review, how far ahead expiring competence is shown',
+    schema: {
+      type: 'object',
+      required: ['note'],
+      properties: {
+        documentReviewMonths: { type: 'integer', minimum: 1, maximum: 60 },
+        aspectSignificanceThreshold: { type: 'integer', minimum: 1, maximum: 25 },
+        supplierEvaluationMonths: { type: 'integer', minimum: 1, maximum: 36 },
+        supplierReviewBelow: { type: 'number', minimum: 1, maximum: 5 },
+        competenceWarningDays: { type: 'integer', minimum: 1, maximum: 365 },
+        note: { type: 'string', minLength: 5, maxLength: 1000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsCore.setSettings(tenantContext(platform, ctx), body<Parameters<typeof imsCore.setSettings>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents',
+    description: 'Draft a controlled document — a policy, manual, procedure, work instruction, form or plan — with the clauses it meets, its owner and the roles it is issued to. It is in force only once somebody else approves it',
+    schema: {
+      type: 'object',
+      required: ['type', 'title', 'standards', 'ownerId'],
+      properties: {
+        type: { type: 'string', enum: ['POLICY', 'MANUAL', 'PROCEDURE', 'WORK_INSTRUCTION', 'FORM', 'PLAN'] },
+        title: { type: 'string', minLength: 3, maxLength: 200 },
+        purpose: { type: 'string', maxLength: 4000 },
+        standards: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } },
+        clauses: { type: 'array', maxItems: 80, items: { type: 'string' } },
+        ownerId: { type: 'string', minLength: 1, maxLength: 200 },
+        distribution: { type: 'array', maxItems: 30, items: { type: 'string' } },
+        content: { type: 'string', maxLength: 100000 },
+        changeSummary: { type: 'string', maxLength: 1000 },
+        file: { type: 'object', required: ['hash', 'filename'], properties: { hash: { type: 'string', minLength: 64, maxLength: 71 }, filename: { type: 'string', minLength: 1, maxLength: 300 } }, additionalProperties: false },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsDocuments.draftDocument(tenantContext(platform, ctx), body<imsDocuments.DocumentInput>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/ims/documents/:documentId',
+    readOnly: true,
+    description: 'One controlled document with the text of every revision, who drafted and approved each, its reviews and who has acknowledged the revision in force',
+    handler: (platform, ctx) => imsOverview.documentDetail(tenantContext(platform, ctx), ctx.params.documentId as string, imsPeople(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/redraft',
+    description: 'Draft a change to a controlled document, with what changes and why. One draft at a time; the revision in force stays in force until the draft is approved',
+    schema: {
+      type: 'object',
+      required: ['changeSummary'],
+      properties: {
+        title: { type: 'string', minLength: 3, maxLength: 200 },
+        purpose: { type: 'string', maxLength: 4000 },
+        standards: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } },
+        clauses: { type: 'array', maxItems: 80, items: { type: 'string' } },
+        ownerId: { type: 'string', minLength: 1, maxLength: 200 },
+        distribution: { type: 'array', maxItems: 30, items: { type: 'string' } },
+        content: { type: 'string', maxLength: 100000 },
+        changeSummary: { type: 'string', maxLength: 1000 },
+        file: { type: 'object', required: ['hash', 'filename'], properties: { hash: { type: 'string', minLength: 64, maxLength: 71 }, filename: { type: 'string', minLength: 1, maxLength: 300 } }, additionalProperties: false },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsDocuments.redraftDocument(tenantContext(platform, ctx), ctx.params.documentId as string, body<Parameters<typeof imsDocuments.redraftDocument>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/approve',
+    description: 'Approve the draft: it comes into force, the revision it replaces is superseded, its review date is set, and everyone it is issued to must acknowledge it again. Refused to the person who drafted it',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsDocuments.approveDocument(tenantContext(platform, ctx), ctx.params.documentId as string, body<{ note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/return',
+    description: 'Send the draft back with what has to change; it stays a draft',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsDocuments.returnDocument(tenantContext(platform, ctx), ctx.params.documentId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/review',
+    description: 'Record a periodic review that found the document still right; its next review date is set from today',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsDocuments.confirmReview(tenantContext(platform, ctx), ctx.params.documentId as string, body<{ note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/withdraw',
+    description: 'Withdraw a controlled document; it stays on the record, withdrawn, with its reason',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsDocuments.withdrawDocument(tenantContext(platform, ctx), ctx.params.documentId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/acknowledge',
+    description: 'Read and understood: your own acknowledgement of the revision in force',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsDocuments.acknowledgeDocument(tenantContext(platform, ctx), ctx.params.documentId as string),
   },
   {
     method: 'GET',
