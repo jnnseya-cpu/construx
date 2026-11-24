@@ -35840,3 +35840,38 @@ supplier evaluated at 2.4 and put to review, two others shown due; SMSTS
 required of the safety role, a certificate uploaded for the safety lead, the
 matrix showing it held to its expiry; no page errors; no horizontal scroll at
 phone width.
+
+### Increment 5: the company-wide view and management review (built)
+
+`backend/src/domain/ims/review.ts`; `frontend/pages/imsreview.js` (the Overview
+tab, now the first, and the Management review tab).
+
+- **The company position** for any period (`GET /v1/ims/position`), counted from
+  the records across every project and the system — never entered: the status of
+  the previous review's actions; objectives; NCRs raised and open and corrective
+  actions open, overdue, verified effective or not; incidents by category and
+  the RIDDOR position; audit results and clauses not covered; compliance
+  evaluations; significant aspects; supplier performance; competence gaps; the
+  state of the documents. Two inputs the records cannot hold (changes in
+  external and internal issues; communication and worker consultation) are named
+  as such for the review to minute.
+- **Management review** (9.3): opened for a period with a chair from top
+  management (owner, executive, project director — `TOP_MANAGEMENT_ROLES`); the
+  position is **frozen as its inputs with a hash** when opened (and may be frozen
+  again while a draft); each input minuted; decisions and actions recorded — an
+  output given an owner and date **raises an improvement action sourced to the
+  review**, which the next review's first input then reports on. **Approved by
+  top management other than the person who prepared it**, only once every input
+  is minuted and an output recorded; fixed thereafter.
+- **The watch agent** also reports a system with documents in force and no
+  approved management review, or none in the last year.
+- Found in the walk and fixed: minuting an input again with the same words was
+  refused with the ledger's internal "no state change" message; it now changes
+  nothing and says nothing, and each input's button shows whether it is minuted.
+
+**Verified.** `npm test` 8,779 pass, typecheck clean. `tests/imsreview.test.ts` (8 tests). Walked in a browser on a
+fresh journal: the overview's position for the last twelve months and for a
+chosen period; the quality lead opens MR-001 chaired by the owner, minutes all
+twelve inputs, records an improvement with an owner and date (raising its
+action); the quality lead has no Approve button on their own review; the owner
+approves it; no page errors; no horizontal scroll at phone width.

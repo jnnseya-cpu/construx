@@ -9,6 +9,8 @@ import { CONDITIONS, EVALUATION_RESULTS, registersPosition } from './registers.t
 import { LEGISLATION } from './legislation.ts';
 import { PERFORMANCE_HEADINGS, competenceMatrix, riddorCompany, supplierPerformance } from './monitoring.ts';
 import { RIDDOR_KINDS } from '../riddor.ts';
+import { companyPosition, reviewRegister } from './review.ts';
+import { addMonths, today } from './ims.ts';
 
 /**
  * The one read the Management System screen is drawn from.
@@ -32,6 +34,9 @@ export function imsOverview(ctx: EngineContext, people: readonly Person[]) {
     sources: sourceCandidates(ctx),
     registers: registersPosition(ctx, people),
     monitoring: { suppliers: supplierPerformance(ctx, people), competence: competenceMatrix(ctx, people), riddor: riddorCompany(ctx) },
+    // The last twelve months, for the company-wide view.
+    position: companyPosition(ctx, people, { from: addMonths(today(), -12), to: today() }),
+    review: reviewRegister(ctx, people),
     people: activePeople(people).map((person) => ({ id: person.id, name: person.name, roles: person.roles })),
     me: ctx.auth.actorId,
     vocabulary: {

@@ -110,6 +110,26 @@ export function imsFindings(ctx: EngineContext, on: string): Finding[] {
       });
     }
   }
+  // Management review at least yearly, once there is a system to review.
+  if (list('ImsDocument').some((record) => (record.state as Row).status === 'EFFECTIVE')) {
+    const approved = list('ImsManagementReview')
+      .map((record) => record.state as Row)
+      .filter((review) => review.status === 'APPROVED')
+      .map((review) => String(review.heldOn))
+      .sort();
+    const last = approved.at(-1);
+    const yearAgo = new Date(Date.parse(`${on}T00:00:00Z`) - 365 * 86_400_000).toISOString().slice(0, 10);
+    if (!last || last < yearAgo) {
+      findings.push({
+        key: `ims:review-due:${last ?? 'never'}`,
+        severity: 'ATTENTION',
+        summary: last ? `The last management review was held on ${last}, more than a year ago.` : 'The management system has documents in force and no management review has been approved.',
+        consequence: 'Top management reviewing the system at planned intervals (9.3) is a requirement of all three standards, and a certification audit cannot pass without one.',
+        evidence: [{ refType: 'ImsSettings', refId: `${ctx.tenantId}-ims-settings`, note: last ? `Last review ${last}` : 'No approved review' }],
+      });
+    }
+  }
+
   // Suppliers whose latest evaluation fell below the company's score.
   const settingsRecord = ctx.ledger.get({ refType: 'ImsSettings', refId: `${ctx.tenantId}-ims-settings` });
   const reviewBelow = Number((settingsRecord?.state as Row | undefined)?.supplierReviewBelow ?? 3);
@@ -149,8 +169,8 @@ export const imsWatchAgent: AgentDefinition = {
     { kind: 'EVENT', eventType: 'IMS_ACTION_RAISED' },
     { kind: 'EVENT', eventType: 'IMS_AUDIT_PLANNED' },
   ],
-  inputs: ['Controlled documents and their revisions', 'Read-and-understood acknowledgements', 'Corrective and improvement actions', 'The audit programme', 'The legal register', 'Objectives', 'Supplier performance evaluations'],
-  outputs: ['Documents past their review date', 'Drafts waiting for approval', 'Revisions in force that nobody has acknowledged', 'Actions past their due date', 'Audits not started on their planned date', 'Legal requirements due for compliance evaluation', 'Objectives past their date', 'Suppliers performing below the company’s score'],
+  inputs: ['Controlled documents and their revisions', 'Read-and-understood acknowledgements', 'Corrective and improvement actions', 'The audit programme', 'The legal register', 'Objectives', 'Supplier performance evaluations', 'Management reviews'],
+  outputs: ['Documents past their review date', 'Drafts waiting for approval', 'Revisions in force that nobody has acknowledged', 'Actions past their due date', 'Audits not started on their planned date', 'Legal requirements due for compliance evaluation', 'Objectives past their date', 'Suppliers performing below the company’s score', 'Management review more than a year old, or never held'],
   emits: [],
   hitl: 'REVIEW',
   confidenceFloor: 0.9,

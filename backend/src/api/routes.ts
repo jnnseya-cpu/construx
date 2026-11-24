@@ -197,6 +197,7 @@ import * as imsActions from '../domain/ims/actions.ts';
 import * as imsRegisters from '../domain/ims/registers.ts';
 import * as imsMonitoring from '../domain/ims/monitoring.ts';
 import * as riddor from '../domain/riddor.ts';
+import * as imsReview from '../domain/ims/review.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -29562,6 +29563,72 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => imsMonitoring.recordHolding(tenantContext(platform, ctx), imsPeople(platform, ctx), body<Parameters<typeof imsMonitoring.recordHolding>[2]>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/ims/position',
+    readOnly: true,
+    description: 'The company-wide position for a period — incidents and RIDDOR, NCRs and corrective actions, audits, compliance, aspects, objectives, suppliers, competence and documents — counted from the records across every project',
+    handler: (platform, ctx) => {
+      const to = ctx.query.get('to') ?? new Date().toISOString().slice(0, 10);
+      const from = ctx.query.get('from') ?? imsCore.addMonths(to, -12);
+      return imsReview.companyPosition(tenantContext(platform, ctx), imsPeople(platform, ctx), { from, to });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/reviews',
+    description: 'Open a management review for a period, chaired by top management: the company position for the period is frozen as its inputs, with its hash',
+    schema: {
+      type: 'object',
+      required: ['periodFrom', 'periodTo', 'heldOn', 'chairId'],
+      properties: {
+        periodFrom: { type: 'string', minLength: 10, maxLength: 10 },
+        periodTo: { type: 'string', minLength: 10, maxLength: 10 },
+        heldOn: { type: 'string', minLength: 10, maxLength: 10 },
+        chairId: { type: 'string', minLength: 1 },
+        attendees: { type: 'array', maxItems: 40, items: { type: 'string', maxLength: 200 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsReview.openReview(tenantContext(platform, ctx), imsPeople(platform, ctx), body<Parameters<typeof imsReview.openReview>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/reviews/:reviewId/refresh',
+    description: 'Freeze the company position again as the review’s inputs, while it is a draft',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsReview.refreshInputs(tenantContext(platform, ctx), imsPeople(platform, ctx), ctx.params.reviewId as string),
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/ims/reviews/:reviewId/minutes',
+    description: 'Minute what the review concluded about one of its inputs',
+    schema: { type: 'object', required: ['key', 'text'], properties: { key: { type: 'string', minLength: 1 }, text: { type: 'string', minLength: 10, maxLength: 8000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsReview.minuteInput(tenantContext(platform, ctx), ctx.params.reviewId as string, body<{ key: string; text: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/reviews/:reviewId/outputs',
+    description: 'Record a decision or action of the review — an improvement, a change to the system, a resource need. One given an owner and a date raises its action',
+    schema: {
+      type: 'object',
+      required: ['kind', 'text'],
+      properties: {
+        kind: { type: 'string', enum: ['IMPROVEMENT', 'CHANGE', 'RESOURCE', 'DECISION'] },
+        text: { type: 'string', minLength: 10, maxLength: 4000 },
+        action: { type: 'object', required: ['ownerId', 'dueOn', 'standards'], properties: { ownerId: { type: 'string', minLength: 1 }, dueOn: { type: 'string', minLength: 10, maxLength: 10 }, standards: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } } }, additionalProperties: false },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsReview.addOutput(tenantContext(platform, ctx), ctx.params.reviewId as string, body<Parameters<typeof imsReview.addOutput>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/reviews/:reviewId/approve',
+    description: 'Approve the review (top management, not the person who prepared it), once every input is minuted and an output recorded. It does not change afterwards',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 2000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsReview.approveReview(tenantContext(platform, ctx), ctx.params.reviewId as string, body<{ note: string }>(ctx)),
   },
   {
     method: 'GET',

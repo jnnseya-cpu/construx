@@ -898,6 +898,13 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('IMS_SUPPLIER_EVALUATED', 'ImsSupplierEvaluation', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('IMS_COMPETENCE_REQUIRED', 'ImsCompetenceRequirement', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('IMS_COMPETENCE_REQUIREMENT_REMOVED', 'ImsCompetenceRequirement', 'UPDATE', 'GOVERNANCE'),
+  // Management review: the company position frozen as its inputs, each input
+  // minuted, decisions and actions recorded, approved by top management.
+  def('IMS_REVIEW_OPENED', 'ImsManagementReview', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_REVIEW_INPUTS_REFRESHED', 'ImsManagementReview', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_REVIEW_MINUTED', 'ImsManagementReview', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_REVIEW_OUTPUT_ADDED', 'ImsManagementReview', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_REVIEW_APPROVED', 'ImsManagementReview', 'APPROVE', 'GOVERNANCE'),
   def('BID_SIGN_OFF_RECORDED', 'BidSignOff', 'APPROVE', 'PROCUREMENT', { creates: true }),
   def('SUBMISSION_FILE_RECORDED', 'BidSignOff', 'UPDATE', 'PROCUREMENT', { creates: true }),
   // A compliance undertaking confirmed: the agent drafts the statement, a person

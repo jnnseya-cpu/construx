@@ -6,6 +6,7 @@ import { clauseLabel, clauseOptions, nameOf, personOptions, roleOptions, standar
 import { auditCards, auditCommands } from './imsaudits.js';
 import { registerCards, registerCommands } from './imsregisters.js';
 import { monitoringCards, monitoringCommands } from './imsmonitoring.js';
+import { bindOverview, overviewCard, reviewCard, reviewCommands } from './imsreview.js';
 
 /**
  * The company's integrated management system — ISO 9001, 14001 and 45001 kept
@@ -16,13 +17,15 @@ import { monitoringCards, monitoringCommands } from './imsmonitoring.js';
  * read, so the screen holds no rule the platform does not publish.
  */
 
-let tab = 'documents';
+let tab = 'overview';
 const TABS = [
+  ['overview', 'Overview'],
   ['documents', 'Documents'],
   ['audits', 'Audits'],
   ['actions', 'Actions'],
   ['registers', 'Registers'],
   ['monitoring', 'Monitoring'],
+  ['review', 'Management review'],
   ['settings', 'Settings'],
 ];
 
@@ -120,10 +123,12 @@ export async function ims(root) {
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px" role="tablist" aria-label="Management system sections">
         ${TABS.map(([id, label]) => html`<button class="btn ${raw(tab === id ? '' : 'ghost')}" role="tab" aria-selected="${tab === id ? 'true' : 'false'}" data-ims-tab="${id}">${label}</button>`)}
       </div>
+      ${tab === 'overview' ? overviewCard(view) : ''}
       ${tab === 'documents' ? documentsCard(view, perms) : ''}
       ${tab === 'audits' || tab === 'actions' ? auditCards(view, perms, tab) : ''}
       ${tab === 'registers' ? registerCards(view, perms) : ''}
       ${tab === 'monitoring' ? monitoringCards(view, perms) : ''}
+      ${tab === 'review' ? reviewCard(view, perms, perms.approve && (view.me && view.people.find((person) => person.id === view.me)?.roles.some((role) => view.review.topManagementRoles.includes(role)))) : ''}
       ${tab === 'settings' ? settingsCard(view, perms) : ''}`,
   );
 
@@ -132,6 +137,7 @@ export async function ims(root) {
     ...auditCommands(view),
     ...registerCommands(view),
     ...monitoringCommands(view),
+    ...reviewCommands(view),
     'ims-draft': () => ({
       title: 'Draft a controlled document',
       intent: 'It is a draft until somebody other than you approves it. Write the document here, or attach the file it is kept in.',
@@ -229,6 +235,7 @@ export async function ims(root) {
     },
   };
 
+  bindOverview(root);
   root.addEventListener('click', async (event) => {
     const tabButton = event.target.closest('[data-ims-tab]');
     if (tabButton) {
