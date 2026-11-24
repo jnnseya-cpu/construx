@@ -110,6 +110,26 @@ export function imsFindings(ctx: EngineContext, on: string): Finding[] {
       });
     }
   }
+  // Suppliers whose latest evaluation fell below the company's score.
+  const settingsRecord = ctx.ledger.get({ refType: 'ImsSettings', refId: `${ctx.tenantId}-ims-settings` });
+  const reviewBelow = Number((settingsRecord?.state as Row | undefined)?.supplierReviewBelow ?? 3);
+  const latest = new Map<string, Row>();
+  for (const record of list('ImsSupplierEvaluation')) {
+    const evaluation = record.state as Row;
+    const previous = latest.get(String(evaluation.supplierId));
+    if (!previous || String(evaluation.evaluatedOn) >= String(previous.evaluatedOn)) latest.set(String(evaluation.supplierId), { ...evaluation, refId: record.refId });
+  }
+  for (const [supplierId, evaluation] of latest) {
+    if (Number(evaluation.average) >= reviewBelow) continue;
+    const supplier = ctx.ledger.get({ refType: 'Supplier', refId: supplierId });
+    findings.push({
+      key: `ims:supplier-review:${supplierId}:${String(evaluation.refId)}`,
+      severity: 'ATTENTION',
+      summary: `${String(supplier?.state.legalName ?? supplierId)} scored ${String(evaluation.average)} out of 5 on its latest evaluation, below the company's ${reviewBelow}.`,
+      consequence: 'An approved supplier performing below the company’s own threshold should have its approval reviewed before its next appointment (8.4, 8.1.4).',
+      evidence: [{ refType: 'ImsSupplierEvaluation', refId: String(evaluation.refId), note: `Evaluated ${String(evaluation.evaluatedOn)}` }],
+    });
+  }
   return findings;
 }
 
@@ -129,8 +149,8 @@ export const imsWatchAgent: AgentDefinition = {
     { kind: 'EVENT', eventType: 'IMS_ACTION_RAISED' },
     { kind: 'EVENT', eventType: 'IMS_AUDIT_PLANNED' },
   ],
-  inputs: ['Controlled documents and their revisions', 'Read-and-understood acknowledgements', 'Corrective and improvement actions', 'The audit programme', 'The legal register', 'Objectives'],
-  outputs: ['Documents past their review date', 'Drafts waiting for approval', 'Revisions in force that nobody has acknowledged', 'Actions past their due date', 'Audits not started on their planned date', 'Legal requirements due for compliance evaluation', 'Objectives past their date'],
+  inputs: ['Controlled documents and their revisions', 'Read-and-understood acknowledgements', 'Corrective and improvement actions', 'The audit programme', 'The legal register', 'Objectives', 'Supplier performance evaluations'],
+  outputs: ['Documents past their review date', 'Drafts waiting for approval', 'Revisions in force that nobody has acknowledged', 'Actions past their due date', 'Audits not started on their planned date', 'Legal requirements due for compliance evaluation', 'Objectives past their date', 'Suppliers performing below the company’s score'],
   emits: [],
   hitl: 'REVIEW',
   confidenceFloor: 0.9,

@@ -195,6 +195,8 @@ import * as imsOverview from '../domain/ims/overview.ts';
 import * as imsAudits from '../domain/ims/audits.ts';
 import * as imsActions from '../domain/ims/actions.ts';
 import * as imsRegisters from '../domain/ims/registers.ts';
+import * as imsMonitoring from '../domain/ims/monitoring.ts';
+import * as riddor from '../domain/riddor.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -29513,6 +29515,84 @@ export const ROUTES: Route[] = [
     description: 'Close an objective as achieved or not, with the final figure',
     schema: { type: 'object', required: ['achieved', 'note'], properties: { achieved: { type: 'boolean' }, note: { type: 'string', minLength: 5, maxLength: 2000 } }, additionalProperties: false },
     handler: (platform, ctx) => imsRegisters.closeObjective(tenantContext(platform, ctx), ctx.params.objectiveId as string, body<{ achieved: boolean; note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/suppliers/:supplierId/evaluations',
+    description: 'Evaluate how an approved supplier performed — quality, health and safety, environment, programme, commercial, each 1 to 5 — with what the scores rest on',
+    schema: {
+      type: 'object',
+      required: ['scores', 'comments'],
+      properties: {
+        projectId: { type: 'string' },
+        scores: {
+          type: 'object',
+          required: ['quality', 'safety', 'environment', 'programme', 'commercial'],
+          properties: { quality: { type: 'integer', minimum: 1, maximum: 5 }, safety: { type: 'integer', minimum: 1, maximum: 5 }, environment: { type: 'integer', minimum: 1, maximum: 5 }, programme: { type: 'integer', minimum: 1, maximum: 5 }, commercial: { type: 'integer', minimum: 1, maximum: 5 } },
+          additionalProperties: false,
+        },
+        comments: { type: 'string', minLength: 10, maxLength: 4000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsMonitoring.evaluateSupplier(tenantContext(platform, ctx), { supplierId: ctx.params.supplierId as string, ...body<{ projectId?: string; scores: imsMonitoring.Scores; comments: string }>(ctx) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/competence/requirements',
+    description: 'Require a competence of a role, for the competence matrix',
+    schema: { type: 'object', required: ['role', 'competence'], properties: { role: { type: 'string' }, competence: { type: 'string', minLength: 2, maxLength: 200 }, note: { type: 'string', maxLength: 500 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsMonitoring.requireCompetence(tenantContext(platform, ctx), body<{ role: string; competence: string; note?: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/competence/requirements/:requirementId/remove',
+    description: 'Stop requiring a competence of a role, with the reason',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsMonitoring.removeCompetenceRequirement(tenantContext(platform, ctx), ctx.params.requirementId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/competence/records',
+    description: 'Record a competence a person holds, with its certificate (hashed in the browser; the file follows) and expiry, for the competence matrix',
+    schema: {
+      type: 'object',
+      required: ['personId', 'competence', 'issuedOn', 'expiresOn', 'certificateHash'],
+      properties: { personId: { type: 'string', minLength: 1 }, competence: { type: 'string', minLength: 2, maxLength: 200 }, issuedOn: { type: 'string', minLength: 10, maxLength: 10 }, expiresOn: { type: 'string', minLength: 10, maxLength: 10 }, certificateHash: { type: 'string', minLength: 64, maxLength: 71 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsMonitoring.recordHolding(tenantContext(platform, ctx), imsPeople(platform, ctx), body<Parameters<typeof imsMonitoring.recordHolding>[2]>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/safety/riddor',
+    readOnly: true,
+    description: 'The RIDDOR clock: every reportable incident on the project, the kind of report, when it is due and whether it was made',
+    handler: (platform, ctx) => riddor.riddorClock(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/safety/incidents/:incidentId/riddor-classification',
+    description: 'Classify a reportable incident under RIDDOR — death, specified injury, injury to somebody not at work taken to hospital, over-seven-day incapacitation, dangerous occurrence or occupational disease — which sets the date the report is due',
+    schema: {
+      type: 'object',
+      required: ['kind', 'note'],
+      properties: { kind: { type: 'string', enum: ['DEATH', 'SPECIFIED_INJURY', 'NON_WORKER_HOSPITAL', 'OVER_SEVEN_DAY', 'DANGEROUS_OCCURRENCE', 'OCCUPATIONAL_DISEASE'] }, diagnosedOn: { type: 'string', minLength: 10, maxLength: 10 }, note: { type: 'string', minLength: 10, maxLength: 2000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => riddor.classifyRiddor(projectContext(platform, ctx), ctx.params.incidentId as string, body<{ kind: string; diagnosedOn?: string; note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/safety/incidents/:incidentId/riddor-report',
+    description: 'Record the report made to the enforcing authority: the date, the reference it issued and how it was made. A report after its due date is recorded as late, with the reason',
+    schema: {
+      type: 'object',
+      required: ['reportedOn', 'hseReference', 'method'],
+      properties: { reportedOn: { type: 'string', minLength: 10, maxLength: 10 }, hseReference: { type: 'string', minLength: 3, maxLength: 100 }, method: { type: 'string', enum: ['ONLINE', 'TELEPHONE'] }, lateReason: { type: 'string', maxLength: 2000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => riddor.recordRiddorReport(projectContext(platform, ctx), ctx.params.incidentId as string, body<{ reportedOn: string; hseReference: string; method: string; lateReason?: string }>(ctx)),
   },
   {
     method: 'GET',

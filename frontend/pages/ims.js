@@ -5,6 +5,7 @@ import { can, draw } from '../app.js';
 import { clauseLabel, clauseOptions, nameOf, personOptions, roleOptions, standardOptions } from './imscommon.js';
 import { auditCards, auditCommands } from './imsaudits.js';
 import { registerCards, registerCommands } from './imsregisters.js';
+import { monitoringCards, monitoringCommands } from './imsmonitoring.js';
 
 /**
  * The company's integrated management system — ISO 9001, 14001 and 45001 kept
@@ -21,6 +22,7 @@ const TABS = [
   ['audits', 'Audits'],
   ['actions', 'Actions'],
   ['registers', 'Registers'],
+  ['monitoring', 'Monitoring'],
   ['settings', 'Settings'],
 ];
 
@@ -121,6 +123,7 @@ export async function ims(root) {
       ${tab === 'documents' ? documentsCard(view, perms) : ''}
       ${tab === 'audits' || tab === 'actions' ? auditCards(view, perms, tab) : ''}
       ${tab === 'registers' ? registerCards(view, perms) : ''}
+      ${tab === 'monitoring' ? monitoringCards(view, perms) : ''}
       ${tab === 'settings' ? settingsCard(view, perms) : ''}`,
   );
 
@@ -128,6 +131,7 @@ export async function ims(root) {
   const COMMANDS = {
     ...auditCommands(view),
     ...registerCommands(view),
+    ...monitoringCommands(view),
     'ims-draft': () => ({
       title: 'Draft a controlled document',
       intent: 'It is a draft until somebody other than you approves it. Write the document here, or attach the file it is kept in.',

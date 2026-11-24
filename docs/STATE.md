@@ -35798,3 +35798,45 @@ not); the Environmental Protection Act 1990 added from the list; a partial
 evaluation refused without an action owner, then recorded and its corrective
 action shown on the Actions tab; an objective set, progressed and closed; no page
 errors; no horizontal scroll at phone width.
+
+### Increment 4: the three partial gaps — the RIDDOR clock, supplier performance, the competence matrix (built)
+
+`backend/src/domain/riddor.ts`, `backend/src/domain/ims/monitoring.ts`;
+`frontend/pages/riddor.js` (a card on Risk & Safety), `frontend/pages/imsmonitoring.js`
+(the Monitoring tab).
+
+- **The RIDDOR clock** (project-level, for every tenancy, not only those with
+  the module): a reportable incident is classified by a competent person —
+  death, specified injury, injury to somebody not at work taken to hospital,
+  over-seven-day incapacitation, dangerous occurrence, occupational disease —
+  which sets the date its report is due: 10 days from the incident for the first
+  four and dangerous occurrences (with notification without delay), 15 for
+  over-seven-day, the diagnosis date for a disease. The report is recorded with
+  its date, the reference issued and how it was made; **telephone is refused
+  except for deaths and specified injuries**; a report after its due date is
+  recorded **as late, with the reason**; nothing is reclassified after the
+  report. The project safety agent now reports a reportable incident with no
+  classification, and a report due within three days or overdue, as urgent. The
+  management system shows the clock across every project.
+- **Supplier performance**: an approved supplier evaluated on quality, health
+  and safety, environment, programme and commercial (1–5), optionally on a
+  project, with what the scores rest on; the next evaluation falls due on the
+  company's interval (an approved supplier never evaluated is due now); a latest
+  average below the company's score puts it **to review**, which the watch agent
+  reports. Prequalification and its expiry stay where they were.
+- **The competence matrix**: the competences each role requires; each active
+  person in those roles against what they hold — read from the competency and
+  training records on every project and the company's own, matched by person and
+  competence name (case-insensitive), latest expiry winning — as held, expiring
+  (within the company's warning days), expired or missing. A competence held is
+  recorded at company level through the safety engine's own competency command,
+  so its certificate is evidence and the safety permission applies.
+
+**Verified.** `npm test` 8,769 pass, typecheck clean. `tests/imsmonitoring.test.ts` (9 tests). Walked in a browser on a
+fresh journal: an incident recorded as reportable shown unclassified on Risk &
+Safety, classified as a specified injury (due in ten days), reported by
+telephone; the same incident on the management system's company-wide clock; a
+supplier evaluated at 2.4 and put to review, two others shown due; SMSTS
+required of the safety role, a certificate uploaded for the safety lead, the
+matrix showing it held to its expiry; no page errors; no horizontal scroll at
+phone width.

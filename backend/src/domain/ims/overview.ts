@@ -7,6 +7,8 @@ import { ACTION_KINDS, SOURCE_KINDS, actionRegister, sourceCandidates } from './
 import { FINDING_GRADES, auditProgramme } from './audits.ts';
 import { CONDITIONS, EVALUATION_RESULTS, registersPosition } from './registers.ts';
 import { LEGISLATION } from './legislation.ts';
+import { PERFORMANCE_HEADINGS, competenceMatrix, riddorCompany, supplierPerformance } from './monitoring.ts';
+import { RIDDOR_KINDS } from '../riddor.ts';
 
 /**
  * The one read the Management System screen is drawn from.
@@ -29,6 +31,7 @@ export function imsOverview(ctx: EngineContext, people: readonly Person[]) {
     actions: actionRegister(ctx, people),
     sources: sourceCandidates(ctx),
     registers: registersPosition(ctx, people),
+    monitoring: { suppliers: supplierPerformance(ctx, people), competence: competenceMatrix(ctx, people), riddor: riddorCompany(ctx) },
     people: activePeople(people).map((person) => ({ id: person.id, name: person.name, roles: person.roles })),
     me: ctx.auth.actorId,
     vocabulary: {
@@ -41,6 +44,8 @@ export function imsOverview(ctx: EngineContext, people: readonly Person[]) {
       aspectConditions: CONDITIONS,
       evaluationResults: EVALUATION_RESULTS,
       legislation: LEGISLATION,
+      performanceHeadings: PERFORMANCE_HEADINGS,
+      riddorKinds: Object.entries(RIDDOR_KINDS).map(([kind, entry]) => ({ kind, ...entry })),
       roles: ALL_ROLES.filter((role) => role !== 'PLATFORM_ADMIN'),
     },
   };

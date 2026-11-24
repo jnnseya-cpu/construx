@@ -894,6 +894,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('IMS_OBJECTIVE_SET', 'ImsObjective', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('IMS_OBJECTIVE_PROGRESS_RECORDED', 'ImsObjective', 'UPDATE', 'GOVERNANCE'),
   def('IMS_OBJECTIVE_CLOSED', 'ImsObjective', 'APPROVE', 'GOVERNANCE'),
+  // Monitoring: supplier performance, and the competence each role requires.
+  def('IMS_SUPPLIER_EVALUATED', 'ImsSupplierEvaluation', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_COMPETENCE_REQUIRED', 'ImsCompetenceRequirement', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_COMPETENCE_REQUIREMENT_REMOVED', 'ImsCompetenceRequirement', 'UPDATE', 'GOVERNANCE'),
   def('BID_SIGN_OFF_RECORDED', 'BidSignOff', 'APPROVE', 'PROCUREMENT', { creates: true }),
   def('SUBMISSION_FILE_RECORDED', 'BidSignOff', 'UPDATE', 'PROCUREMENT', { creates: true }),
   // A compliance undertaking confirmed: the agent drafts the statement, a person
@@ -1892,6 +1896,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // Immediate cause, underlying cause, root cause and the actions out of them.
   // An incident closed on its immediate action alone has taught nothing.
   def('INCIDENT_INVESTIGATED', 'Incident', 'UPDATE', 'RISK_SAFETY'),
+  // The RIDDOR clock: the kind of report and its due date, then the report made.
+  def('INCIDENT_RIDDOR_CLASSIFIED', 'Incident', 'UPDATE', 'RISK_SAFETY'),
+  def('INCIDENT_RIDDOR_REPORTED', 'Incident', 'UPDATE', 'RISK_SAFETY'),
   def('TRAINING_COMPLETED', 'TrainingRecord', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),
 
   // --- BIM & digital twin ---------------------------------------------------

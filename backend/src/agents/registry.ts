@@ -6,6 +6,7 @@ import { ETABLIX_AGENTS } from './etablix.ts';
 import { BID_ON_AGENTS } from './bidon.ts';
 import { PLANNING_AGENTS } from './planning.ts';
 import { IMS_AGENTS } from './ims.ts';
+import { riddorPosition } from '../domain/riddor.ts';
 import { FIELD_AGENTS } from './field.ts';
 import { PLATFORM_AGENTS } from './platform.ts';
 import type { AgentDefinition, AgentOutput, Finding, ProposedCommand } from './types.ts';
@@ -1377,6 +1378,32 @@ const hseqAgent: AgentDefinition = {
         consequence: 'A reportable incident not reported inside the statutory period is an offence in itself.',
         evidence: [{ refType: 'Incident', refId: incident.refId, note: 'RIDDOR question unanswered' }],
       });
+    }
+
+    // The RIDDOR clock: a reportable incident with no classification has no due
+    // date, and a classified one not reported inside three days of its date is
+    // about to become a late report — an offence in itself.
+    const riddorToday = new Date().toISOString().slice(0, 10);
+    for (const incident of list(ctx, 'Incident')) {
+      const position = riddorPosition({ refId: incident.refId, projectId: ctx.projectId, state: incident.state as Record<string, unknown> }, riddorToday);
+      if (!position) continue;
+      if (position.status === 'UNCLASSIFIED') {
+        findings.push({
+          key: `hseq:riddor-unclassified:${incident.refId}`,
+          severity: 'URGENT',
+          summary: `Incident ${position.reference} is reportable under RIDDOR and the kind of report is not recorded, so its due date is not known`,
+          consequence: 'Deaths, specified injuries and dangerous occurrences are reported within 10 days, over-seven-day injuries within 15; the clock is running either way.',
+          evidence: [{ refType: 'Incident', refId: incident.refId, note: 'Reportable, unclassified' }],
+        });
+      } else if ((position.status === 'DUE' && position.daysLeft !== null && position.daysLeft <= 3) || position.status === 'OVERDUE') {
+        findings.push({
+          key: `hseq:riddor-due:${incident.refId}`,
+          severity: 'URGENT',
+          summary: `The RIDDOR report for incident ${position.reference} ${position.status === 'OVERDUE' ? 'was due' : 'is due'} on ${position.dueOn} and is not recorded as made`,
+          consequence: 'A report made after its statutory period is a breach of the Regulations, whatever the reason.',
+          evidence: [{ refType: 'Incident', refId: incident.refId, note: `Due ${position.dueOn}` }],
+        });
+      }
     }
 
     const today = new Date().toISOString().slice(0, 10);
