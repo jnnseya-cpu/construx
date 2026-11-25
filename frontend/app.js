@@ -209,6 +209,10 @@ export const NAV = [
       // A design change is raised by the design team and valued by the
       // commercial one. Gating on contracts alone meant the half of the screen
       // that starts the process was unreachable by the people who start it.
+      // CONSTRUX Contracts Studio: choosing the form and completing its particulars,
+      // before the contract is signed and handed to Change & Claims. Absent, not
+      // locked, for a company that has not been granted the module.
+      { id: 'contractstudio', label: 'Contracts Studio', area: 'CONTRACTS_CLAIMS', module: 'CONTRACTS_STUDIO', icon: 'scale' },
       { id: 'contracts', label: 'Change & Claims', area: 'CONTRACTS_CLAIMS', alsoArea: ['CHANGE_VARIATION', 'DESIGN_INFORMATION'], icon: 'scale' },
     ],
   },

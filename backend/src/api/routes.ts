@@ -200,6 +200,7 @@ import * as riddor from '../domain/riddor.ts';
 import * as imsReview from '../domain/ims/review.ts';
 import * as imsAgents from '../domain/ims/agents.ts';
 import * as imsEngagement from '../domain/ims/engagement.ts';
+import * as contractStudio from '../domain/contracts/drafts.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -762,6 +763,28 @@ function imsPeople(platform: Platform, ctx: RequestContext): imsCore.Person[] {
   const actor = auth(ctx);
   externalsRefused(platform, actor, 'the management system');
   return platform.users(actor.tenantId).map((user) => ({ id: user.id, name: user.name, roles: user.roles, status: user.status }));
+}
+
+/** What a contract-form shortlist is asked from; also kept on a draft opened from one. */
+const CONTRACT_SELECTION_SCHEMA: Schema = {
+  type: 'object',
+  required: ['package'],
+  properties: {
+    package: { type: 'string', enum: ['MAIN_WORKS', 'SUBCONTRACT', 'CONSULTANCY', 'SUPPLY', 'TERM_SERVICES', 'HOMEOWNER'] },
+    design: { type: 'string', enum: ['EMPLOYER', 'SHARED', 'CONTRACTOR'] },
+    pricing: { type: 'string', enum: ['LUMP_SUM_WITH_QUANTITIES', 'LUMP_SUM_WITHOUT_QUANTITIES', 'ACTIVITY_SCHEDULE', 'REMEASURED', 'TARGET_COST', 'COST_REIMBURSABLE'] },
+    valueBand: { type: 'string', enum: ['SMALL', 'MEDIUM', 'LARGE', 'MAJOR'] },
+    international: { type: 'boolean' },
+    preferredSuite: { type: 'string', enum: ['JCT', 'NEC', 'FIDIC'] },
+    tenderNamedFormKey: { type: 'string', maxLength: 120 },
+  },
+  additionalProperties: false,
+};
+
+/** Names for the people on a draft's record, from the identity layer. */
+function contractNames(platform: Platform, ctx: RequestContext): (actorId: string) => string {
+  const users = platform.users(auth(ctx).tenantId);
+  return (actorId) => users.find((user) => user.id === actorId)?.name ?? actorId;
 }
 
 function tenantContext(platform: Platform, ctx: RequestContext) {
@@ -28537,6 +28560,64 @@ export const ROUTES: Route[] = [
     description:
       'The executive brief: the recommendation, the binding deadlines, the decision drivers and the approvals; the nine outputs of the bid review, each Ready for Review, In Draft or Blocked with what stands in the way; and the submission manifest',
     handler: (platform, ctx) => tenderbrief.tenderBrief(projectContext(platform, ctx)),
+  },
+  // --- CONSTRUX Contracts Studio (the CONTRACTS_STUDIO module) ---------------
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/contract-studio',
+    readOnly: true,
+    description: 'Contracts Studio: the contract drafts on this project with every particular, its source and what blocks approval, and the UK form catalogue by exact edition',
+    handler: (platform, ctx) => contractStudio.studioOverview(projectContext(platform, ctx), contractNames(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/selection',
+    readOnly: true,
+    description: 'A shortlist of the forms that suit the job — what is bought, who designs it, how it is priced, its size — with the reason for each; a form the tender names comes first',
+    schema: CONTRACT_SELECTION_SCHEMA,
+    handler: (platform, ctx) => contractStudio.selectForm(projectContext(platform, ctx), body<Parameters<typeof contractStudio.selectForm>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts',
+    description: 'Open a contract draft on one form, its exact edition confirmed, in a stated currency',
+    schema: {
+      type: 'object',
+      required: ['formKey', 'confirmEdition', 'title'],
+      properties: {
+        formKey: { type: 'string', minLength: 3, maxLength: 120 },
+        confirmEdition: { type: 'string', minLength: 1, maxLength: 120 },
+        title: { type: 'string', minLength: 3, maxLength: 200 },
+        currency: { type: 'string', enum: ['GBP', 'EUR', 'USD'] },
+        selection: CONTRACT_SELECTION_SCHEMA,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => contractStudio.createDraft(projectContext(platform, ctx), body<Parameters<typeof contractStudio.createDraft>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/fields',
+    description: 'Set or clear one particular of a contract draft, against the revision you were looking at; replacing a value taken from evidence needs a note',
+    schema: {
+      type: 'object',
+      required: ['key', 'value', 'expectedRevision'],
+      properties: {
+        key: { type: 'string', minLength: 1, maxLength: 80 },
+        value: { type: ['string', 'null'], maxLength: 3000 },
+        note: { type: 'string', maxLength: 1000 },
+        expectedRevision: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => contractStudio.setField(projectContext(platform, ctx), ctx.params.draftId as string, body<Parameters<typeof contractStudio.setField>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/withdraw',
+    description: 'Withdraw a contract draft, with the reason; it stays on the record',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => contractStudio.withdrawDraft(projectContext(platform, ctx), ctx.params.draftId as string, body<{ reason: string }>(ctx)),
   },
   // --- CONSTRUX Planning (the PLANNING module) -------------------------------
   {

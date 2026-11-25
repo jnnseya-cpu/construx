@@ -224,6 +224,25 @@ export const MODULES = {
       customerSelfActivation: false,
     },
   },
+  CONTRACTS_STUDIO: {
+    name: 'CONSTRUX Contracts Studio',
+    summary:
+      'Contract preparation: a catalogue of the UK published forms by exact edition, a shortlist of the forms that suit ' +
+      'the job with the reason for each, and a contract draft whose particulars — parties, dates, money, insurance, ' +
+      'obligations and the documents it binds — are completed against a schedule for that edition, each value with ' +
+      'where it came from, every change a new revision.',
+    restricted:
+      'Released company by company while it is introduced. It is not part of the CONSTRUX subscription and is not ' +
+      'offered for sale on the pricing page.',
+    registry: {
+      moduleKey: 'construx.contracts.studio',
+      productCode: 'construx',
+      visibility: 'restricted',
+      requires: ['construx.core'],
+      eligibilityPolicy: 'explicit_tenant_grant',
+      customerSelfActivation: false,
+    },
+  },
 } as const;
 
 export type ModuleId = keyof typeof MODULES;

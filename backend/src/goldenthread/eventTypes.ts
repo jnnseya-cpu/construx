@@ -910,6 +910,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('IMS_AGENT_PROPOSED', 'ImsAgentProposal', 'CREATE', 'GOVERNANCE', { creates: true, aiAllowed: true }),
   def('IMS_AGENT_PROPOSAL_DECIDED', 'ImsAgentProposal', 'UPDATE', 'GOVERNANCE'),
   // Complaints and satisfaction, emergency drills, worker consultation.
+  def('CONTRACT_DRAFT_CREATED', 'ContractDraft', 'CREATE', 'CONTRACTS_CLAIMS', { creates: true }),
+  def('CONTRACT_DRAFT_FIELD_SET', 'ContractDraft', 'UPDATE', 'CONTRACTS_CLAIMS'),
+  def('CONTRACT_DRAFT_WITHDRAWN', 'ContractDraft', 'UPDATE', 'CONTRACTS_CLAIMS'),
   def('IMS_COMPLAINT_RECORDED', 'ImsComplaint', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('IMS_COMPLAINT_RESPONDED', 'ImsComplaint', 'UPDATE', 'GOVERNANCE'),
   def('IMS_COMPLAINT_ACTIONED', 'ImsComplaint', 'UPDATE', 'GOVERNANCE'),

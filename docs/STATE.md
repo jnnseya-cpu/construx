@@ -36022,3 +36022,109 @@ Walked in a browser on a fresh journal:
   on the Documents screen before an agent can read it.
 - **Read and understood** counts the company's active identities in the roles a
   document is issued to; operatives without a platform identity are not counted.
+
+## 2026-11 CONSTRUX Contracts Studio
+
+Built from the Contracts Studio developer handoff of 25 November 2026. It is
+built on the existing stack, not the handoff's suggested React / PostgreSQL / job
+queue, which the handoff itself allows ("equivalent stacks"). Zero runtime
+dependencies stands.
+
+- **A private module**, `CONTRACTS_STUDIO`. The operator grants it per company,
+  as with Planning and the Management System.
+- **Area:** `CONTRACTS_CLAIMS`. Drafts are `ContractDraft`, classed Commercial-L3:
+  a role not cleared for commercial terms is refused (the planner is, and the
+  screen shows it as a denial).
+- **Screen:** "Contracts Studio" in the Commercial group, before Change & Claims.
+
+### Stage 1: the catalogue, the shortlist, the draft (built)
+
+`backend/src/domain/contracts/` (`catalogue.ts`, `schedules.ts`, `values.ts`,
+`selection.ts`, `drafts.ts`); `frontend/pages/contractstudio.js`; five routes under
+`/v1/projects/:projectId/contract-studio`.
+
+- **The catalogue** is the handoff's 168 UK forms (JCT, NEC, FIDIC, IChemE, ACA
+  and other UK families), by publisher, exact edition, code and title.
+  - It holds metadata only, never wording.
+  - `CURRENT` (111) and `LEGACY` entries can be drafted on.
+  - `VERIFY_ISSUE` entries cannot (`CONTRACT_FORM_EDITION_UNPINNED`). These are
+    families, regional adaptations and "earlier editions" import routes; a
+    placeholder never resolves to some current edition.
+- **The shortlist** is deterministic: package, who designs, pricing basis, size,
+  international, preferred suite.
+  - A ranked list of current forms comes back, each with its reasons, and a note
+    of what was not said.
+  - A form the tender names comes first.
+  - It is a starting point and says so; no model is involved.
+- **Schedules** are the platform's own list of particulars, under original labels.
+  - Three have their own schedule, each pinned to its exact edition: JCT D&B 2024,
+    NEC4 ECC (January 2023 revision) and FIDIC Yellow (2017, 2022 reprint).
+  - Every other draftable form uses the general schedule, and the screen says
+    that this is a record of the agreed particulars, not a completed form.
+  - The 2017-original Yellow does not get the 2022 reprint's schedule, and ECC's
+    main options are not carried to another NEC form.
+- **A draft** opens only on a form whose edition the person types back
+  (`CONTRACT_EDITION_NOT_CONFIRMED`), in GBP, EUR or USD.
+  - Every change to a particular is a new revision, made against the revision
+    the person was looking at (`CONTRACT_DRAFT_STALE`, 412).
+  - Values are normalised by type:
+    - money is a decimal string in the draft's currency, and an amount in another
+      currency is refused;
+    - percentages are bounded;
+    - dates must be real calendar dates (ISO or DD/MM/YYYY);
+    - durations are a number and a unit;
+    - choices accept a value or its label.
+  - The same value written another way is no change and writes nothing.
+  - Replacing a value that did not come from the person's own hand needs a note
+    (`CONTRACT_OVERRIDE_REASON`).
+  - A withdrawn draft takes no change.
+- **Findings** that block approval:
+  - missing required particulars;
+  - completion not after the start;
+  - delay damages without a "per day / per week";
+  - JCT sections chosen but not dated;
+  - NEC4 ECC:
+    - a main option paired with the wrong pricing document (A/C an activity
+      schedule, B/D a bill, E/F neither);
+    - C–F without the fee percentage;
+    - delay damages without X7, and X7 without damages.
+
+  Z clauses and FIDIC special provisions are flagged for legal review.
+
+**Verified.**
+- `npm test` 8,825 pass, typecheck clean. `tests/contractstudio.test.ts` (13)
+  covers:
+  - the catalogue counts and keys;
+  - every key the rules name existing and current;
+  - the shortlist cases and the tender-named override;
+  - module and clearance refusals;
+  - edition confirmation;
+  - normalisation and refusals;
+  - stale revisions;
+  - the NEC findings;
+  - one ledger event per revision;
+  - another project's draft reading as none;
+  - withdrawal.
+- Walked in a browser on a fresh journal:
+  - the shortlist with reasons;
+  - a wrong edition refused in the form;
+  - a JCT D&B draft completed field by field, with an impossible date refused and
+    out-of-order dates and undated sections flagged;
+  - a second person editing from an outdated view refused with the reason;
+  - the catalogue filtered;
+  - no page errors, no horizontal scroll at phone width.
+
+### Contracts Studio: not built yet, stated
+
+- **AI pre-fill from project evidence** (stage 2) is not built. Every particular
+  is entered by a person.
+- **Approvals, the completion pack and the signed-package handover** (stage 3)
+  are not built.
+- **Several legal entities and brands in one tenancy** are not built. Documents
+  carry the company's existing document identity, which a project can override.
+- **A standalone workspace** (a draft with no project) is not built; a draft
+  belongs to a project.
+- **Publisher rights**: no publisher text is held, and no licensed edition is
+  populated. Populating a publisher's own form needs a documented permission for
+  that edition and use. In particular, NEC forbids AI use of its publications
+  without written permission.
