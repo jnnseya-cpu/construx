@@ -450,6 +450,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   ImsCompetenceRequirement: { area: 'MANAGEMENT_SYSTEM' },
   ImsManagementReview: { area: 'MANAGEMENT_SYSTEM' },
   ImsAgentProposal: { area: 'MANAGEMENT_SYSTEM' },
+  ImsComplaint: { area: 'MANAGEMENT_SYSTEM' },
+  ImsSatisfactionSurvey: { area: 'MANAGEMENT_SYSTEM' },
+  ImsDrill: { area: 'MANAGEMENT_SYSTEM' },
+  ImsConsultation: { area: 'MANAGEMENT_SYSTEM' },
   // The bid's approvals and where each return goes on the buyer's portal.
   BidSignOff: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   // The reading of the tender documents. Legal-L4: it carries the executed

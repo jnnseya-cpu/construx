@@ -130,6 +130,45 @@ export function imsFindings(ctx: EngineContext, on: string): Finding[] {
     }
   }
 
+  // Complaints unanswered after two weeks, drills past their date, consultations unanswered after a month.
+  const ageOf = (date: unknown) => Math.floor((Date.parse(`${on}T00:00:00Z`) - Date.parse(`${String(date).slice(0, 10)}T00:00:00Z`)) / 86_400_000);
+  for (const record of list('ImsComplaint')) {
+    const complaint = record.state as Row;
+    if (complaint.status === 'OPEN' && ageOf(complaint.receivedOn) > 14) {
+      findings.push({
+        key: `ims:complaint-unanswered:${record.refId}`,
+        severity: 'ATTENTION',
+        summary: `${String(complaint.reference)} from ${String(complaint.from)} was received on ${String(complaint.receivedOn)} and has not been answered.`,
+        consequence: 'An unanswered complaint is a client relationship going wrong in silence, and an auditor reads it as customer communication (8.2.1) not working.',
+        evidence: [{ refType: 'ImsComplaint', refId: record.refId, note: `Received ${String(complaint.receivedOn)}` }],
+      });
+    }
+  }
+  for (const record of list('ImsDrill')) {
+    const drill = record.state as Row;
+    if (drill.status === 'PLANNED' && typeof drill.plannedOn === 'string' && drill.plannedOn < on) {
+      findings.push({
+        key: `ims:drill-overdue:${record.refId}`,
+        severity: 'ATTENTION',
+        summary: `${String(drill.reference)} (${String(drill.scenario).toLowerCase().replace(/_/g, ' ')}) was planned for ${drill.plannedOn} and is not recorded as held.`,
+        consequence: 'An emergency arrangement never tested is not known to work (8.2).',
+        evidence: [{ refType: 'ImsDrill', refId: record.refId, note: `Planned ${drill.plannedOn}` }],
+      });
+    }
+  }
+  for (const record of list('ImsConsultation')) {
+    const consultation = record.state as Row;
+    if (consultation.status === 'OPEN' && ageOf(consultation.on) > 30) {
+      findings.push({
+        key: `ims:consultation-unanswered:${record.refId}`,
+        severity: 'INFO',
+        summary: `What workers raised at ${String(consultation.reference)} (${String(consultation.topic)}) on ${String(consultation.on)} has not been answered.`,
+        consequence: 'Consultation that is never answered stops being consultation (ISO 45001 5.4); workers stop raising things.',
+        evidence: [{ refType: 'ImsConsultation', refId: record.refId, note: `Held ${String(consultation.on)}` }],
+      });
+    }
+  }
+
   // Suppliers whose latest evaluation fell below the company's score.
   const settingsRecord = ctx.ledger.get({ refType: 'ImsSettings', refId: `${ctx.tenantId}-ims-settings` });
   const reviewBelow = Number((settingsRecord?.state as Row | undefined)?.supplierReviewBelow ?? 3);
@@ -169,8 +208,8 @@ export const imsWatchAgent: AgentDefinition = {
     { kind: 'EVENT', eventType: 'IMS_ACTION_RAISED' },
     { kind: 'EVENT', eventType: 'IMS_AUDIT_PLANNED' },
   ],
-  inputs: ['Controlled documents and their revisions', 'Read-and-understood acknowledgements', 'Corrective and improvement actions', 'The audit programme', 'The legal register', 'Objectives', 'Supplier performance evaluations', 'Management reviews'],
-  outputs: ['Documents past their review date', 'Drafts waiting for approval', 'Revisions in force that nobody has acknowledged', 'Actions past their due date', 'Audits not started on their planned date', 'Legal requirements due for compliance evaluation', 'Objectives past their date', 'Suppliers performing below the company’s score', 'Management review more than a year old, or never held'],
+  inputs: ['Controlled documents and their revisions', 'Read-and-understood acknowledgements', 'Corrective and improvement actions', 'The audit programme', 'The legal register', 'Objectives', 'Supplier performance evaluations', 'Management reviews', 'Complaints, drills and worker consultations'],
+  outputs: ['Documents past their review date', 'Drafts waiting for approval', 'Revisions in force that nobody has acknowledged', 'Actions past their due date', 'Audits not started on their planned date', 'Legal requirements due for compliance evaluation', 'Objectives past their date', 'Suppliers performing below the company’s score', 'Management review more than a year old, or never held', 'Complaints unanswered after two weeks', 'Drills past their date', 'Worker consultations unanswered after a month'],
   emits: [],
   hitl: 'REVIEW',
   confidenceFloor: 0.9,

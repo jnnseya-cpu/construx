@@ -35930,6 +35930,77 @@ edited title as a draft, and approved by the safety lead; two aspects accepted
 (one with edited controls) into the register; two legal requirements from the
 list accepted; no page errors; no horizontal scroll at phone width.
 
+### Increment 7: complaints, drills, consultation; files read; four nations (built)
+
+`backend/src/domain/ims/engagement.ts`; `frontend/pages/imsengagement.js` (the
+**Complaints, drills & consultation** tab).
+
+- **Complaints** (ISO 9001 9.1.2, 8.2.1) — `CMP-001`, as made, from whom, how,
+  about what, on which project, and who answers it. The answer is recorded with
+  its date (between receipt and today). A complaint **closes only once answered**
+  (`IMS_COMPLAINT_UNANSWERED`), with whether the complainant was satisfied if
+  known. One that needs a fix raises **one** corrective action whose source is
+  the complaint itself (`COMPLAINT` may now name an `ImsComplaint`), against the
+  standard its category points to. Unanswered after 14 days it shows as late.
+- **Customer satisfaction** — surveys scored 1–5 with the client's comments,
+  averaged.
+- **Emergency drills** (ISO 14001 / 45001 8.2) — `DRL-001`, eight scenarios,
+  planned with a lead and a date, recorded as held (participants, minutes,
+  outcome, lessons) or cancelled with the reason. A drill **not fully effective
+  must name an owner and date** (`IMS_DRILL_ACTION_REQUIRED`), which raise the
+  corrective action.
+- **Worker consultation** (ISO 45001 5.4) — `CON-001`, how (toolbox talk,
+  committee, forum, representative…), how many took part, what was raised in
+  their words, and the answer once.
+- **The management review** now has **14 inputs**: `customers` and `emergency`
+  are new, and `consultation` has figures. Only `context` is left with none — it
+  is the one input the records cannot hold.
+- **The watch** reports a complaint unanswered after 14 days, a drill past its
+  date, and a consultation unanswered after 30 days.
+
+**The agents read attached files.** A controlled document kept as a file is filed
+as `IMS_DOCUMENT` evidence named `IMS document: <filename>`, and is read on
+arrival by the same hook that reads tender and planning documents. Procedure
+drafting, clause mapping and the audit checklist read its extracted text when
+the revision has no written text. A file not yet arrived, quarantined or without
+a text layer is reported as exactly that (`IMS_AGENT_NO_TEXT`), never read as an
+empty document. The file's text is the evidence pipeline's `IngestedFile`
+(LEGAL_L4), so it goes only to a provider cleared that far; otherwise the agent
+refuses (`IMS_AGENT_NEEDS_A_MODEL`) and nothing is sent. `packDocuments` takes
+`purpose: 'IMS'`, and a file filed only for planning or the management system is
+never part of a tender pack.
+
+**Scotland and Northern Ireland.** The legislation list adds 22 instruments:
+- **Scotland:** EASR 2018, CAR 2011, the Special Waste Regulations, waste
+  management licensing, the Waste (Scotland) Regulations, nature conservation and
+  habitats, the Fire (Scotland) Act and Regulations, and the Building (Scotland)
+  Act.
+- **Northern Ireland:** the HSW Order, MHSWR, CDM, RIDDOR, COSHH, CAR and WAH, fire
+  safety, the waste Order, hazardous waste, the Water Order and the Wildlife Order.
+
+`regionsOf(extent)` maps each extent to the nations it binds in. The legal-register
+agent asks **where the company works** (England and Wales by default) and is
+offered, and may choose, only what binds there.
+
+**Verified.** `npm test` 8,811 pass, typecheck clean.
+- `tests/imsengagement.test.ts` (12) covers lateness, closing, the
+  complaint-sourced action, the drill action rule, the answer dates, the review
+  figures and the watch.
+- `tests/imsfiles.test.ts` (5) covers a file-only document refused before arrival
+  and read after it, refused by an uncleared provider, kept out of the tender pack,
+  and the Northern Ireland register offered NI and UK instruments only.
+- `tests/imsreview.test.ts` now expects 14 inputs.
+
+Walked in a browser on a fresh journal:
+- a complaint recorded, answered, actioned and closed as satisfied;
+- a survey recorded;
+- a drill planned and recorded as partly effective (refused in the form until an
+  owner was named);
+- a consultation recorded and answered;
+- the four nations offered on the legal-register agent;
+- a planner sees all of it read-only;
+- no page errors, no horizontal scroll at phone width.
+
 ### The management system: not built, stated
 
 - **No live model run.** No provider key is configured in this environment; what
@@ -35938,15 +36009,12 @@ list accepted; no page errors; no horizontal scroll at phone width.
   system; certification is a third-party audit of the company, not of software.
 - **The standards' text** is not held — clause numbers and headings only; the
   company uses its own licensed copies.
-- **The legislation list** is a starting point of thirty UK instruments (titles,
-  years, extent); it is not a legal determination, and Scotland and Northern
-  Ireland instruments are not listed.
-- **Document text and files**: a document is written in the platform or attached
-  as a file; the agents read written text only, not attached files.
-- **Customer satisfaction and complaints** (ISO 9001 9.1.2) are recorded only as
-  the source of an action; there is no survey or complaints register.
-- **Emergency preparedness drills** (8.2) and **worker consultation records**
-  (ISO 45001 5.4) are not recorded as their own registers; the review minutes
-  them.
+- **The legislation list** is a starting point of 52 UK instruments (titles,
+  years, extent) across England, Wales, Scotland and Northern Ireland. It is not a
+  legal determination, and it holds no amendment history.
+- **The RIDDOR clock** follows GB RIDDOR 2013's deadlines; a Northern Ireland
+  incident reported to HSENI under RIDDOR (NI) 1997 is not timed separately.
+- **Scanned documents**: an attached file with no text layer must be transcribed
+  on the Documents screen before an agent can read it.
 - **Read and understood** counts the company's active identities in the roles a
   document is issued to; operatives without a platform identity are not counted.
