@@ -203,6 +203,8 @@ import * as imsEngagement from '../domain/ims/engagement.ts';
 import * as contractStudio from '../domain/contracts/drafts.ts';
 import * as contractOverview from '../domain/contracts/overview.ts';
 import * as contractPrefill from '../domain/contracts/prefill.ts';
+import * as contractApprovals from '../domain/contracts/approvals.ts';
+import * as contractPack from '../domain/contracts/pack.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -787,6 +789,11 @@ const CONTRACT_SELECTION_SCHEMA: Schema = {
 function contractNames(platform: Platform, ctx: RequestContext): (actorId: string) => string {
   const users = platform.users(auth(ctx).tenantId);
   return (actorId) => users.find((user) => user.id === actorId)?.name ?? actorId;
+}
+
+/** The document identity a contract pack would be issued under now, by its version. */
+function contractBrandVersion(platform: Platform, ctx: RequestContext): number | null {
+  return platform.exports.brandingIfConfigured(auth(ctx).tenantId, ctx.params.projectId as string)?.profileVersion ?? null;
 }
 
 function tenantContext(platform: Platform, ctx: RequestContext) {
@@ -28654,6 +28661,73 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => contractPrefill.acceptCandidate(projectContext(platform, ctx), ctx.params.draftId as string, body<Parameters<typeof contractPrefill.acceptCandidate>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/submit',
+    description: 'Put a contract draft up for review, with nothing blocking it; what is reviewed is fixed by the hash of that revision',
+    schema: { type: 'object', required: ['expectedRevision'], properties: { expectedRevision: { type: 'integer', minimum: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => contractApprovals.submitForReview(projectContext(platform, ctx), ctx.params.draftId as string, body<{ expectedRevision: number }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/approve',
+    description: 'Approve a contract draft in review, commercially or legally, against the revision hash you were shown; two different people, neither the one who put it up',
+    schema: {
+      type: 'object',
+      required: ['scope', 'revisionHash', 'note'],
+      properties: { scope: { type: 'string', enum: ['COMMERCIAL', 'LEGAL'] }, revisionHash: { type: 'string', minLength: 10, maxLength: 200 }, note: { type: 'string', minLength: 3, maxLength: 1000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      contractApprovals.approveDraft(projectContext(platform, ctx), ctx.params.draftId as string, body<Parameters<typeof contractApprovals.approveDraft>[2]>(ctx), contractBrandVersion(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/return',
+    description: 'Return a contract draft in review to drafting, saying what needs to change',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => contractApprovals.returnDraft(projectContext(platform, ctx), ctx.params.draftId as string, body<{ note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/reopen',
+    description: 'Reopen an approved contract draft for a change; its approvals are voided and kept on the record as voided',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => contractApprovals.reopenDraft(projectContext(platform, ctx), ctx.params.draftId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/execute',
+    description: 'Record the signed contract — by its hash, how and when it was signed — and create and execute it in the contract register from the approved particulars',
+    schema: {
+      type: 'object',
+      required: ['signedDocumentHash', 'signatureMethod', 'executedOn'],
+      properties: { signedDocumentHash: { type: 'string', minLength: 64, maxLength: 80 }, signatureMethod: { type: 'string', minLength: 3, maxLength: 200 }, executedOn: { type: 'string', minLength: 10, maxLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => contractApprovals.recordExecution(projectContext(platform, ctx), ctx.params.draftId as string, body<Parameters<typeof contractApprovals.recordExecution>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/pack.pdf',
+    binary: true,
+    description: 'The completion pack of an approved contract draft (PDF or DOCX): every particular with its source, what was left blank, the approvals and the hash approved, under the document identity frozen at approval',
+    schema: { type: 'object', properties: { format: { type: 'string', enum: ['PDF', 'DOCX'] } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const projectId = ctx.params.projectId as string;
+      const actor = auth(ctx);
+      const chosen: RenderableFormat = body<{ format?: RenderableFormat }>(ctx).format ?? 'PDF';
+      const draft = contractPack.issuableDraft(projectContext(platform, ctx), ctx.params.draftId as string, contractBrandVersion(platform, ctx));
+      const pack = contractPack.packDocument(draft, contractNames(platform, ctx));
+      const document = platform.exports.document(actor, projectId, { ...pack, audience: 'CLIENT', format: chosen, correlationId: ctx.correlationId });
+      return renderAndCharge(
+        platform.spendingWalletFor(actor, projectId).wallet,
+        document,
+        { format: chosen, projectId, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
   },
   {
     method: 'POST',

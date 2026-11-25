@@ -36192,14 +36192,101 @@ cost box shows the real classification and never offers an uncleared provider.
   - no page errors, no horizontal scroll at phone width (a notice that laid its
     parts side by side was fixed).
 
+### Stage 3: review, the completion pack, the signed contract (built)
+
+`backend/src/domain/contracts/approvals.ts`, `pack.ts`; six routes under
+`.../drafts/:draftId/` (`submit`, `approve`, `return`, `reopen`, `execute`,
+`pack.pdf`).
+
+- **Review.**
+  - A draft goes to review only with nothing blocking it
+    (`CONTRACT_DRAFT_BLOCKED`).
+  - What is reviewed is fixed by a hash of exactly that revision: form, schedule,
+    currency and every particular with its source.
+  - An approval names the hash its approver was shown (`CONTRACT_APPROVAL_STALE`
+    otherwise), and the approve panel shows every particular being approved.
+  - The commercial approval is always needed. A legal approval is needed as well
+    where:
+    - an NEC form is amended by Z clauses, or a FIDIC one by particular
+      conditions;
+    - the law is not a UK jurisdiction's;
+    - the form is FIDIC (law, board and place confirmed);
+    - the form is a homeowner's.
+  - The two approvals come from two different people, neither of whom put the
+    draft up (`CONTRACT_APPROVAL_SAME_PERSON`).
+  - A draft in review cannot be edited. It is returned, with what must change,
+    or approved.
+  - An approved draft changes only by being reopened, which voids its approvals
+    and keeps them on the record as voided.
+- **The completion pack** (PDF or Word, through the platform's own branded
+  exporter) contains:
+  - every particular with its source (the passage for a value from a document,
+    the person for a typed one);
+  - a completion report (completed, from documents, typed, left blank, notes);
+  - the attachment manifest;
+  - the approvals and the hash approved;
+  - a statement that it is not the publisher's form and reproduces none of its
+    wording.
+
+  It is issued only from an approved or executed draft that still matches its
+  approval, and only under the company document identity frozen at approval
+  (`CONTRACT_BRAND_CHANGED` if the identity has moved on: reopen and approve
+  again).
+- **Execution is evidence, never inferred from export.**
+  - The signed instrument is recorded by its hash, with how and when it was
+    signed (not in the future).
+  - The contract is then created in the register Change & Claims works from, from
+    the approved particulars (`createContract`), and executed there
+    (`executeContract`, the same `CONTRACT_EXECUTED` as every other contract)
+    with the signed copy as its evidence.
+  - Delay damages per week are held per day.
+  - The new optional "cap on delay damages" particular is carried, and blank is
+    uncapped, which is how the register already reads a zero cap.
+  - What the register needs and the draft lacks is listed, never invented
+    (`CONTRACT_HANDOFF_INCOMPLETE`). For example, a FIDIC draft with only a time
+    for completion and no commencement date.
+
+**Verified.**
+- `npm test` 8,842 pass, typecheck clean. `tests/contractapprovals.test.ts` (8)
+  covers:
+  - blocked submission;
+  - edits refused in review;
+  - refusals for authority, stale hash, legal-not-required, same person and
+    two-scope same person;
+  - the pack's content, and the pack refused after a brand change;
+  - the PDF over HTTP;
+  - reopening voids approvals and a stale hash is refused;
+  - return;
+  - Z clauses requiring a second person's legal approval;
+  - execution into the register with sum, damages per day, cap, retention, defects
+    months and dates;
+  - no second execution;
+  - the FIDIC handoff listing what is missing.
+- Walked in a browser on a fresh journal:
+  - a fully completed JCT D&B draft put up for review by the surveyor, who is not
+    offered approval;
+  - the owner approving with every particular shown;
+  - the PDF pack downloaded;
+  - the signed copy attached and recorded;
+  - the draft executed, and the contract shown on Change & Claims;
+  - no page errors, no horizontal scroll at phone width.
+
 ### Contracts Studio: not built yet, stated
 
 - **No live model run of the pre-fill.** It has been run here only against a stub.
 - **Locators are what the model says.** The quote is checked word for word; the
   page or clause number is not, because the read text does not keep page breaks
   for every format.
-- **Approvals, the completion pack and the signed-package handover** (stage 3)
-  are not built.
+- **No dedicated legal role.** The legal approval is given by any holder of
+  `A` on contracts with Commercial-L3 clearance who is not the commercial
+  approver or the submitter. The platform has no separate "legal reviewer" role.
+- **Recording execution needs the register's own authority**: `C` and `A` on
+  contracts and Legal-L4 clearance (the owner in a standard tenancy). A
+  commercial manager approves but cannot record execution.
+- **A pack under an earlier brand is not re-rendered.** A brand change after
+  approval means reopening and approving again.
+- **Publisher portal integration** and population of a licensed edition's own
+  layout are not built.
 - **Several legal entities and brands in one tenancy** are not built. Documents
   carry the company's existing document identity, which a project can override.
 - **A standalone workspace** (a draft with no project) is not built; a draft

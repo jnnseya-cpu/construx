@@ -58,12 +58,33 @@ export type ContractDraft = {
   scheduleId: string;
   currency: (typeof DRAFT_CURRENCIES)[number];
   selection?: { input: SelectionInput; reasons: string[] };
-  status: 'DRAFTING' | 'WITHDRAWN';
+  status: 'DRAFTING' | 'IN_REVIEW' | 'APPROVED' | 'EXECUTED' | 'WITHDRAWN';
   revision: number;
   fields: Record<string, FieldEntry>;
   createdBy: string;
   createdAt: string;
   withdrawn?: { by: string; at: string; reason: string };
+  /** The review the current revision is in, or was approved under. */
+  review?: Review;
+  /** Reviews that ended without the draft being executed: returned, or reopened after approval. */
+  pastReviews?: Array<Review & { ended: { how: 'RETURNED' | 'REOPENED'; by: string; at: string; note: string } }>;
+  executed?: { contractId: string; by: string; at: string; executedOn: string; signedDocumentHash: string; signatureMethod: string };
+};
+
+export type ApprovalScope = 'COMMERCIAL' | 'LEGAL';
+
+export type Review = {
+  revision: number;
+  /** The hash of exactly what is being approved: form, schedule, currency and every particular with its source. */
+  hash: string;
+  submittedBy: string;
+  submittedAt: string;
+  legalRequired: boolean;
+  legalReasons: string[];
+  approvals: Array<{ scope: ApprovalScope; by: string; at: string; note: string }>;
+  approvedAt?: string;
+  /** The company document identity the pack is issued under, frozen at approval. */
+  brandVersion?: number | null;
 };
 
 const strip = (draft: ContractDraft & { version?: number }): ContractDraft => {
@@ -166,7 +187,7 @@ export function applyField(
   input: { key: string; value: string | null; note?: string; expectedRevision: number; source: FieldSource },
 ): ContractDraft {
   const draft = draftOf(ctx, id);
-  if (draft.status !== 'DRAFTING') throw new DomainError('CONTRACT_DRAFT_STATE', `${draft.reference} is ${draft.status.toLowerCase()}.`, 409);
+  if (draft.status !== 'DRAFTING') throw new DomainError('CONTRACT_DRAFT_STATE', `${draft.reference} is ${draft.status === 'IN_REVIEW' ? 'in review; it is returned or approved before it changes' : draft.status === 'APPROVED' ? 'approved; reopen it to change it, which voids the approvals' : draft.status.toLowerCase()}.`, 409);
   if (input.expectedRevision !== draft.revision) {
     throw new DomainError('CONTRACT_DRAFT_STALE', `${draft.reference} has moved on to revision ${draft.revision} since you opened it at revision ${input.expectedRevision}. Reload it and check what changed.`, 412);
   }
@@ -198,13 +219,13 @@ export function applyField(
 export function withdrawDraft(ctx: EngineContext, id: string, input: { reason: string }): ContractDraft {
   guard(ctx, 'U');
   const draft = draftOf(ctx, id);
-  if (draft.status === 'WITHDRAWN') throw new DomainError('CONTRACT_DRAFT_STATE', `${draft.reference} is already withdrawn.`, 409);
+  if (draft.status === 'WITHDRAWN' || draft.status === 'EXECUTED') throw new DomainError('CONTRACT_DRAFT_STATE', `${draft.reference} is ${draft.status.toLowerCase()}.`, 409);
   const next: ContractDraft = { ...strip(draft), status: 'WITHDRAWN', withdrawn: { by: ctx.auth.actorId, at: new Date().toISOString(), reason: reasonText(input.reason, 'reason', 5, 'Say why it is withdrawn.', 1000) } };
   write(ctx, { eventType: 'CONTRACT_DRAFT_WITHDRAWN', entity: { refType: 'ContractDraft', refId: id }, nextState: next as unknown as Record<string, unknown>, reason: `${draft.reference} withdrawn: ${next.withdrawn!.reason}` });
   return next;
 }
 
-const valuesOf = (draft: ContractDraft): Record<string, string> => Object.fromEntries(Object.entries(draft.fields).map(([key, entry]) => [key, entry.value]));
+export const valuesOf = (draft: ContractDraft): Record<string, string> => Object.fromEntries(Object.entries(draft.fields).map(([key, entry]) => [key, entry.value]));
 
 /** A draft as the screen reads it: every particular in schedule order, with its value, source and findings. */
 export function draftView(draft: ContractDraft, nameOf: (actorId: string) => string) {

@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command } from '../lib/command.js';
-import { badge, date, html, humanise, notice, render, table } from '../lib/ui.js';
+import { badge, date, html, humanise, notice, render, table, toast } from '../lib/ui.js';
 import { can, draw, state } from '../app.js';
 
 /**
@@ -42,23 +42,62 @@ function draftsCard(view, perms) {
         html`<b>${draft.reference}</b> ${draft.title}<br><span class="metric-sub">revision ${draft.revision} · ${draft.currency}</span>`,
         html`${draft.formLabel}${draft.schedule.ownSchedule ? '' : html`<br><span class="metric-sub">general particulars schedule</span>`}`,
         html`${badge(draft.completion.completed + ' of ' + draft.completion.required, draft.completion.completed === draft.completion.required ? 'ok' : 'warn')}${draft.blocking ? html` ${badge(draft.blocking + ' blocking', 'bad')}` : ''}`,
-        badge(draft.status.toLowerCase(), draft.status === 'WITHDRAWN' ? 'neutral' : 'info'),
+        badge(STATUS_WORDS_DRAFT[draft.status], STATUS_TONE_DRAFT[draft.status]),
         html`<button class="btn quiet sm" data-cs-open-draft="${draft.id}">${openDraftId === draft.id ? 'Close' : 'Open'}</button>`,
       ]),
     })}
   </section>`;
 }
 
+const STATUS_WORDS_DRAFT = { DRAFTING: 'drafting', IN_REVIEW: 'in review', APPROVED: 'approved', EXECUTED: 'executed', WITHDRAWN: 'withdrawn' };
+const STATUS_TONE_DRAFT = { DRAFTING: 'info', IN_REVIEW: 'warn', APPROVED: 'ok', EXECUTED: 'ok', WITHDRAWN: 'neutral' };
+
+/** Where the draft stands in review, and the controls that move it on. */
+function reviewPanel(draft, perms) {
+  const r = draft.review;
+  const legal = draft.legalReasons.length ? html`<div style="margin-top:6px"><b>Legal approval needed:</b> ${draft.legalReasons.join(' ')}</div>` : '';
+  const past = draft.pastReviews.length ? html`<details style="margin-top:6px"><summary style="cursor:pointer">${draft.pastReviews.length} earlier review${draft.pastReviews.length === 1 ? '' : 's'}</summary><ul style="margin:4px 0 0 16px">${draft.pastReviews.map((entry) => html`<li>Revision ${entry.revision}: ${entry.how === 'RETURNED' ? 'returned' : 'reopened after approval — approvals void'} by ${entry.byName} ${date(entry.at)}: ${entry.note}</li>`)}</ul></details>` : '';
+  if (draft.status === 'DRAFTING') {
+    return html`<div style="margin:8px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center" data-cs-review>
+      ${perms.update && draft.blocking === 0 ? html`<button class="btn sm" data-command="cs-submit" data-draft="${draft.id}">Put up for review</button>` : html`<span class="metric-sub">Put up for review once nothing blocks it.</span>`}
+    </div>${draft.legalReasons.length || draft.pastReviews.length ? notice(html`<div style="min-width:0">${legal}${past}</div>`, 'info') : ''}`;
+  }
+  if (!r) return '';
+  const approvals = r.approvals.length ? r.approvals.map((approval) => html`<div>${approval.scope === 'COMMERCIAL' ? 'Commercial' : 'Legal'} approval: ${approval.byName}, ${date(approval.at)} — ${approval.note}</div>`) : html`<div>No approval yet.</div>`;
+  const hasScope = (scope) => r.approvals.some((approval) => approval.scope === scope);
+  const controls = [];
+  if (draft.status === 'IN_REVIEW' && perms.approve) {
+    if (!hasScope('COMMERCIAL')) controls.push(html`<button class="btn sm" data-command="cs-approve" data-draft="${draft.id}" data-scope="COMMERCIAL">Approve — commercial</button>`);
+    if (r.legalRequired && !hasScope('LEGAL')) controls.push(html`<button class="btn sm" data-command="cs-approve" data-draft="${draft.id}" data-scope="LEGAL">Approve — legal</button>`);
+    controls.push(html`<button class="btn quiet sm" data-command="cs-return" data-draft="${draft.id}">Return</button>`);
+  }
+  if (draft.status === 'APPROVED' || draft.status === 'EXECUTED') {
+    controls.push(html`<button class="btn sm" data-cs-pack="PDF" data-draft="${draft.id}">Download the pack (PDF)</button> <button class="btn quiet sm" data-cs-pack="DOCX" data-draft="${draft.id}">Word</button>`);
+  }
+  if (draft.status === 'APPROVED') {
+    if (perms.approve) controls.push(html`<button class="btn sm" data-command="cs-execute" data-draft="${draft.id}">Record the signed contract</button>`);
+    if (perms.update) controls.push(html`<button class="btn quiet sm" data-command="cs-reopen" data-draft="${draft.id}">Reopen to change</button>`);
+  }
+  return html`${notice(
+    html`<div style="min-width:0"><b>${draft.status === 'IN_REVIEW' ? 'In review' : draft.status === 'APPROVED' ? 'Approved' : 'Executed'}:</b> revision ${r.revision}, put up by ${r.submittedByName} ${date(r.submittedAt)} · <span class="mono" style="font-size:11px;word-break:break-all">${r.hash}</span>
+      <div style="margin-top:6px">${approvals}</div>${legal}
+      ${draft.executed ? html`<div style="margin-top:6px"><b>Signed</b> ${draft.executed.executedOn} (${draft.executed.signatureMethod}). The contract is in the register on Change & Claims.</div>` : ''}
+      ${draft.status === 'APPROVED' && draft.handoffMissing.length ? html`<div style="margin-top:6px">The contract register will need ${draft.handoffMissing.join(', ')}.</div>` : ''}${past}</div>`,
+    draft.status === 'IN_REVIEW' ? 'warn' : 'ok',
+  )}<div style="margin:8px 0;display:flex;gap:8px;flex-wrap:wrap" data-cs-review>${controls}</div>`;
+}
+
 function draftCard(draft, perms) {
   const editable = perms.update && draft.status === 'DRAFTING';
   return html`<section class="card" style="margin-bottom:14px" aria-labelledby="cs-draft-h" data-cs-draft="${draft.id}">
-    <h2 id="cs-draft-h">${draft.reference} ${draft.title} ${badge('revision ' + draft.revision, 'info')}
+    <h2 id="cs-draft-h">${draft.reference} ${draft.title} ${badge('revision ' + draft.revision, 'info')} ${badge(STATUS_WORDS_DRAFT[draft.status], STATUS_TONE_DRAFT[draft.status])}
       ${editable ? html`<button class="btn quiet sm" data-command="cs-prefill" data-draft="${draft.id}">Read the project documents (AI)</button> <button class="btn quiet sm" data-command="cs-withdraw" data-draft="${draft.id}">Withdraw</button>` : ''}</h2>
     <p class="metric-sub">${draft.formLabel} · ${draft.schedule.title} · in ${draft.currency}${draft.selection?.reasons?.length ? ' · chosen because: ' + draft.selection.reasons.join(' ') : ''}</p>
     ${draft.schedule.ownSchedule ? '' : notice('This form has no schedule of its own yet. The general particulars are recorded against it; they are a record of what was agreed, not a completed form.', 'info')}
     ${draft.withdrawn ? notice(html`Withdrawn ${date(draft.withdrawn.at)}: ${draft.withdrawn.reason}`, 'warn') : ''}
-    ${prefillNotice(draft)}
-    ${draftNotice(draft)}
+    ${reviewPanel(draft, perms)}
+    ${draft.status === 'DRAFTING' ? prefillNotice(draft) : ''}
+    ${draft.status === 'DRAFTING' ? draftNotice(draft) : ''}
     ${draft.groups.map(
       (group) => html`<h3 style="margin:16px 0 6px;font-size:14px">${GROUP_WORDS[group.group] ?? humanise(group.group)}</h3>
         ${table({
@@ -186,7 +225,7 @@ export async function contractstudio(root) {
     render(root, html`<div class="view-head"><div><h1>Contracts Studio</h1></div></div>${notice(`Contracts Studio could not be read: ${error.message ?? String(error)}`, 'err')}`);
     return;
   }
-  const perms = { read: can('CONTRACTS_CLAIMS', 'R'), create: can('CONTRACTS_CLAIMS', 'C'), update: can('CONTRACTS_CLAIMS', 'U') };
+  const perms = { read: can('CONTRACTS_CLAIMS', 'R'), create: can('CONTRACTS_CLAIMS', 'C'), update: can('CONTRACTS_CLAIMS', 'U'), approve: can('CONTRACTS_CLAIMS', 'A') };
   const open = view.drafts.find((draft) => draft.id === openDraftId);
   if (!open) openDraftId = null;
 
@@ -324,6 +363,69 @@ export async function contractstudio(root) {
         transform: (values) => ({ prefillId: draft.prefill.id, candidateId: candidate.id, ...(values.note ? { note: values.note } : {}), expectedRevision: draft.revision }),
       };
     },
+    'cs-submit': (button) => {
+      const draft = draftOf(button);
+      return {
+        title: 'Put ' + draft.reference + ' up for review',
+        intent: 'Revision ' + draft.revision + ' is fixed for review. It changes again only if it is returned, or reopened after approval — which voids the approvals.',
+        path: `/v1/projects/${projectId}/contract-studio/drafts/${draft.id}/submit`,
+        submitLabel: 'Put it up',
+        fields: [{ name: 'expectedRevision', type: 'hidden', value: String(draft.revision) }],
+        transform: () => ({ expectedRevision: draft.revision }),
+      };
+    },
+    'cs-approve': (button) => {
+      const draft = draftOf(button);
+      const scope = button.dataset.scope;
+      const rows = draft.groups.flatMap((group) => group.fields).filter((field) => field.display !== null);
+      return {
+        title: (scope === 'LEGAL' ? 'Legal' : 'Commercial') + ' approval of ' + draft.reference,
+        intent: 'You approve revision ' + draft.review.revision + ' exactly as below. If it has changed since you opened it, the approval is refused.',
+        brief:
+          '<table style="width:100%;font-size:12.5px;border-collapse:collapse">' +
+          rows.map((field) => '<tr><td style="padding:3px 6px 3px 0;vertical-align:top">' + escape(field.label) + '</td><td style="padding:3px 0"><b>' + escape(field.display) + '</b></td></tr>').join('') +
+          '</table>' +
+          (scope === 'LEGAL' && draft.legalReasons.length ? '<p><b>Why legal review:</b> ' + escape(draft.legalReasons.join(' ')) + '</p>' : ''),
+        path: `/v1/projects/${projectId}/contract-studio/drafts/${draft.id}/approve`,
+        submitLabel: 'Approve',
+        fields: [{ name: 'note', label: 'What you checked', type: 'textarea', rows: 2 }],
+        transform: (values) => ({ scope, revisionHash: draft.review.hash, note: values.note }),
+      };
+    },
+    'cs-return': (button) => {
+      const draft = draftOf(button);
+      return {
+        title: 'Return ' + draft.reference,
+        intent: 'Back to drafting; any approval given is set aside with the review.',
+        path: `/v1/projects/${projectId}/contract-studio/drafts/${draft.id}/return`,
+        submitLabel: 'Return it',
+        fields: [{ name: 'note', label: 'What needs to change', type: 'textarea', rows: 2 }],
+      };
+    },
+    'cs-reopen': (button) => {
+      const draft = draftOf(button);
+      return {
+        title: 'Reopen ' + draft.reference,
+        intent: 'Its approvals are voided and kept on the record as voided. The changed draft is approved again before it is issued or signed.',
+        path: `/v1/projects/${projectId}/contract-studio/drafts/${draft.id}/reopen`,
+        submitLabel: 'Reopen',
+        fields: [{ name: 'reason', label: 'What is to change', type: 'text' }],
+      };
+    },
+    'cs-execute': (button) => {
+      const draft = draftOf(button);
+      return {
+        title: 'Record the signed contract for ' + draft.reference,
+        intent: 'The signed copy is kept as evidence by its hash. The contract is then created in the register on Change & Claims from the approved particulars, and executed there.',
+        path: `/v1/projects/${projectId}/contract-studio/drafts/${draft.id}/execute`,
+        submitLabel: 'Record it',
+        fields: [
+          { name: 'signedDocumentHash', label: 'The signed contract', type: 'file', voice: false },
+          { name: 'signatureMethod', label: 'How it was signed', type: 'text', placeholder: 'Executed as a deed; wet ink' },
+          { name: 'executedOn', label: 'Signed on', type: 'date' },
+        ],
+      };
+    },
     'cs-withdraw': (button) => {
       const draft = draftOf(button);
       return {
@@ -341,6 +443,16 @@ export async function contractstudio(root) {
     if (opener) {
       openDraftId = openDraftId === opener.dataset.csOpenDraft ? null : opener.dataset.csOpenDraft;
       await draw();
+      return;
+    }
+    const packButton = event.target.closest('[data-cs-pack]');
+    if (packButton) {
+      try {
+        await api.download(`/v1/projects/${projectId}/contract-studio/drafts/${packButton.dataset.draft}/pack.pdf`, { format: packButton.dataset.csPack });
+        toast('Downloaded', 'The completion pack has been saved.', 'ok');
+      } catch (error) {
+        toast('Not issued', error.message ?? String(error), 'err');
+      }
       return;
     }
     if (event.target.closest('[data-cs-clear-shortlist]')) {

@@ -1,4 +1,5 @@
 import type { EngineContext } from '../../engines/context.ts';
+import { contractTerms, legalReview, revisionHash } from './approvals.ts';
 import { CATALOGUE, draftable } from './catalogue.ts';
 import { drafts, draftView, guard } from './drafts.ts';
 import { prefillDocuments, prefills } from './prefill.ts';
@@ -24,7 +25,15 @@ export function studioOverview(ctx: EngineContext, nameOf: (actorId: string) => 
     drafts: drafts(ctx)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .map((draft) => {
-        const view = draftView(draft, nameOf);
+        const view = {
+          ...draftView(draft, nameOf),
+          // What a reviewer is shown and approves, and what review and signing will need.
+          currentHash: revisionHash(draft),
+          legalReasons: draft.review?.legalReasons ?? legalReview(draft),
+          handoffMissing: contractTerms(draft).missing,
+          review: draft.review ? { ...draft.review, submittedByName: nameOf(draft.review.submittedBy), approvals: draft.review.approvals.map((approval) => ({ ...approval, byName: nameOf(approval.by) })) } : null,
+          pastReviews: (draft.pastReviews ?? []).map((entry) => ({ revision: entry.revision, how: entry.ended.how, byName: nameOf(entry.ended.by), at: entry.ended.at, note: entry.ended.note, approvals: entry.approvals.length })),
+        };
         const latest = prefills(ctx, draft.id).at(-1);
         if (!latest) return { ...view, prefill: null };
         const fieldDefs = new Map(view.groups.flatMap((group) => group.fields).map((field) => [field.key, field]));
