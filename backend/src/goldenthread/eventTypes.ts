@@ -857,6 +857,58 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // Accepting one runs the ordinary command as that person.
   def('PLANNING_AGENT_PROPOSED', 'PlanningAgentProposal', 'CREATE', 'DESIGN', { creates: true, aiAllowed: true }),
   def('PLANNING_AGENT_PROPOSAL_DECIDED', 'PlanningAgentProposal', 'UPDATE', 'DESIGN'),
+
+  // --- Integrated management system (ISO 9001 / 14001 / 45001) ---------------
+  // Company-level, on the tenancy's governance record. A document is in force
+  // only once somebody other than its author approves it; "read and understood"
+  // is each person's own acknowledgement of the revision in force.
+  def('IMS_SETTINGS_SET', 'ImsSettings', 'UPDATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_DOCUMENT_DRAFTED', 'ImsDocument', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_DOCUMENT_REDRAFTED', 'ImsDocument', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_DOCUMENT_APPROVED', 'ImsDocument', 'APPROVE', 'GOVERNANCE'),
+  def('IMS_DOCUMENT_RETURNED', 'ImsDocument', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_DOCUMENT_REVIEWED', 'ImsDocument', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_DOCUMENT_WITHDRAWN', 'ImsDocument', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_DOCUMENT_ACKNOWLEDGED', 'ImsAcknowledgement', 'CREATE', 'GOVERNANCE', { creates: true }),
+  // Internal audit: the lead auditor records; a nonconformity raises its
+  // corrective action as it is recorded. An action is verified effective by
+  // somebody other than the person who implemented it.
+  def('IMS_AUDIT_PLANNED', 'ImsAudit', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_AUDIT_CHECKLIST_SET', 'ImsAudit', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_AUDIT_STARTED', 'ImsAudit', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_AUDIT_COMPLETED', 'ImsAudit', 'APPROVE', 'GOVERNANCE'),
+  def('IMS_AUDIT_CANCELLED', 'ImsAudit', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_AUDIT_FINDING_RAISED', 'ImsAuditFinding', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_ACTION_RAISED', 'ImsAction', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_ACTION_UPDATED', 'ImsAction', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_ACTION_IMPLEMENTED', 'ImsAction', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_ACTION_VERIFIED', 'ImsAction', 'APPROVE', 'GOVERNANCE'),
+  // The registers: environmental aspects, legal and other requirements (an
+  // evaluation short of compliant raises its corrective action), objectives.
+  def('IMS_ASPECT_RECORDED', 'ImsAspect', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_ASPECT_REVISED', 'ImsAspect', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_ASPECT_RETIRED', 'ImsAspect', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_OBLIGATION_RECORDED', 'ImsObligation', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_OBLIGATION_EVALUATED', 'ImsObligation', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_OBLIGATION_WITHDRAWN', 'ImsObligation', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_OBJECTIVE_SET', 'ImsObjective', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_OBJECTIVE_PROGRESS_RECORDED', 'ImsObjective', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_OBJECTIVE_CLOSED', 'ImsObjective', 'APPROVE', 'GOVERNANCE'),
+  // Monitoring: supplier performance, and the competence each role requires.
+  def('IMS_SUPPLIER_EVALUATED', 'ImsSupplierEvaluation', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_COMPETENCE_REQUIRED', 'ImsCompetenceRequirement', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_COMPETENCE_REQUIREMENT_REMOVED', 'ImsCompetenceRequirement', 'UPDATE', 'GOVERNANCE'),
+  // Management review: the company position frozen as its inputs, each input
+  // minuted, decisions and actions recorded, approved by top management.
+  def('IMS_REVIEW_OPENED', 'ImsManagementReview', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_REVIEW_INPUTS_REFRESHED', 'ImsManagementReview', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_REVIEW_MINUTED', 'ImsManagementReview', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_REVIEW_OUTPUT_ADDED', 'ImsManagementReview', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_REVIEW_APPROVED', 'ImsManagementReview', 'APPROVE', 'GOVERNANCE'),
+  // The management system's agents: written by the agent, decided by a person,
+  // whose acceptance runs the ordinary command under their own authority.
+  def('IMS_AGENT_PROPOSED', 'ImsAgentProposal', 'CREATE', 'GOVERNANCE', { creates: true, aiAllowed: true }),
+  def('IMS_AGENT_PROPOSAL_DECIDED', 'ImsAgentProposal', 'UPDATE', 'GOVERNANCE'),
   def('BID_SIGN_OFF_RECORDED', 'BidSignOff', 'APPROVE', 'PROCUREMENT', { creates: true }),
   def('SUBMISSION_FILE_RECORDED', 'BidSignOff', 'UPDATE', 'PROCUREMENT', { creates: true }),
   // A compliance undertaking confirmed: the agent drafts the statement, a person
@@ -1855,6 +1907,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // Immediate cause, underlying cause, root cause and the actions out of them.
   // An incident closed on its immediate action alone has taught nothing.
   def('INCIDENT_INVESTIGATED', 'Incident', 'UPDATE', 'RISK_SAFETY'),
+  // The RIDDOR clock: the kind of report and its due date, then the report made.
+  def('INCIDENT_RIDDOR_CLASSIFIED', 'Incident', 'UPDATE', 'RISK_SAFETY'),
+  def('INCIDENT_RIDDOR_REPORTED', 'Incident', 'UPDATE', 'RISK_SAFETY'),
   def('TRAINING_COMPLETED', 'TrainingRecord', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),
 
   // --- BIM & digital twin ---------------------------------------------------

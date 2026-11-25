@@ -1,0 +1,190 @@
+import type { EngineContext } from '../engines/context.ts';
+import type { AgentDefinition, AgentOutput, Finding } from './types.ts';
+
+/**
+ * The management system watch.
+ *
+ * Observes and never acts. It reads the company's management system — held on
+ * the tenancy's governance record — and says where it is not being kept: a
+ * document past its review date, a draft left unapproved, a revision in force
+ * that people it is issued to have not acknowledged. Every finding is a
+ * comparison of recorded dates and counts, and names the record it read.
+ */
+
+const DRAFT_STALE_DAYS = 30;
+
+type Row = Record<string, unknown>;
+
+export function imsFindings(ctx: EngineContext, on: string): Finding[] {
+  const register = `${ctx.tenantId}-governance`;
+  const list = (type: string) => ctx.ledger.list(register, type).filter((record) => record.tenantId === ctx.tenantId);
+  const findings: Finding[] = [];
+
+  const acks = list('ImsAcknowledgement').map((record) => record.state as Row);
+  for (const record of list('ImsDocument')) {
+    const document = record.state as Row & { revisions: Row[] };
+    const reference = String(document.reference);
+    if (document.status === 'EFFECTIVE' && typeof document.reviewDueOn === 'string' && document.reviewDueOn < on) {
+      findings.push({
+        key: `ims:review-overdue:${record.refId}`,
+        severity: 'ATTENTION',
+        summary: `${reference} ${String(document.title)} was due for review on ${document.reviewDueOn}.`,
+        consequence: 'A controlled document past its review is the first thing a certification auditor samples; it may no longer describe how the work is done.',
+        evidence: [{ refType: 'ImsDocument', refId: record.refId, note: `Review due ${document.reviewDueOn}` }],
+      });
+    }
+    const draft = document.revisions.find((revision) => revision.status === 'DRAFT');
+    if (draft && typeof draft.draftedAt === 'string') {
+      const age = Math.floor((Date.parse(`${on}T00:00:00Z`) - Date.parse(draft.draftedAt)) / 86_400_000);
+      if (age > DRAFT_STALE_DAYS) {
+        findings.push({
+          key: `ims:draft-waiting:${record.refId}:${String(draft.revision)}`,
+          severity: 'INFO',
+          summary: `${reference} revision ${String(draft.revision)} has waited ${age} days for approval.`,
+          consequence: document.status === 'EFFECTIVE' ? 'The revision in force is the old one until the draft is approved or returned.' : 'Nothing is in force for this document until a draft is approved.',
+          evidence: [{ refType: 'ImsDocument', refId: record.refId, note: `Drafted ${String(draft.draftedAt).slice(0, 10)}` }],
+        });
+      }
+    }
+    if (document.status === 'EFFECTIVE' && Array.isArray(document.distribution) && document.distribution.length > 0) {
+      const done = acks.filter((ack) => ack.documentId === record.refId && ack.revision === document.effectiveRevision).length;
+      const approvedAt = String(document.revisions.find((revision) => revision.status === 'EFFECTIVE')?.approvedAt ?? '');
+      const age = approvedAt ? Math.floor((Date.parse(`${on}T00:00:00Z`) - Date.parse(approvedAt)) / 86_400_000) : 0;
+      if (done === 0 && age > 14) {
+        findings.push({
+          key: `ims:unacknowledged:${record.refId}:${String(document.effectiveRevision)}`,
+          severity: 'ATTENTION',
+          summary: `Nobody has acknowledged ${reference} revision ${String(document.effectiveRevision)}, in force for ${age} days.`,
+          consequence: 'A procedure nobody has read is not a working procedure; awareness (clause 7.3) cannot be shown.',
+          evidence: [{ refType: 'ImsDocument', refId: record.refId, note: `Issued to ${(document.distribution as string[]).join(', ')}` }],
+        });
+      }
+    }
+  }
+
+  for (const record of list('ImsAction')) {
+    const action = record.state as Row;
+    if (action.status === 'OPEN' && typeof action.dueOn === 'string' && action.dueOn < on) {
+      findings.push({
+        key: `ims:action-overdue:${record.refId}`,
+        severity: (action.source as Row | undefined)?.kind === 'AUDIT_FINDING' || action.kind === 'CORRECTIVE' ? 'ATTENTION' : 'INFO',
+        summary: `${String(action.reference)} was due on ${action.dueOn} and is still open: ${String(action.description).slice(0, 120)}`,
+        consequence: 'An open corrective action past its date is a nonconformity left uncorrected — an auditor reads it as the system not working.',
+        evidence: [{ refType: 'ImsAction', refId: record.refId, note: `Due ${action.dueOn}` }],
+      });
+    }
+  }
+  for (const record of list('ImsAudit')) {
+    const audit = record.state as Row;
+    if (audit.status === 'PLANNED' && typeof audit.plannedOn === 'string' && audit.plannedOn < on) {
+      findings.push({
+        key: `ims:audit-overdue:${record.refId}`,
+        severity: 'ATTENTION',
+        summary: `${String(audit.reference)} ${String(audit.title)} was planned for ${audit.plannedOn} and has not started.`,
+        consequence: 'The audit programme is not being kept; the clauses it covers go unaudited.',
+        evidence: [{ refType: 'ImsAudit', refId: record.refId, note: `Planned ${audit.plannedOn}` }],
+      });
+    }
+  }
+  for (const record of list('ImsObligation')) {
+    const obligation = record.state as Row;
+    if (obligation.status === 'ACTIVE' && typeof obligation.nextEvaluationDue === 'string' && obligation.nextEvaluationDue < on) {
+      findings.push({
+        key: `ims:evaluation-due:${record.refId}`,
+        severity: 'ATTENTION',
+        summary: `Compliance with ${String(obligation.reference)} ${String(obligation.title)} was due for evaluation on ${obligation.nextEvaluationDue}.`,
+        consequence: 'An unevaluated legal requirement cannot be shown to be complied with (9.1.2); it is exactly what a regulator or certification body asks for.',
+        evidence: [{ refType: 'ImsObligation', refId: record.refId, note: `Due ${obligation.nextEvaluationDue}` }],
+      });
+    }
+  }
+  for (const record of list('ImsObjective')) {
+    const objective = record.state as Row;
+    if (objective.status === 'OPEN' && typeof objective.dueOn === 'string' && objective.dueOn < on) {
+      findings.push({
+        key: `ims:objective-overdue:${record.refId}`,
+        severity: 'INFO',
+        summary: `${String(objective.reference)} was due on ${objective.dueOn} and is still open: ${String(objective.objective).slice(0, 120)}`,
+        consequence: 'An objective past its date is either achieved and not closed, or missed and not reviewed; management review needs to know which.',
+        evidence: [{ refType: 'ImsObjective', refId: record.refId, note: `Due ${objective.dueOn}` }],
+      });
+    }
+  }
+  // Management review at least yearly, once there is a system to review.
+  if (list('ImsDocument').some((record) => (record.state as Row).status === 'EFFECTIVE')) {
+    const approved = list('ImsManagementReview')
+      .map((record) => record.state as Row)
+      .filter((review) => review.status === 'APPROVED')
+      .map((review) => String(review.heldOn))
+      .sort();
+    const last = approved.at(-1);
+    const yearAgo = new Date(Date.parse(`${on}T00:00:00Z`) - 365 * 86_400_000).toISOString().slice(0, 10);
+    if (!last || last < yearAgo) {
+      findings.push({
+        key: `ims:review-due:${last ?? 'never'}`,
+        severity: 'ATTENTION',
+        summary: last ? `The last management review was held on ${last}, more than a year ago.` : 'The management system has documents in force and no management review has been approved.',
+        consequence: 'Top management reviewing the system at planned intervals (9.3) is a requirement of all three standards, and a certification audit cannot pass without one.',
+        evidence: [{ refType: 'ImsSettings', refId: `${ctx.tenantId}-ims-settings`, note: last ? `Last review ${last}` : 'No approved review' }],
+      });
+    }
+  }
+
+  // Suppliers whose latest evaluation fell below the company's score.
+  const settingsRecord = ctx.ledger.get({ refType: 'ImsSettings', refId: `${ctx.tenantId}-ims-settings` });
+  const reviewBelow = Number((settingsRecord?.state as Row | undefined)?.supplierReviewBelow ?? 3);
+  const latest = new Map<string, Row>();
+  for (const record of list('ImsSupplierEvaluation')) {
+    const evaluation = record.state as Row;
+    const previous = latest.get(String(evaluation.supplierId));
+    if (!previous || String(evaluation.evaluatedOn) >= String(previous.evaluatedOn)) latest.set(String(evaluation.supplierId), { ...evaluation, refId: record.refId });
+  }
+  for (const [supplierId, evaluation] of latest) {
+    if (Number(evaluation.average) >= reviewBelow) continue;
+    const supplier = ctx.ledger.get({ refType: 'Supplier', refId: supplierId });
+    findings.push({
+      key: `ims:supplier-review:${supplierId}:${String(evaluation.refId)}`,
+      severity: 'ATTENTION',
+      summary: `${String(supplier?.state.legalName ?? supplierId)} scored ${String(evaluation.average)} out of 5 on its latest evaluation, below the company's ${reviewBelow}.`,
+      consequence: 'An approved supplier performing below the company’s own threshold should have its approval reviewed before its next appointment (8.4, 8.1.4).',
+      evidence: [{ refType: 'ImsSupplierEvaluation', refId: String(evaluation.refId), note: `Evaluated ${String(evaluation.evaluatedOn)}` }],
+    });
+  }
+  return findings;
+}
+
+export const imsWatchAgent: AgentDefinition = {
+  name: 'management system watch',
+  agentId: 'AGT-IMS-WATCH',
+  module: 'IMS',
+  division: 'COMPLIANCE',
+  purpose:
+    'Watches the company’s management system and says where it is not being kept: documents past review, drafts left ' +
+    'unapproved and procedures nobody has acknowledged.',
+  activeIn: 'ANY',
+  triggers: [
+    { kind: 'SCHEDULE', at: '06:30' },
+    { kind: 'EVENT', eventType: 'IMS_DOCUMENT_APPROVED' },
+    { kind: 'EVENT', eventType: 'IMS_DOCUMENT_DRAFTED' },
+    { kind: 'EVENT', eventType: 'IMS_ACTION_RAISED' },
+    { kind: 'EVENT', eventType: 'IMS_AUDIT_PLANNED' },
+  ],
+  inputs: ['Controlled documents and their revisions', 'Read-and-understood acknowledgements', 'Corrective and improvement actions', 'The audit programme', 'The legal register', 'Objectives', 'Supplier performance evaluations', 'Management reviews'],
+  outputs: ['Documents past their review date', 'Drafts waiting for approval', 'Revisions in force that nobody has acknowledged', 'Actions past their due date', 'Audits not started on their planned date', 'Legal requirements due for compliance evaluation', 'Objectives past their date', 'Suppliers performing below the company’s score', 'Management review more than a year old, or never held'],
+  emits: [],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.9,
+  acuTier: 'LOW',
+  memory: { reads: ['PROJECT'], writes: [] },
+  mandate: {
+    reads: ['MANAGEMENT_SYSTEM'],
+    proposes: [],
+    approvers: ['OWNER'],
+    maxUnattended: 'OBSERVE',
+  },
+  evaluate(ctx: EngineContext): AgentOutput {
+    return { findings: imsFindings(ctx, new Date().toISOString().slice(0, 10)), proposals: [] };
+  },
+};
+
+export const IMS_AGENTS: AgentDefinition[] = [imsWatchAgent];

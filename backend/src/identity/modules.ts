@@ -183,15 +183,40 @@ export const MODULES = {
   PLANNING: {
     name: 'CONSTRUX Planning',
     summary:
-      'Planning consent for new housing in England: the red line and its measured area, proposals and scenarios, ' +
-      'the statutory rules (major development, flood risk, EIA screening, biodiversity, validation, CIL) evaluated ' +
-      'with their sources, standard planning fees from published schedules, and planning costs with the liabilities ' +
-      'kept apart.',
+      'Planning consent in England for any site and any need — housing, a school, a substation, temporary ' +
+      'accommodation or anything else: the site and its area, proposals, the statutory rules evaluated with their ' +
+      'sources, applications to the release of works, fees from published schedules, planning costs, and AI agents ' +
+      'that read and draft for a person to accept.',
     restricted:
       'Released company by company: the statutory rule pack and fee schedules are relied on only after a planner in ' +
       'the company has checked them against their published sources and a second person has published them.',
     registry: {
       moduleKey: 'construx.planning.consent',
+      productCode: 'construx',
+      visibility: 'restricted',
+      requires: ['construx.core'],
+      eligibilityPolicy: 'explicit_tenant_grant',
+      customerSelfActivation: false,
+    },
+  },
+  /**
+   * The integrated management system: the company's ISO 9001, 14001 and 45001
+   * system, held once for the whole business and reading the delivery records
+   * every project already keeps rather than copying them.
+   */
+  IMS: {
+    name: 'CONSTRUX Integrated Management System',
+    summary:
+      'The company’s ISO 9001, 14001 and 45001 management system: policies turned into controlled procedures with ' +
+      'approval, revision, periodic review and read-and-understood sign-off; internal audits and corrective actions ' +
+      'to verified closure; management review; environmental aspects, compliance obligations and objectives; ' +
+      'supplier performance, the competence matrix and the RIDDOR clock — rolled up across every project, with AI ' +
+      'agents drafting the work for a person to approve.',
+    restricted:
+      'Released company by company while it is introduced. It is not part of the CONSTRUX subscription and is not ' +
+      'offered for sale on the pricing page.',
+    registry: {
+      moduleKey: 'construx.ims.management_system',
       productCode: 'construx',
       visibility: 'restricted',
       requires: ['construx.core'],

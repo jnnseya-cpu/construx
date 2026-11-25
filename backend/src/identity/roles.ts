@@ -198,7 +198,16 @@ export type CapabilityArea =
   // information or the programme; the development side authors it and an
   // executive or project director approves its gates. Reachable only inside
   // the PLANNING module — every planning command calls `requireModule`.
-  | 'PLANNING_CONSENT';
+  | 'PLANNING_CONSENT'
+  // The company's integrated management system (ISO 9001, 14001, 45001):
+  // controlled procedures, internal audits, corrective actions, management
+  // review, the environmental and legal registers and the company-wide view.
+  // Company-level, held on the tenancy's governance record, and reachable only
+  // inside the IMS module. Quality, safety and senior delivery roles author it;
+  // approval sits with top management and the quality and safety functions.
+  // Acknowledging a procedure ("read and understood") needs only read: it is a
+  // person's statement about themselves, not an edit to the system.
+  | 'MANAGEMENT_SYSTEM';
 
 export const ROLE_ACCOUNT_LAYER: Record<Role, AccountLayer> = {
   PLATFORM_ADMIN: 'PLATFORM_ADMIN',
@@ -344,6 +353,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     SITE_SERVICES: ['R'],
     BID_SERVICES: ['R'],
     PLANNING_CONSENT: ['R'],
+    MANAGEMENT_SYSTEM: ['R'],
   },
 
   // The business owner: everything anybody in the tenancy can do, and nothing
@@ -381,6 +391,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     SITE_SERVICES: ['R', 'A'],
     BID_SERVICES: ['R', 'A'],
     PLANNING_CONSENT: ['R', 'A'],
+    MANAGEMENT_SYSTEM: ['R', 'A'],
   },
 
   // Authors the concept and approves none of it. Every 'A' is absent
@@ -415,6 +426,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // wrote the answer, whether an agent or a person.
     BID_SERVICES: ['R', 'C', 'U', 'X', 'I'],
     PLANNING_CONSENT: ['R', 'C', 'U', 'I', 'X'],
+    MANAGEMENT_SYSTEM: ['R'],
   },
 
   // Contractor-side seniority: approves what the delivery team authors, and
@@ -446,6 +458,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     BILLING_ACU: ['R'],
     SITE_SERVICES: ['R', 'C', 'U', 'A'],
     PLANNING_CONSENT: ['R', 'A'],
+    MANAGEMENT_SYSTEM: ['R', 'C', 'U', 'A'],
   },
 
   // Approves what the QS authors, and receives the exception when the data
@@ -474,6 +487,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     SITE_SERVICES: ['R', 'U', 'A'],
     BID_SERVICES: ['R'],
     PLANNING_CONSENT: ['R', 'C', 'U'],
+    MANAGEMENT_SYSTEM: ['R', 'C', 'U'],
   },
 
   // The CDM 2015 statutory duty holder for the pre-construction phase. This is
@@ -502,6 +516,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // this only says the role may approve in the area at all.
     SITE_SERVICES: ['R', 'A'],
     PLANNING_CONSENT: ['R', 'C', 'U'],
+    MANAGEMENT_SYSTEM: ['R', 'C', 'U'],
   },
 
   EPC: {
@@ -531,6 +546,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // integrated test — the systems being energised are on their supply.
     SITE_SERVICES: ['R', 'C', 'U', 'A'],
     PLANNING_CONSENT: ['R', 'C', 'U', 'A'],
+    MANAGEMENT_SYSTEM: ['R'],
   },
 
   // QS authors commercial documents but must not approve the budget baseline
@@ -567,6 +583,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // as by act.
     BID_SERVICES: ['R', 'C', 'U', 'X', 'I'],
     PLANNING_CONSENT: ['R', 'C', 'U'],
+    MANAGEMENT_SYSTEM: ['R', 'C', 'U'],
   },
 
   PM: {
@@ -596,6 +613,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     BILLING_ACU: ['R'],
     SITE_SERVICES: ['R', 'C', 'U', 'A'],
     PLANNING_CONSENT: ['R', 'C', 'U'],
+    MANAGEMENT_SYSTEM: ['R', 'C', 'U'],
   },
 
   PLANNER: {
@@ -614,6 +632,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     AI_EXECUTION: ['R', 'X'],
     SITE_SERVICES: ['R'],
     PLANNING_CONSENT: ['R'],
+    MANAGEMENT_SYSTEM: ['R'],
   },
 
   // Safety approves RAMS but has no line of sight into Legal-L4 contract content.
@@ -633,6 +652,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // safety-critical hold point the safety function holds.
     SITE_SERVICES: ['R', 'C', 'U', 'A'],
     PLANNING_CONSENT: ['R'],
+    MANAGEMENT_SYSTEM: ['R', 'C', 'U', 'A'],
   },
 
   QAQC: {
@@ -649,6 +669,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // G2 off-site readiness and G4 install complete are quality's gates.
     SITE_SERVICES: ['R', 'C', 'U', 'A'],
     PLANNING_CONSENT: ['R'],
+    MANAGEMENT_SYSTEM: ['R', 'C', 'U', 'A'],
   },
 
   DESIGNER: {
@@ -663,6 +684,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // `A` because the designer is a named approver of the G1 design basis.
     SITE_SERVICES: ['R', 'A'],
     PLANNING_CONSENT: ['R', 'C', 'U'],
+    MANAGEMENT_SYSTEM: ['R'],
   },
 
   BIM: {
@@ -678,6 +700,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     AI_EXECUTION: ['R', 'X'],
     SITE_SERVICES: ['R'],
     PLANNING_CONSENT: ['R'],
+    MANAGEMENT_SYSTEM: ['R'],
   },
 
   /**
@@ -718,6 +741,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     AI_EXECUTION: ['R', 'X'],
     SITE_SERVICES: ['R', 'C', 'U', 'A'],
     PLANNING_CONSENT: ['R'],
+    MANAGEMENT_SYSTEM: ['R', 'C', 'U'],
   },
 
   SUPERVISOR: {
@@ -734,6 +758,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     // `A` because G3 releases a physical area to the works, and the person who
     // releases it is the one standing on it.
     SITE_SERVICES: ['R', 'C', 'U', 'A'],
+    MANAGEMENT_SYSTEM: ['R'],
   },
 
   // FM owns the asset after handover, and cannot reach back into tender baselines.
@@ -747,6 +772,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     SITE_SERVICES: ['R', 'C', 'U', 'A', 'X'],
+    MANAGEMENT_SYSTEM: ['R'],
   },
 
   // Supplier sees only its own RFQ and its own submission (enforced by ABAC).
@@ -785,6 +811,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R'],
     SITE_SERVICES: ['R'],
     PLANNING_CONSENT: ['R'],
+    MANAGEMENT_SYSTEM: ['R'],
   },
   REGULATOR: {
     PROJECT_SETUP: ['R'],

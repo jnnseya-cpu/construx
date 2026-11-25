@@ -189,6 +189,16 @@ import * as planninggates from '../domain/planning/gates.ts';
 import * as planningregister from '../domain/planning/register.ts';
 import * as planningstudies from '../domain/planning/studies.ts';
 import * as planningagents from '../domain/planning/agents.ts';
+import * as imsCore from '../domain/ims/ims.ts';
+import * as imsDocuments from '../domain/ims/documents.ts';
+import * as imsOverview from '../domain/ims/overview.ts';
+import * as imsAudits from '../domain/ims/audits.ts';
+import * as imsActions from '../domain/ims/actions.ts';
+import * as imsRegisters from '../domain/ims/registers.ts';
+import * as imsMonitoring from '../domain/ims/monitoring.ts';
+import * as riddor from '../domain/riddor.ts';
+import * as imsReview from '../domain/ims/review.ts';
+import * as imsAgents from '../domain/ims/agents.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -740,6 +750,17 @@ function authoriseTenant(ctx: RequestContext, area: CapabilityArea, code: Permis
     throw new ForbiddenError(decision.reason ?? 'Not permitted', 'ACCESS_DENIED');
   }
   return actor;
+}
+
+/**
+ * The company's people as the management system reads them: who is active and
+ * in which roles, for who must acknowledge a procedure, who holds which
+ * competence and who owns what. Names and roles only — never an address.
+ */
+function imsPeople(platform: Platform, ctx: RequestContext): imsCore.Person[] {
+  const actor = auth(ctx);
+  externalsRefused(platform, actor, 'the management system');
+  return platform.users(actor.tenantId).map((user) => ({ id: user.id, name: user.name, roles: user.roles, status: user.status }));
 }
 
 function tenantContext(platform: Platform, ctx: RequestContext) {
@@ -27981,6 +28002,29 @@ export const ROUTES: Route[] = [
       // first had made the one honest path impossible.
       if (!projectId) {
         const actor = auth(ctx);
+        /*
+         * A company-level AI action — one declaring `quoteScope: 'TENANT'` — is
+         * quoted against the tenancy's governance project, which is where it
+         * runs and whose wallet it spends. Without this the quote refused every
+         * such action ("quoted against a project"), so the console's submit
+         * stayed disabled waiting for a price that never came: Bid-On's agents
+         * and the management system's alike were unreachable from the screen.
+         */
+        if (matched.route.quoteScope === 'TENANT' && !actor.roles.includes('PLATFORM_ADMIN')) {
+          const tenantCtx = tenantContext(platform, ctx);
+          authorise(tenantCtx, 'AI_EXECUTION', 'X');
+          const inputText = matched.route.ai.quoteInputText?.(tenantCtx, new URLSearchParams(input.path.split('?')[1] ?? ''));
+          const passes = (matched.route.ai.passes ?? 1) * (input.repeat ?? 1);
+          return platform.orchestrator.quote({
+            ...(inputText ? { inputText } : {}),
+            capability: matched.route.ai.capability,
+            engine: matched.route.ai.engine,
+            taskType: matched.route.ai.taskType,
+            ...(passes > 1 ? { passes } : {}),
+            wallet: tenantCtx.wallet,
+            projectId: tenantCtx.projectId,
+          });
+        }
         if (!actor.roles.includes('PLATFORM_ADMIN')) {
           throw new DomainError('QUOTE_SCOPE', 'AI actions are quoted against a project', 400);
         }
@@ -29123,6 +29167,642 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => planningagents.decideProposal(projectContext(platform, ctx), ctx.params.proposalId as string, body<{ decision: string; note?: string }>(ctx)),
+  },
+  // ------------------------------------------------------------------ integrated management system
+  {
+    method: 'GET',
+    pattern: '/v1/ims',
+    readOnly: true,
+    description: 'The company’s management system: its controlled documents with what is in force, who owns each, its review date and who has not yet acknowledged it; the settings; the clause catalogue of ISO 9001, 14001 and 45001',
+    handler: (platform, ctx) => imsOverview.imsOverview(tenantContext(platform, ctx), imsPeople(platform, ctx)),
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/ims/settings',
+    description: 'The decisions the standards leave to the company: how often documents are reviewed and suppliers evaluated, when an environmental aspect is significant, when a supplier is put to review, how far ahead expiring competence is shown',
+    schema: {
+      type: 'object',
+      required: ['note'],
+      properties: {
+        documentReviewMonths: { type: 'integer', minimum: 1, maximum: 60 },
+        aspectSignificanceThreshold: { type: 'integer', minimum: 1, maximum: 25 },
+        supplierEvaluationMonths: { type: 'integer', minimum: 1, maximum: 36 },
+        supplierReviewBelow: { type: 'number', minimum: 1, maximum: 5 },
+        competenceWarningDays: { type: 'integer', minimum: 1, maximum: 365 },
+        note: { type: 'string', minLength: 5, maxLength: 1000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsCore.setSettings(tenantContext(platform, ctx), body<Parameters<typeof imsCore.setSettings>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents',
+    description: 'Draft a controlled document — a policy, manual, procedure, work instruction, form or plan — with the clauses it meets, its owner and the roles it is issued to. It is in force only once somebody else approves it',
+    schema: {
+      type: 'object',
+      required: ['type', 'title', 'standards', 'ownerId'],
+      properties: {
+        type: { type: 'string', enum: ['POLICY', 'MANUAL', 'PROCEDURE', 'WORK_INSTRUCTION', 'FORM', 'PLAN'] },
+        title: { type: 'string', minLength: 3, maxLength: 200 },
+        purpose: { type: 'string', maxLength: 4000 },
+        standards: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } },
+        clauses: { type: 'array', maxItems: 80, items: { type: 'string' } },
+        ownerId: { type: 'string', minLength: 1, maxLength: 200 },
+        distribution: { type: 'array', maxItems: 30, items: { type: 'string' } },
+        content: { type: 'string', maxLength: 100000 },
+        changeSummary: { type: 'string', maxLength: 1000 },
+        file: { type: 'object', required: ['hash', 'filename'], properties: { hash: { type: 'string', minLength: 64, maxLength: 71 }, filename: { type: 'string', minLength: 1, maxLength: 300 } }, additionalProperties: false },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsDocuments.draftDocument(tenantContext(platform, ctx), body<imsDocuments.DocumentInput>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/ims/documents/:documentId',
+    readOnly: true,
+    description: 'One controlled document with the text of every revision, who drafted and approved each, its reviews and who has acknowledged the revision in force',
+    handler: (platform, ctx) => imsOverview.documentDetail(tenantContext(platform, ctx), ctx.params.documentId as string, imsPeople(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/redraft',
+    description: 'Draft a change to a controlled document, with what changes and why. One draft at a time; the revision in force stays in force until the draft is approved',
+    schema: {
+      type: 'object',
+      required: ['changeSummary'],
+      properties: {
+        title: { type: 'string', minLength: 3, maxLength: 200 },
+        purpose: { type: 'string', maxLength: 4000 },
+        standards: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } },
+        clauses: { type: 'array', maxItems: 80, items: { type: 'string' } },
+        ownerId: { type: 'string', minLength: 1, maxLength: 200 },
+        distribution: { type: 'array', maxItems: 30, items: { type: 'string' } },
+        content: { type: 'string', maxLength: 100000 },
+        changeSummary: { type: 'string', maxLength: 1000 },
+        file: { type: 'object', required: ['hash', 'filename'], properties: { hash: { type: 'string', minLength: 64, maxLength: 71 }, filename: { type: 'string', minLength: 1, maxLength: 300 } }, additionalProperties: false },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsDocuments.redraftDocument(tenantContext(platform, ctx), ctx.params.documentId as string, body<Parameters<typeof imsDocuments.redraftDocument>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/approve',
+    description: 'Approve the draft: it comes into force, the revision it replaces is superseded, its review date is set, and everyone it is issued to must acknowledge it again. Refused to the person who drafted it',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsDocuments.approveDocument(tenantContext(platform, ctx), ctx.params.documentId as string, body<{ note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/return',
+    description: 'Send the draft back with what has to change; it stays a draft',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsDocuments.returnDocument(tenantContext(platform, ctx), ctx.params.documentId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/review',
+    description: 'Record a periodic review that found the document still right; its next review date is set from today',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsDocuments.confirmReview(tenantContext(platform, ctx), ctx.params.documentId as string, body<{ note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/withdraw',
+    description: 'Withdraw a controlled document; it stays on the record, withdrawn, with its reason',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsDocuments.withdrawDocument(tenantContext(platform, ctx), ctx.params.documentId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/acknowledge',
+    description: 'Read and understood: your own acknowledgement of the revision in force',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsDocuments.acknowledgeDocument(tenantContext(platform, ctx), ctx.params.documentId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/audits',
+    description: 'Plan an internal audit against clauses, procedures and projects, with a lead auditor independent of the work audited',
+    schema: {
+      type: 'object',
+      required: ['title', 'standards', 'clauses', 'plannedOn', 'leadAuditorId'],
+      properties: {
+        title: { type: 'string', minLength: 3, maxLength: 200 },
+        standards: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } },
+        clauses: { type: 'array', minItems: 1, maxItems: 80, items: { type: 'string' } },
+        documentIds: { type: 'array', maxItems: 50, items: { type: 'string' } },
+        projectIds: { type: 'array', maxItems: 50, items: { type: 'string' } },
+        plannedOn: { type: 'string', minLength: 10, maxLength: 10 },
+        leadAuditorId: { type: 'string', minLength: 1 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsAudits.planAudit(tenantContext(platform, ctx), imsPeople(platform, ctx), body<Parameters<typeof imsAudits.planAudit>[2]>(ctx)),
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/ims/audits/:auditId/checklist',
+    description: 'The questions the auditor works through, each against a clause or document in scope',
+    schema: {
+      type: 'object',
+      required: ['items'],
+      properties: {
+        items: { type: 'array', minItems: 1, maxItems: 200, items: { type: 'object', required: ['question'], properties: { question: { type: 'string', minLength: 5, maxLength: 1000 }, clauseId: { type: 'string' }, documentId: { type: 'string' } }, additionalProperties: false } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsAudits.setChecklist(tenantContext(platform, ctx), ctx.params.auditId as string, body<{ items: imsAudits.ChecklistItem[] }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/audits/:auditId/start',
+    description: 'Start the audit (the lead auditor)',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsAudits.startAudit(tenantContext(platform, ctx), ctx.params.auditId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/audits/:auditId/findings',
+    description: 'Record a finding against a clause (the lead auditor). A major or minor nonconformity raises its corrective action with an owner and a due date',
+    schema: {
+      type: 'object',
+      required: ['grade', 'clauseId', 'statement', 'evidence'],
+      properties: {
+        grade: { type: 'string', enum: ['MAJOR_NC', 'MINOR_NC', 'OBSERVATION', 'OPPORTUNITY'] },
+        clauseId: { type: 'string', minLength: 1 },
+        documentId: { type: 'string' },
+        projectId: { type: 'string' },
+        statement: { type: 'string', minLength: 10, maxLength: 4000 },
+        evidence: { type: 'string', minLength: 5, maxLength: 4000 },
+        actionOwnerId: { type: 'string' },
+        actionDueOn: { type: 'string', minLength: 10, maxLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsAudits.recordFinding(tenantContext(platform, ctx), ctx.params.auditId as string, body<imsAudits.FindingInput>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/audits/:auditId/complete',
+    description: 'Complete the audit with its summary and conclusion (the lead auditor)',
+    schema: { type: 'object', required: ['summary', 'conclusion'], properties: { summary: { type: 'string', minLength: 10, maxLength: 8000 }, conclusion: { type: 'string', minLength: 5, maxLength: 4000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsAudits.completeAudit(tenantContext(platform, ctx), ctx.params.auditId as string, body<{ summary: string; conclusion: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/audits/:auditId/cancel',
+    description: 'Cancel an audit that has no findings, with the reason',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsAudits.cancelAudit(tenantContext(platform, ctx), ctx.params.auditId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/actions',
+    description: 'Raise a corrective or improvement action from where the problem was found — an incident or NCR on any project, a management review, a compliance evaluation, a supplier, a complaint — with its owner and due date',
+    schema: {
+      type: 'object',
+      required: ['kind', 'source', 'standards', 'description', 'ownerId', 'dueOn'],
+      properties: {
+        kind: { type: 'string', enum: ['CORRECTIVE', 'IMPROVEMENT'] },
+        source: {
+          type: 'object',
+          required: ['kind'],
+          properties: { kind: { type: 'string', enum: ['AUDIT_FINDING', 'INCIDENT', 'NCR', 'MANAGEMENT_REVIEW', 'OBLIGATION', 'SUPPLIER', 'COMPLAINT', 'OTHER'] }, refType: { type: 'string' }, refId: { type: 'string' }, label: { type: 'string', maxLength: 300 } },
+          additionalProperties: false,
+        },
+        standards: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } },
+        description: { type: 'string', minLength: 10, maxLength: 4000 },
+        correction: { type: 'string', maxLength: 4000 },
+        ownerId: { type: 'string', minLength: 1 },
+        dueOn: { type: 'string', minLength: 10, maxLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsActions.raiseAction(tenantContext(platform, ctx), body<imsActions.RaiseActionInput>(ctx)),
+  },
+  {
+    method: 'PATCH',
+    pattern: '/v1/ims/actions/:actionId',
+    description: 'The investigation of an open action: the correction, the root cause, the actions planned on it, the owner and the due date',
+    schema: {
+      type: 'object',
+      properties: {
+        correction: { type: 'string', maxLength: 4000 },
+        rootCause: { type: 'string', minLength: 10, maxLength: 4000 },
+        plannedActions: { type: 'string', minLength: 10, maxLength: 4000 },
+        ownerId: { type: 'string', minLength: 1 },
+        dueOn: { type: 'string', minLength: 10, maxLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsActions.updateAction(tenantContext(platform, ctx), ctx.params.actionId as string, body<Parameters<typeof imsActions.updateAction>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/actions/:actionId/implement',
+    description: 'Record that the action was done. A corrective action needs its root cause and planned actions first',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 4000 }, evidenceHash: { type: 'string', minLength: 64, maxLength: 71 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsActions.implementAction(tenantContext(platform, ctx), ctx.params.actionId as string, body<{ note: string; evidenceHash?: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/actions/:actionId/verify',
+    description: 'Verify effectiveness: effective closes it, not effective reopens it. Refused to the person who implemented it',
+    schema: { type: 'object', required: ['effective', 'note'], properties: { effective: { type: 'boolean' }, note: { type: 'string', minLength: 5, maxLength: 4000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsActions.verifyAction(tenantContext(platform, ctx), ctx.params.actionId as string, body<{ effective: boolean; note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/aspects',
+    description: 'Record an environmental aspect of an activity, the impact it can have and under what conditions, scored severity × likelihood, with its controls',
+    schema: {
+      type: 'object',
+      required: ['activity', 'aspect', 'impact', 'condition', 'severity', 'likelihood', 'controls'],
+      properties: {
+        activity: { type: 'string', minLength: 3, maxLength: 300 },
+        aspect: { type: 'string', minLength: 3, maxLength: 300 },
+        impact: { type: 'string', minLength: 3, maxLength: 500 },
+        condition: { type: 'string', enum: ['NORMAL', 'ABNORMAL', 'EMERGENCY'] },
+        severity: { type: 'integer', minimum: 1, maximum: 5 },
+        likelihood: { type: 'integer', minimum: 1, maximum: 5 },
+        legalDriver: { type: 'boolean' },
+        controls: { type: 'string', minLength: 5, maxLength: 2000 },
+        documentIds: { type: 'array', maxItems: 20, items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsRegisters.recordAspect(tenantContext(platform, ctx), body<imsRegisters.AspectInput>(ctx)),
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/ims/aspects/:aspectId',
+    description: 'Reassess an environmental aspect',
+    schema: {
+      type: 'object',
+      required: ['activity', 'aspect', 'impact', 'condition', 'severity', 'likelihood', 'controls'],
+      properties: {
+        activity: { type: 'string', minLength: 3, maxLength: 300 },
+        aspect: { type: 'string', minLength: 3, maxLength: 300 },
+        impact: { type: 'string', minLength: 3, maxLength: 500 },
+        condition: { type: 'string', enum: ['NORMAL', 'ABNORMAL', 'EMERGENCY'] },
+        severity: { type: 'integer', minimum: 1, maximum: 5 },
+        likelihood: { type: 'integer', minimum: 1, maximum: 5 },
+        legalDriver: { type: 'boolean' },
+        controls: { type: 'string', minLength: 5, maxLength: 2000 },
+        documentIds: { type: 'array', maxItems: 20, items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsRegisters.reviseAspect(tenantContext(platform, ctx), ctx.params.aspectId as string, body<imsRegisters.AspectInput>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/aspects/:aspectId/retire',
+    description: 'Retire an aspect that no longer applies, with the reason',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsRegisters.retireAspect(tenantContext(platform, ctx), ctx.params.aspectId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/obligations',
+    description: 'Add a legal or other requirement to the register — from the legislation list or by its title — with how it applies and how the company complies. Due for evaluation from the day it is added',
+    schema: {
+      type: 'object',
+      required: ['requirement', 'applicability', 'howComplied'],
+      properties: {
+        standards: { type: 'array', maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } },
+        catalogueKey: { type: 'string' },
+        title: { type: 'string', maxLength: 300 },
+        extent: { type: 'string', maxLength: 100 },
+        requirement: { type: 'string', minLength: 10, maxLength: 2000 },
+        applicability: { type: 'string', minLength: 10, maxLength: 2000 },
+        howComplied: { type: 'string', minLength: 10, maxLength: 2000 },
+        documentIds: { type: 'array', maxItems: 20, items: { type: 'string' } },
+        evaluationMonths: { type: 'integer', minimum: 1, maximum: 36 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsRegisters.recordObligation(tenantContext(platform, ctx), body<imsRegisters.ObligationInput>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/obligations/:obligationId/evaluations',
+    description: 'Evaluate compliance with a requirement. Partial or non-compliant raises a corrective action with its owner and due date',
+    schema: {
+      type: 'object',
+      required: ['result', 'note'],
+      properties: { result: { type: 'string', enum: ['COMPLIANT', 'PARTIAL', 'NON_COMPLIANT'] }, note: { type: 'string', minLength: 10, maxLength: 4000 }, actionOwnerId: { type: 'string' }, actionDueOn: { type: 'string', minLength: 10, maxLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsRegisters.evaluateObligation(tenantContext(platform, ctx), ctx.params.obligationId as string, body<Parameters<typeof imsRegisters.evaluateObligation>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/obligations/:obligationId/withdraw',
+    description: 'Withdraw a requirement that no longer applies, with the reason',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsRegisters.withdrawObligation(tenantContext(platform, ctx), ctx.params.obligationId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/objectives',
+    description: 'Set an objective: what will be achieved, how it is measured, the target, the resources, who and by when',
+    schema: {
+      type: 'object',
+      required: ['standard', 'objective', 'measure', 'target', 'ownerId', 'dueOn'],
+      properties: {
+        standard: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] },
+        objective: { type: 'string', minLength: 10, maxLength: 1000 },
+        measure: { type: 'string', minLength: 5, maxLength: 500 },
+        target: { type: 'string', minLength: 1, maxLength: 200 },
+        baseline: { type: 'string', maxLength: 200 },
+        resources: { type: 'string', maxLength: 1000 },
+        ownerId: { type: 'string', minLength: 1 },
+        dueOn: { type: 'string', minLength: 10, maxLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsRegisters.setObjective(tenantContext(platform, ctx), body<imsRegisters.ObjectiveInput>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/objectives/:objectiveId/progress',
+    description: 'Record a measured value against an objective, with where it comes from',
+    schema: { type: 'object', required: ['value', 'note'], properties: { value: { type: 'string', minLength: 1, maxLength: 200 }, note: { type: 'string', minLength: 3, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsRegisters.recordProgress(tenantContext(platform, ctx), ctx.params.objectiveId as string, body<{ value: string; note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/objectives/:objectiveId/close',
+    description: 'Close an objective as achieved or not, with the final figure',
+    schema: { type: 'object', required: ['achieved', 'note'], properties: { achieved: { type: 'boolean' }, note: { type: 'string', minLength: 5, maxLength: 2000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsRegisters.closeObjective(tenantContext(platform, ctx), ctx.params.objectiveId as string, body<{ achieved: boolean; note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/suppliers/:supplierId/evaluations',
+    description: 'Evaluate how an approved supplier performed — quality, health and safety, environment, programme, commercial, each 1 to 5 — with what the scores rest on',
+    schema: {
+      type: 'object',
+      required: ['scores', 'comments'],
+      properties: {
+        projectId: { type: 'string' },
+        scores: {
+          type: 'object',
+          required: ['quality', 'safety', 'environment', 'programme', 'commercial'],
+          properties: { quality: { type: 'integer', minimum: 1, maximum: 5 }, safety: { type: 'integer', minimum: 1, maximum: 5 }, environment: { type: 'integer', minimum: 1, maximum: 5 }, programme: { type: 'integer', minimum: 1, maximum: 5 }, commercial: { type: 'integer', minimum: 1, maximum: 5 } },
+          additionalProperties: false,
+        },
+        comments: { type: 'string', minLength: 10, maxLength: 4000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsMonitoring.evaluateSupplier(tenantContext(platform, ctx), { supplierId: ctx.params.supplierId as string, ...body<{ projectId?: string; scores: imsMonitoring.Scores; comments: string }>(ctx) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/competence/requirements',
+    description: 'Require a competence of a role, for the competence matrix',
+    schema: { type: 'object', required: ['role', 'competence'], properties: { role: { type: 'string' }, competence: { type: 'string', minLength: 2, maxLength: 200 }, note: { type: 'string', maxLength: 500 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsMonitoring.requireCompetence(tenantContext(platform, ctx), body<{ role: string; competence: string; note?: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/competence/requirements/:requirementId/remove',
+    description: 'Stop requiring a competence of a role, with the reason',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsMonitoring.removeCompetenceRequirement(tenantContext(platform, ctx), ctx.params.requirementId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/competence/records',
+    description: 'Record a competence a person holds, with its certificate (hashed in the browser; the file follows) and expiry, for the competence matrix',
+    schema: {
+      type: 'object',
+      required: ['personId', 'competence', 'issuedOn', 'expiresOn', 'certificateHash'],
+      properties: { personId: { type: 'string', minLength: 1 }, competence: { type: 'string', minLength: 2, maxLength: 200 }, issuedOn: { type: 'string', minLength: 10, maxLength: 10 }, expiresOn: { type: 'string', minLength: 10, maxLength: 10 }, certificateHash: { type: 'string', minLength: 64, maxLength: 71 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsMonitoring.recordHolding(tenantContext(platform, ctx), imsPeople(platform, ctx), body<Parameters<typeof imsMonitoring.recordHolding>[2]>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/ims/position',
+    readOnly: true,
+    description: 'The company-wide position for a period — incidents and RIDDOR, NCRs and corrective actions, audits, compliance, aspects, objectives, suppliers, competence and documents — counted from the records across every project',
+    handler: (platform, ctx) => {
+      const to = ctx.query.get('to') ?? new Date().toISOString().slice(0, 10);
+      const from = ctx.query.get('from') ?? imsCore.addMonths(to, -12);
+      return imsReview.companyPosition(tenantContext(platform, ctx), imsPeople(platform, ctx), { from, to });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/reviews',
+    description: 'Open a management review for a period, chaired by top management: the company position for the period is frozen as its inputs, with its hash',
+    schema: {
+      type: 'object',
+      required: ['periodFrom', 'periodTo', 'heldOn', 'chairId'],
+      properties: {
+        periodFrom: { type: 'string', minLength: 10, maxLength: 10 },
+        periodTo: { type: 'string', minLength: 10, maxLength: 10 },
+        heldOn: { type: 'string', minLength: 10, maxLength: 10 },
+        chairId: { type: 'string', minLength: 1 },
+        attendees: { type: 'array', maxItems: 40, items: { type: 'string', maxLength: 200 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsReview.openReview(tenantContext(platform, ctx), imsPeople(platform, ctx), body<Parameters<typeof imsReview.openReview>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/reviews/:reviewId/refresh',
+    description: 'Freeze the company position again as the review’s inputs, while it is a draft',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsReview.refreshInputs(tenantContext(platform, ctx), imsPeople(platform, ctx), ctx.params.reviewId as string),
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/ims/reviews/:reviewId/minutes',
+    description: 'Minute what the review concluded about one of its inputs',
+    schema: { type: 'object', required: ['key', 'text'], properties: { key: { type: 'string', minLength: 1 }, text: { type: 'string', minLength: 10, maxLength: 8000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsReview.minuteInput(tenantContext(platform, ctx), ctx.params.reviewId as string, body<{ key: string; text: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/reviews/:reviewId/outputs',
+    description: 'Record a decision or action of the review — an improvement, a change to the system, a resource need. One given an owner and a date raises its action',
+    schema: {
+      type: 'object',
+      required: ['kind', 'text'],
+      properties: {
+        kind: { type: 'string', enum: ['IMPROVEMENT', 'CHANGE', 'RESOURCE', 'DECISION'] },
+        text: { type: 'string', minLength: 10, maxLength: 4000 },
+        action: { type: 'object', required: ['ownerId', 'dueOn', 'standards'], properties: { ownerId: { type: 'string', minLength: 1 }, dueOn: { type: 'string', minLength: 10, maxLength: 10 }, standards: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } } }, additionalProperties: false },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsReview.addOutput(tenantContext(platform, ctx), ctx.params.reviewId as string, body<Parameters<typeof imsReview.addOutput>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/reviews/:reviewId/approve',
+    description: 'Approve the review (top management, not the person who prepared it), once every input is minuted and an output recorded. It does not change afterwards',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 2000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsReview.approveReview(tenantContext(platform, ctx), ctx.params.reviewId as string, body<{ note: string }>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/ims/agents/estimate',
+    readOnly: true,
+    description: 'What each management system agent costs to run, before it starts — the quote every IMS agent route is shown against',
+    handler: (platform, ctx) => {
+      const engineCtx = tenantContext(platform, ctx);
+      imsCore.guard(engineCtx, 'R');
+      const tasks = ['ims_procedure', 'ims_clause_mapping', 'ims_audit_checklist', 'ims_root_cause', 'ims_review_minutes', 'ims_aspects', 'ims_obligations', 'ims_objectives'];
+      return { estimates: tasks.map((taskType) => platform.orchestrator.quote({ capability: 'REASONING', engine: 'RISK_SAFETY', taskType, wallet: engineCtx.wallet, projectId: engineCtx.projectId })) };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/ims/agents/proposals',
+    readOnly: true,
+    description: 'What the management system agents proposed, what was accepted or rejected and by whom, and the share of the work they carried',
+    handler: (platform, ctx) => imsAgents.agentShare(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/agents/procedure',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_procedure', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The procedure agent: a policy — or a brief — turned into a working procedure, with the clauses it meets and the roles it is issued to, for a person to accept as a draft',
+    schema: {
+      type: 'object',
+      required: ['title', 'standards'],
+      properties: {
+        title: { type: 'string', minLength: 3, maxLength: 200 },
+        type: { type: 'string', enum: ['POLICY', 'MANUAL', 'PROCEDURE', 'WORK_INSTRUCTION', 'FORM', 'PLAN'] },
+        standards: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } },
+        policyDocumentId: { type: 'string' },
+        brief: { type: 'string', maxLength: 8000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsAgents.draftProcedure(tenantContext(platform, ctx), body<Parameters<typeof imsAgents.draftProcedure>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/documents/:documentId/agents/clauses',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_clause_mapping', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The clause-mapping agent: which clauses of its standards a document meets, each with what meets it',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.mapClauses(tenantContext(platform, ctx), { documentId: ctx.params.documentId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/audits/:auditId/agents/checklist',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_audit_checklist', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The checklist agent: the questions and records an audit works through, against its clauses and the procedures it samples',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.draftChecklist(tenantContext(platform, ctx), { auditId: ctx.params.auditId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/actions/:actionId/agents/root-cause',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_root_cause', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The root-cause agent: the likely cause of a problem through the system, and the actions on it, for a person to confirm',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.proposeRootCause(tenantContext(platform, ctx), { actionId: ctx.params.actionId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/reviews/:reviewId/agents/minutes',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_review_minutes', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The review agent: a minute for each input of a management review from its frozen figures, and the decisions they suggest',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.draftReviewMinutes(tenantContext(platform, ctx), { reviewId: ctx.params.reviewId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/agents/aspects',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_aspects', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The aspects agent: the environmental aspects of the company’s activities, with impacts, conditions, scores and controls',
+    schema: { type: 'object', required: ['activities'], properties: { activities: { type: 'string', minLength: 10, maxLength: 8000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.proposeAspects(tenantContext(platform, ctx), body<{ activities: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/agents/obligations',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_obligations', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The legal-register agent: which requirements apply to the company’s activities, chosen only from the legislation list, with how each applies and how the company complies',
+    schema: { type: 'object', properties: { activities: { type: 'string', maxLength: 8000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.proposeObligations(tenantContext(platform, ctx), body<{ activities?: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/agents/objectives',
+    ai: { engine: 'RISK_SAFETY', taskType: 'ims_objectives', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description: 'The objectives agent: measurable quality, environmental and OH&S objectives for the year ahead, each from a figure in the company position',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.proposeObjectives(tenantContext(platform, ctx), imsPeople(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/agents/proposals/:proposalId/decide',
+    description: 'Accept or reject an agent’s proposal, with any edits. Accepting runs the ordinary command under your own authority; rejecting changes nothing',
+    schema: {
+      type: 'object',
+      required: ['decision'],
+      properties: {
+        decision: { type: 'string', enum: ['ACCEPT', 'REJECT'] },
+        note: { type: 'string', maxLength: 1000 },
+        ownerId: { type: 'string' },
+        edits: { type: 'object', additionalProperties: { type: 'string', maxLength: 100000 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsAgents.decideProposal(tenantContext(platform, ctx), imsPeople(platform, ctx), ctx.params.proposalId as string, body<Parameters<typeof imsAgents.decideProposal>[3]>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/safety/riddor',
+    readOnly: true,
+    description: 'The RIDDOR clock: every reportable incident on the project, the kind of report, when it is due and whether it was made',
+    handler: (platform, ctx) => riddor.riddorClock(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/safety/incidents/:incidentId/riddor-classification',
+    description: 'Classify a reportable incident under RIDDOR — death, specified injury, injury to somebody not at work taken to hospital, over-seven-day incapacitation, dangerous occurrence or occupational disease — which sets the date the report is due',
+    schema: {
+      type: 'object',
+      required: ['kind', 'note'],
+      properties: { kind: { type: 'string', enum: ['DEATH', 'SPECIFIED_INJURY', 'NON_WORKER_HOSPITAL', 'OVER_SEVEN_DAY', 'DANGEROUS_OCCURRENCE', 'OCCUPATIONAL_DISEASE'] }, diagnosedOn: { type: 'string', minLength: 10, maxLength: 10 }, note: { type: 'string', minLength: 10, maxLength: 2000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => riddor.classifyRiddor(projectContext(platform, ctx), ctx.params.incidentId as string, body<{ kind: string; diagnosedOn?: string; note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/safety/incidents/:incidentId/riddor-report',
+    description: 'Record the report made to the enforcing authority: the date, the reference it issued and how it was made. A report after its due date is recorded as late, with the reason',
+    schema: {
+      type: 'object',
+      required: ['reportedOn', 'hseReference', 'method'],
+      properties: { reportedOn: { type: 'string', minLength: 10, maxLength: 10 }, hseReference: { type: 'string', minLength: 3, maxLength: 100 }, method: { type: 'string', enum: ['ONLINE', 'TELEPHONE'] }, lateReason: { type: 'string', maxLength: 2000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => riddor.recordRiddorReport(projectContext(platform, ctx), ctx.params.incidentId as string, body<{ reportedOn: string; hseReference: string; method: string; lateReason?: string }>(ctx)),
   },
   {
     method: 'GET',

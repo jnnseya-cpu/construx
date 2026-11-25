@@ -35668,3 +35668,285 @@ horizontal scroll at phone width.
   not of effort.
 - **Q1 and Q2 were committed without this section** (commit `88a11aa`); this
   section records them.
+
+## 2026-11 CONSTRUX Integrated Management System (ISO 9001 / 14001 / 45001)
+
+The company's management system, held once for the whole business. A private
+module (`IMS`, granted per company by the operator like Planning) behind a new
+permission area, `MANAGEMENT_SYSTEM`. Every IMS record is written on the
+tenancy's governance record — where the supplier register already lives — and
+the domain refuses to write one on a delivery project (`IMS_COMPANY_RECORD`).
+It reads the delivery records every project keeps rather than copying them.
+
+**Where it lives.** `backend/src/domain/ims/` (`clauses.ts`, `ims.ts`,
+`documents.ts`, `overview.ts`), `backend/src/agents/ims.ts`,
+`frontend/pages/ims.js` (sidebar: Assure → Management System, company-level),
+routes under `/v1/ims/…`.
+
+**Who may do what.** Read: every delivery role, the enterprise administrator
+and viewers. Author (C/U): PM, QS, commercial manager, principal designer,
+construction manager, project director, safety and QA/QC. Approve (A): the
+owner, the executive, the project director, safety and QA/QC. Acknowledging a
+procedure needs only read — it is a person's statement about themselves.
+
+### Increment 1: the clause catalogue and the controlled documents (built)
+
+- **Clause catalogue**: the harmonised structure of ISO 9001:2015, ISO
+  14001:2015 and ISO 45001:2018 — clause numbers and headings only, never the
+  standards' requirement text — so one procedure can be mapped to 7.5 in all
+  three at once.
+- **Controlled documents**: policy, manual, procedure, work instruction, form,
+  plan; each numbered in its own series (POL-001, PRO-001…), with its owner, the
+  standards and clauses it meets (a clause outside its standards is refused),
+  the roles it is issued to, and its text or an attached file (hashed and
+  registered as evidence). **A revision is in force only once somebody other than
+  its author approves it** (`IMS_APPROVAL_SAME_PERSON`); a return keeps it a
+  draft with the reason; one draft at a time, redrafted in place; approval
+  supersedes the revision in force and sets the review date.
+- **Read and understood**: each active person in the roles a document is issued
+  to acknowledges each revision in force, once; the register shows who has not;
+  a new revision asks everyone again.
+- **Periodic review**: a review that finds it right is recorded and moves the
+  date; one that finds it wrong is a redraft. **Withdrawal** keeps it on the
+  record with its reason.
+- **Settings**: the decisions the standards leave to the company (review
+  interval, aspect significance threshold, supplier evaluation interval and
+  review score, competence warning days) start from stated values and are
+  changed by an approver with a reason, within limits.
+- **The watch agent** (`AGT-IMS-WATCH`, observe-only): documents past review,
+  drafts waiting more than 30 days, and revisions in force for over 14 days that
+  nobody has acknowledged.
+
+**Verified.** `npm test` 8,731 pass, typecheck clean. `tests/imsdocuments.test.ts` (14 tests). Walked in a browser on a
+fresh journal: QA/QC drafts PRO-001, their own approval refused; the safety lead
+returns it; redrafted and approved; the owner reads it; settings changed with a
+reason; the read-only planner sees no controls; no page errors; no horizontal
+scroll at phone width.
+
+### Increment 2: internal audit and corrective action (built)
+
+`backend/src/domain/ims/audits.ts`, `actions.ts`; `frontend/pages/imsaudits.js`
+(the Audits and Actions tabs).
+
+- **Audit programme** (9.2): each audit against clauses of the standards
+  audited, the procedures sampled and the projects visited, with a planned date
+  and a lead auditor. **Objectivity is enforced**: an auditor who owns, drafted
+  or approved the revision in force of an audited document is refused
+  (`IMS_AUDITOR_NOT_INDEPENDENT`), as is one whose roles may not record in the
+  system. A checklist is set within scope. Only the lead auditor starts the
+  audit, records findings and completes it.
+- **Findings** graded major nonconformity, minor nonconformity, observation or
+  opportunity, against a clause, with what was seen. **A nonconformity raises its
+  corrective action as it is recorded**, with an owner and a due date, so no audit
+  closes with a nonconformity nobody is acting on. A completed audit takes no
+  more findings; an audit with findings cannot be cancelled.
+- **Clause coverage**: clause by clause for every standard in use, when it was
+  last audited and when it is next planned; one not audited in twelve months and
+  not planned is reported as not covered.
+- **Corrective and improvement actions** (10.2), raised from an audit finding,
+  an incident or NCR on any of the company's projects, a supplier, a management
+  review, a compliance evaluation, a complaint or anything else; a named source
+  must exist in this company (another company's is answered as not found). The
+  investigation records the correction, the root cause and the actions on it; a
+  corrective action **cannot be marked done without a root cause**; effectiveness
+  is **verified by somebody other than the person who did it**, and "not
+  effective" reopens it with the history kept.
+- **The company list of incidents, NCRs and suppliers** an action can be raised
+  from carries only reference, project, category or severity, date and status —
+  never the description, the location or the people involved — so a reader of the
+  management system who is not on a project does not see its incident detail.
+- **The watch agent** also reports actions past their due date and audits not
+  started on their planned date.
+
+**Verified.** `npm test` 8,747 pass, typecheck clean. `tests/imsaudits.test.ts` (12 tests);
+`tests/consoleforms.test.ts` now also resolves PATCH paths, which it had not
+checked. Walked in a browser on a fresh journal: the quality lead's plan naming themselves as auditor of their own
+procedure refused; planned with the PM as lead auditor; checklist, start, a
+nonconformity refused without an action owner then recorded with one, the audit
+completed; the corrective action refused as done before its root cause, then
+investigated, done, and verified effective by the PM; an action raised from a
+complaint; no page errors; no horizontal scroll at phone width.
+
+### Increment 3: the environmental and legal registers and objectives (built)
+
+`backend/src/domain/ims/registers.ts`, `legislation.ts`;
+`frontend/pages/imsregisters.js` (the Registers tab).
+
+- **Environmental aspects and impacts** (ISO 14001 6.1.2): activity, aspect,
+  impact, condition (normal, abnormal, emergency), severity and likelihood 1–5,
+  controls and the procedures behind them. **Significant** when severity ×
+  likelihood meets the company's own threshold (a setting, starting at 12) or a
+  legal requirement drives it; a retired aspect is not significant.
+  Reassessment is dated; retirement keeps the entry with its reason.
+- **Legal and other requirements** (ISO 14001 and 45001 6.1.3): from a starting
+  list of thirty UK Acts and regulations (titles, years and extent only — never
+  their text) or by title for a permit, consent or client requirement; once per
+  title; what it requires, how it applies, how the company complies. **Due for
+  evaluation the day it is added** — an entry never evaluated has not been shown
+  to be complied with — then on its own interval. **An evaluation short of
+  compliant raises a corrective action** with its owner and due date. An entry
+  from the list carries that law's standards unless others are ticked.
+- **Objectives** (6.2): standard, objective, measure, target, baseline,
+  resources, owner, date; measured values recorded with their source; closed
+  achieved or not by an approver, with the final figure.
+- **The watch agent** also reports requirements due for evaluation and objectives
+  past their date.
+
+**Verified.** `npm test` 8,757 pass, typecheck clean. `tests/imsregisters.test.ts` (8 tests). Walked in a browser on a
+fresh journal: two aspects (the legally driven one significant at 12, the other
+not); the Environmental Protection Act 1990 added from the list; a partial
+evaluation refused without an action owner, then recorded and its corrective
+action shown on the Actions tab; an objective set, progressed and closed; no page
+errors; no horizontal scroll at phone width.
+
+### Increment 4: the three partial gaps — the RIDDOR clock, supplier performance, the competence matrix (built)
+
+`backend/src/domain/riddor.ts`, `backend/src/domain/ims/monitoring.ts`;
+`frontend/pages/riddor.js` (a card on Risk & Safety), `frontend/pages/imsmonitoring.js`
+(the Monitoring tab).
+
+- **The RIDDOR clock** (project-level, for every tenancy, not only those with
+  the module): a reportable incident is classified by a competent person —
+  death, specified injury, injury to somebody not at work taken to hospital,
+  over-seven-day incapacitation, dangerous occurrence, occupational disease —
+  which sets the date its report is due: 10 days from the incident for the first
+  four and dangerous occurrences (with notification without delay), 15 for
+  over-seven-day, the diagnosis date for a disease. The report is recorded with
+  its date, the reference issued and how it was made; **telephone is refused
+  except for deaths and specified injuries**; a report after its due date is
+  recorded **as late, with the reason**; nothing is reclassified after the
+  report. The project safety agent now reports a reportable incident with no
+  classification, and a report due within three days or overdue, as urgent. The
+  management system shows the clock across every project.
+- **Supplier performance**: an approved supplier evaluated on quality, health
+  and safety, environment, programme and commercial (1–5), optionally on a
+  project, with what the scores rest on; the next evaluation falls due on the
+  company's interval (an approved supplier never evaluated is due now); a latest
+  average below the company's score puts it **to review**, which the watch agent
+  reports. Prequalification and its expiry stay where they were.
+- **The competence matrix**: the competences each role requires; each active
+  person in those roles against what they hold — read from the competency and
+  training records on every project and the company's own, matched by person and
+  competence name (case-insensitive), latest expiry winning — as held, expiring
+  (within the company's warning days), expired or missing. A competence held is
+  recorded at company level through the safety engine's own competency command,
+  so its certificate is evidence and the safety permission applies.
+
+**Verified.** `npm test` 8,769 pass, typecheck clean. `tests/imsmonitoring.test.ts` (9 tests). Walked in a browser on a
+fresh journal: an incident recorded as reportable shown unclassified on Risk &
+Safety, classified as a specified injury (due in ten days), reported by
+telephone; the same incident on the management system's company-wide clock; a
+supplier evaluated at 2.4 and put to review, two others shown due; SMSTS
+required of the safety role, a certificate uploaded for the safety lead, the
+matrix showing it held to its expiry; no page errors; no horizontal scroll at
+phone width.
+
+### Increment 5: the company-wide view and management review (built)
+
+`backend/src/domain/ims/review.ts`; `frontend/pages/imsreview.js` (the Overview
+tab, now the first, and the Management review tab).
+
+- **The company position** for any period (`GET /v1/ims/position`), counted from
+  the records across every project and the system — never entered: the status of
+  the previous review's actions; objectives; NCRs raised and open and corrective
+  actions open, overdue, verified effective or not; incidents by category and
+  the RIDDOR position; audit results and clauses not covered; compliance
+  evaluations; significant aspects; supplier performance; competence gaps; the
+  state of the documents. Two inputs the records cannot hold (changes in
+  external and internal issues; communication and worker consultation) are named
+  as such for the review to minute.
+- **Management review** (9.3): opened for a period with a chair from top
+  management (owner, executive, project director — `TOP_MANAGEMENT_ROLES`); the
+  position is **frozen as its inputs with a hash** when opened (and may be frozen
+  again while a draft); each input minuted; decisions and actions recorded — an
+  output given an owner and date **raises an improvement action sourced to the
+  review**, which the next review's first input then reports on. **Approved by
+  top management other than the person who prepared it**, only once every input
+  is minuted and an output recorded; fixed thereafter.
+- **The watch agent** also reports a system with documents in force and no
+  approved management review, or none in the last year.
+- Found in the walk and fixed: minuting an input again with the same words was
+  refused with the ledger's internal "no state change" message; it now changes
+  nothing and says nothing, and each input's button shows whether it is minuted.
+
+**Verified.** `npm test` 8,779 pass, typecheck clean. `tests/imsreview.test.ts` (8 tests). Walked in a browser on a
+fresh journal: the overview's position for the last twelve months and for a
+chosen period; the quality lead opens MR-001 chaired by the owner, minutes all
+twelve inputs, records an improvement with an owner and date (raising its
+action); the quality lead has no Approve button on their own review; the owner
+approves it; no page errors; no horizontal scroll at phone width.
+
+### Increment 6: the AI agents (built)
+
+`backend/src/domain/ims/agents.ts`; `frontend/pages/imsagents.js` (the AI agents
+tab, a notice on every tab while proposals wait, and a run button beside each
+document, audit, action and review).
+
+Eight agents on the existing **Risk, Safety & Compliance** engine (no new
+engine), each filing **proposals**, never the record:
+
+- **Procedure** — a policy in the library, or a brief, turned into a working
+  procedure with the clauses it meets and the roles it is issued to.
+- **Clause mapping** — which clauses of its standards a document meets, each with
+  what meets it; accepting makes a draft revision to approve.
+- **Audit checklist** — questions and records to see, against the audit's
+  clauses and sampled procedures.
+- **Root cause** — the likely cause through the system and the actions on it.
+- **Review minutes** — a minute for each input that has figures, from the frozen
+  figures only, and proposed outputs. Inputs the records cannot hold are left for
+  the meeting; a minute somebody wrote stays theirs.
+- **Aspects** — the environmental aspects of the company's activities, scored.
+- **Legal register** — requirements chosen **only from the legislation list**.
+- **Objectives** — measurable objectives for the year ahead from the company
+  position.
+
+**Checked in code before anybody sees it**: a clause that is not a clause of the
+document's standards, a role that does not exist, a checklist item outside the
+audit's scope, a minute for an input the review lacks or has no figures for, an
+output of no kind, a score outside 1–5, a duplicate aspect, an Act not on the
+list, a date in the past — each dropped and counted. `IMS_AGENT_PROPOSED` is
+written by the AI actor. **Accepting runs the ordinary command as the person
+accepting**, with their edits to the fields each kind allows (anything else is
+refused, `IMS_AGENT_EDIT`) and the owner they choose: an AI-drafted procedure is
+a draft authored by the accepting person, which somebody else must approve;
+drafted minutes are part of a review top management must still approve.
+Rejecting records nothing. With no reasoning model configured, every agent
+refuses (`IMS_AGENT_NEEDS_A_MODEL`).
+
+**A pre-existing defect fixed on the way.** `POST /v1/ai/quote` refused every
+AI route with no project in its path unless the caller was the operator. So
+every company-level AI action — Bid-On's agents, declared `quoteScope: 'TENANT'`,
+and now the management system's — could never be quoted from the console, and
+its submit button stayed disabled waiting for a price that never came. A
+`quoteScope: 'TENANT'` route is now quoted against the tenancy's governance
+project, whose wallet it spends, under the caller's AI permission.
+`GET /v1/ims/agents/estimate` publishes each IMS agent's quote.
+
+**Verified.** `npm test` 8,793 pass, typecheck clean. `tests/imsagents.test.ts` (12 tests), against a stub model that
+slips in one invalid answer of each kind, plus the company-level quote over
+HTTP. Walked in a browser on a fresh journal with a scratchpad stub model: the
+cost shown before a run; a procedure drafted from a brief, accepted with an
+edited title as a draft, and approved by the safety lead; two aspects accepted
+(one with edited controls) into the register; two legal requirements from the
+list accepted; no page errors; no horizontal scroll at phone width.
+
+### The management system: not built, stated
+
+- **No live model run.** No provider key is configured in this environment; what
+  a real model drafts for a real company has not been seen here.
+- **No ISO certification is claimed.** The platform holds and evidences the
+  system; certification is a third-party audit of the company, not of software.
+- **The standards' text** is not held — clause numbers and headings only; the
+  company uses its own licensed copies.
+- **The legislation list** is a starting point of thirty UK instruments (titles,
+  years, extent); it is not a legal determination, and Scotland and Northern
+  Ireland instruments are not listed.
+- **Document text and files**: a document is written in the platform or attached
+  as a file; the agents read written text only, not attached files.
+- **Customer satisfaction and complaints** (ISO 9001 9.1.2) are recorded only as
+  the source of an action; there is no survey or complaints register.
+- **Emergency preparedness drills** (8.2) and **worker consultation records**
+  (ISO 45001 5.4) are not recorded as their own registers; the review minutes
+  them.
+- **Read and understood** counts the company's active identities in the roles a
+  document is issued to; operatives without a platform identity are not counted.

@@ -49,6 +49,8 @@ export type Scope =
   | 'bidservices:write'
   | 'planning:read'
   | 'planning:write'
+  | 'ims:read'
+  | 'ims:write'
   | 'media:upload'
   | 'media:read'
   | 'admin:*';
@@ -85,6 +87,7 @@ const AREA_SCOPES: Record<CapabilityArea, { read: Scope; write: Scope }> = {
   SITE_SERVICES: { read: 'siteservices:read', write: 'siteservices:write' },
   BID_SERVICES: { read: 'bidservices:read', write: 'bidservices:write' },
   PLANNING_CONSENT: { read: 'planning:read', write: 'planning:write' },
+  MANAGEMENT_SYSTEM: { read: 'ims:read', write: 'ims:write' },
 };
 
 const WRITE_CODES = new Set<PermissionCode>(['C', 'U', 'A', 'I', 'G']);

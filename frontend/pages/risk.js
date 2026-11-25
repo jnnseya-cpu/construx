@@ -1,5 +1,6 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
+import { bindRiddor, loadRiddor, riddorCard } from './riddor.js';
 import { OBSERVATION_TYPE, RISK_CATEGORY } from '../lib/enums.js';
 import { badge, date, days, drillable, html, humanise, money, pct, raw, render, resolveHtml, statusTone, table, toast, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
@@ -17,9 +18,10 @@ import { blockedReason, can, draw, state } from '../app.js';
 export async function risk(root) {
   const projectId = state.session.projectId;
 
-  const [b, contingency] = await Promise.all([
+  const [b, contingency, riddorClock] = await Promise.all([
     entityBundle(projectId, ['RiskRegisterItem', 'SafetyForecast', 'RAMS', 'SafetyObservation', 'Competency', 'Incident']),
     api.get(`/v1/projects/${projectId}/risk/contingency`).catch(() => null),
+    loadRiddor(projectId),
   ]);
 
   const forecast = b.SafetyForecast.at(-1);
@@ -259,8 +261,11 @@ export async function risk(root) {
             </div>`
           : ''
       }
+
+      ${riddorCard(riddorClock, can('SAFETY_RAMS', 'U'))}
     `,
   );
+  bindRiddor(root, riddorClock, projectId);
 
   document.getElementById('forecast-safety')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
