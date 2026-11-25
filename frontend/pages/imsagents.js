@@ -195,7 +195,10 @@ export function agentCommands(view, agents) {
       path: '/v1/ims/agents/obligations',
       ai: true,
       submitLabel: 'Ask the agent',
-      fields: [{ name: 'activities', label: 'The company’s activities (optional)', type: 'textarea', rows: 3, required: false }],
+      fields: [
+        { name: 'regions', label: 'Where the company works', type: 'multiselect', options: view.vocabulary.regions.map((region) => ({ value: region, label: humanise(region) })), value: ['ENGLAND', 'WALES'] },
+        { name: 'activities', label: 'The company’s activities (optional)', type: 'textarea', rows: 3, required: false },
+      ],
       report: runReport('requirement', 'requirements'),
     }),
     'ims-agent-objectives': () => ({

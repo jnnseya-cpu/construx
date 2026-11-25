@@ -3,13 +3,15 @@ import { ulid } from '../../core/ids.ts';
 import { expertPersona } from '../../ai/expertise.ts';
 import { SOURCE_MATERIAL_RULE } from '../../ai/sourcematerial.ts';
 import { runAI, write, type EngineContext } from '../../engines/context.ts';
+import { packDocuments } from '../../evidence/pipeline.ts';
+import type { EntityRef } from '../../goldenthread/types.ts';
 import { isRole } from '../../identity/roles.ts';
 import { actionOf, updateAction } from './actions.ts';
 import { auditOf, setChecklist } from './audits.ts';
 import { CLAUSES, clauseById, clauseLabel, isClauseId, isStandard, STANDARDS, type Standard } from './clauses.ts';
-import { DOCUMENT_TYPES, documentOf, documents, draftDocument, redraftDocument } from './documents.ts';
+import { DOCUMENT_TYPES, documentOf, documents, draftDocument, redraftDocument, type ImsDocument, type Revision } from './documents.ts';
 import { activePeople, guard, stateOf, states, today, type Person } from './ims.ts';
-import { LEGISLATION, legislationByKey } from './legislation.ts';
+import { LEGISLATION, REGIONS, legislationByKey, regionsOf, type Region } from './legislation.ts';
 import { aspects, CONDITIONS, obligations, recordAspect, recordObligation, setObjective } from './registers.ts';
 import { addOutput, companyPosition, minuteInput, OUTPUT_KINDS, reviewOf } from './review.ts';
 
@@ -97,6 +99,32 @@ const roleList = () => ['ENTERPRISE_ADMIN', 'OWNER', 'EXECUTIVE', 'PROJECT_DIREC
 // 1. A procedure from a policy
 // =============================================================================
 
+/**
+ * What an agent reads of a revision: the text written in the platform, or —
+ * when the document is kept as an attached file — the text the platform read
+ * out of that file when it arrived.
+ *
+ * The file's text is the evidence pipeline's reading of it (`IngestedFile`), so
+ * it carries that record's classification: an agent that reads it sends it to
+ * a provider cleared for it, or is refused. A file that has not arrived, was
+ * quarantined, or has no text layer is reported as exactly that, never read as
+ * an empty document.
+ */
+function revisionText(ctx: EngineContext, document: ImsDocument, revision: Revision): { text: string; refs: EntityRef[]; unread?: string } {
+  if (revision.content) return { text: revision.content, refs: [] };
+  if (!revision.file) return { text: '', refs: [], unread: `${document.reference} revision ${revision.revision} has no text and no attached file.` };
+  const bare = (hash: string) => hash.replace(/^sha256:/, '').toLowerCase();
+  const read = packDocuments(ctx, { purpose: 'IMS' }).find((entry) => bare(entry.hash) === bare(revision.file!.hash));
+  if (read) return { text: read.text, refs: [{ refType: 'IngestedFile', refId: read.ingestionId }] };
+  const ingested = ctx.ledger.list(ctx.projectId, 'IngestedFile').find((record) => bare(String(record.state.hash)) === bare(revision.file!.hash));
+  const why = !ingested
+    ? 'has not arrived on the platform yet, or has not been read'
+    : ingested.state.status === 'QUARANTINED'
+      ? 'was quarantined when it was read'
+      : 'has no text the platform could read (a scan needs transcribing on the Documents screen)';
+  return { text: '', refs: [], unread: `${document.reference} is kept as the attached file ${revision.file.filename}, which ${why}.` };
+}
+
 export async function draftProcedure(ctx: EngineContext, input: { title: string; type?: string; standards: string[]; policyDocumentId?: string; brief?: string }): Promise<AgentRun> {
   guard(ctx, 'C');
   const title = str(input.title, 200);
@@ -107,10 +135,14 @@ export async function draftProcedure(ctx: EngineContext, input: { title: string;
   if (standards.length === 0) throw new DomainError('IMS_STANDARDS', 'Name the standards it serves.', 422, [{ field: 'standards', message: 'one or more' }]);
   let policyText = '';
   let basedOn = 'the brief given';
+  const fileRefs: EntityRef[] = [];
   if (input.policyDocumentId) {
     const policy = documentOf(ctx, input.policyDocumentId);
     const revision = policy.revisions.find((entry) => entry.status === 'EFFECTIVE') ?? policy.revisions.at(-1)!;
-    policyText = revision.content;
+    const read = revisionText(ctx, policy, revision);
+    if (read.unread) throw new DomainError('IMS_AGENT_NO_TEXT', read.unread, 409);
+    policyText = read.text;
+    fileRefs.push(...read.refs);
     basedOn = `${policy.reference} ${policy.title}, revision ${revision.revision}`;
   }
   const brief = str(input.brief, 8000);
@@ -121,7 +153,7 @@ export async function draftProcedure(ctx: EngineContext, input: { title: string;
     engine: ENGINE,
     taskType: 'ims_procedure',
     capability: 'REASONING',
-    inputRefs: input.policyDocumentId ? [{ refType: 'ImsDocument', refId: input.policyDocumentId }] : [],
+    inputRefs: input.policyDocumentId ? [{ refType: 'ImsDocument', refId: input.policyDocumentId }, ...fileRefs] : [],
     requireModel: MODEL_REQUIRED,
     request: {
       task:
@@ -179,18 +211,19 @@ export async function mapClauses(ctx: EngineContext, input: { documentId: string
   const document = documentOf(ctx, input.documentId);
   if (document.status === 'WITHDRAWN') throw new DomainError('IMS_DOCUMENT_WITHDRAWN', `${document.reference} is withdrawn.`, 409);
   const revision = document.revisions.find((entry) => entry.status === 'DRAFT') ?? document.revisions.find((entry) => entry.status === 'EFFECTIVE')!;
-  if (!revision.content) throw new DomainError('IMS_AGENT_NO_TEXT', `${document.reference} is held as an attached file only; the agent reads text.`, 409);
+  const read = revisionText(ctx, document, revision);
+  if (read.unread) throw new DomainError('IMS_AGENT_NO_TEXT', read.unread, 409);
   const runId = ulid();
   const counts = { proposed: 0, dropped: 0 };
   const result = await runAI(ctx, {
     engine: ENGINE,
     taskType: 'ims_clause_mapping',
     capability: 'REASONING',
-    inputRefs: [{ refType: 'ImsDocument', refId: document.id }],
+    inputRefs: [{ refType: 'ImsDocument', refId: document.id }, ...read.refs],
     requireModel: MODEL_REQUIRED,
     request: {
       task: `${persona} ${SOURCE_MATERIAL_RULE} Say which clauses of its standards this controlled document meets, chosen only from the list given, each with one sentence saying which part of the document meets it. Leave out a clause it only mentions.`,
-      payload: { document: { reference: document.reference, title: document.title, text: revision.content.slice(0, 60_000) }, clauses: clauseCatalogue(document.standards), mappedNow: document.clauses },
+      payload: { document: { reference: document.reference, title: document.title, text: read.text.slice(0, 60_000) }, clauses: clauseCatalogue(document.standards), mappedNow: document.clauses },
       responseSchema: { type: 'object', properties: { clauses: { type: 'array', items: { type: 'object', properties: { clauseId: { type: 'string' }, reason: { type: 'string' } }, required: ['clauseId', 'reason'] } } }, required: ['clauses'] },
     },
     toWrites: (output) => {
@@ -220,21 +253,24 @@ export async function draftChecklist(ctx: EngineContext, input: { auditId: strin
   guard(ctx, 'U');
   const audit = auditOf(ctx, input.auditId);
   if (audit.status === 'COMPLETED' || audit.status === 'CANCELLED') throw new DomainError('IMS_AUDIT_STATE', `${audit.reference} is ${audit.status.toLowerCase()}.`, 409);
-  const sampled = documents(ctx).filter((document) => audit.documentIds.includes(document.id));
+  const sampled = documents(ctx)
+    .filter((document) => audit.documentIds.includes(document.id))
+    .map((document) => ({ document, read: revisionText(ctx, document, document.revisions.find((entry) => entry.status === 'EFFECTIVE') ?? document.revisions.at(-1)!) }));
   const runId = ulid();
   const counts = { proposed: 0, dropped: 0 };
   const result = await runAI(ctx, {
     engine: ENGINE,
     taskType: 'ims_audit_checklist',
     capability: 'REASONING',
-    inputRefs: [{ refType: 'ImsAudit', refId: audit.id }, ...sampled.map((document) => ({ refType: 'ImsDocument', refId: document.id }))],
+    inputRefs: [{ refType: 'ImsAudit', refId: audit.id }, ...sampled.flatMap(({ document, read }) => [{ refType: 'ImsDocument', refId: document.id }, ...read.refs])],
     requireModel: MODEL_REQUIRED,
     request: {
       task: `${persona} ${SOURCE_MATERIAL_RULE} Write the checklist an internal auditor works through: for each clause in scope, the questions to ask and the records to see on a construction site and in the office, and for each procedure sampled, whether what it says is done. Each item names the clause it tests, from the list given, and the procedure where it tests one.`,
       payload: {
         audit: { reference: audit.reference, title: audit.title },
         clauses: audit.clauses.map((id) => ({ id, label: clauseLabel(id) })),
-        procedures: sampled.map((document) => ({ id: document.id, reference: document.reference, title: document.title, text: (document.revisions.find((entry) => entry.status === 'EFFECTIVE') ?? document.revisions.at(-1)!).content.slice(0, 8000) })),
+        // A procedure whose file could not be read is still sampled, by its title, and says why it has no text.
+        procedures: sampled.map(({ document, read }) => ({ id: document.id, reference: document.reference, title: document.title, text: read.unread ?? read.text.slice(0, 8000) })),
       },
       responseSchema: { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { clauseId: { type: 'string' }, documentId: { type: ['string', 'null'] }, question: { type: 'string' } }, required: ['clauseId', 'question'] } } }, required: ['items'] },
     },
@@ -403,11 +439,14 @@ export async function proposeAspects(ctx: EngineContext, input: { activities: st
 // 7. The legal register, from the list only
 // =============================================================================
 
-export async function proposeObligations(ctx: EngineContext, input: { activities?: string }): Promise<AgentRun> {
+export async function proposeObligations(ctx: EngineContext, input: { activities?: string; regions?: string[] }): Promise<AgentRun> {
   guard(ctx, 'C');
+  const regions = (input.regions?.length ? input.regions : [...REGIONS]).filter((region): region is Region => (REGIONS as readonly string[]).includes(region));
+  if (regions.length === 0) throw new DomainError('IMS_REGIONS', `Where the company works: ${REGIONS.join(', ')}.`, 422, [{ field: 'regions', message: 'one or more' }]);
   const registered = new Set(obligations(ctx).filter((entry) => entry.status === 'ACTIVE').map((entry) => entry.catalogueKey).filter(Boolean));
-  const open = LEGISLATION.filter((entry) => !registered.has(entry.key));
-  if (open.length === 0) throw new DomainError('IMS_AGENT_NOTHING', 'Every entry of the legislation list is already in the register.', 409);
+  // Only what binds where the company works: a Scottish contractor is not offered the English permitting regime.
+  const open = LEGISLATION.filter((entry) => !registered.has(entry.key) && regionsOf(entry.extent).some((region) => regions.includes(region)));
+  if (open.length === 0) throw new DomainError('IMS_AGENT_NOTHING', 'Every entry of the legislation list that binds where the company works is already in the register.', 409);
   const context = str(input.activities, 8000) || aspects(ctx).filter((aspect) => aspect.status === 'ACTIVE').map((aspect) => `${aspect.activity}: ${aspect.aspect}`).join('; ');
   if (context.length < 10) throw new DomainError('IMS_AGENT_BRIEF', 'Describe the company’s activities, or record its environmental aspects first.', 422, [{ field: 'activities', message: 'the activities' }]);
   const runId = ulid();
@@ -420,7 +459,7 @@ export async function proposeObligations(ctx: EngineContext, input: { activities
     requireModel: MODEL_REQUIRED,
     request: {
       task: `${expertPersona('HEALTH_AND_SAFETY')} From the list given ONLY — use its keys, never name legislation that is not on it — choose the requirements that apply to a UK construction company with these activities. For each, say in your own words what it requires of the company, how it applies to these activities, and how a company like this typically complies; mark anything only the company can confirm "[to be confirmed: …]".`,
-      payload: { activities: context, list: open.map((entry) => ({ key: entry.key, title: entry.title, extent: entry.extent, topic: entry.topic })) },
+      payload: { activities: context, worksIn: regions, list: open.map((entry) => ({ key: entry.key, title: entry.title, extent: entry.extent, topic: entry.topic })) },
       responseSchema: { type: 'object', properties: { entries: { type: 'array', items: { type: 'object', properties: { catalogueKey: { type: 'string' }, requirement: { type: 'string' }, applicability: { type: 'string' }, howComplied: { type: 'string' } }, required: ['catalogueKey', 'requirement', 'applicability', 'howComplied'] } } }, required: ['entries'] },
     },
     toWrites: (output) => {
@@ -429,7 +468,7 @@ export async function proposeObligations(ctx: EngineContext, input: { activities
       const seen = new Set<string>();
       for (const entry of raw) {
         const key = String(entry.catalogueKey ?? '');
-        const listed = legislationByKey(key);
+        const listed = open.some((entry) => entry.key === key) ? legislationByKey(key) : undefined;
         const fields = { requirement: str(entry.requirement, 2000), applicability: str(entry.applicability, 2000), howComplied: str(entry.howComplied, 2000) };
         if (!listed || registered.has(key) || seen.has(key) || Object.values(fields).some((value) => value.length < 10)) {
           counts.dropped += 1;

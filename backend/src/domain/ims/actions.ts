@@ -76,7 +76,8 @@ function checkedSource(ctx: EngineContext, source: Partial<ActionSource> | undef
   if (!kind || !(SOURCE_KINDS as readonly string[]).includes(kind)) {
     throw new DomainError('IMS_ACTION_SOURCE', `Say where it came from: ${SOURCE_KINDS.join(', ')}.`, 422, [{ field: 'source.kind', message: 'choose one' }]);
   }
-  const expected = SOURCE_TYPE[kind];
+  // A complaint names its record in the complaints register where it has one; an older one is described.
+  const expected = SOURCE_TYPE[kind] ?? (kind === 'COMPLAINT' && source.refId ? 'ImsComplaint' : undefined);
   if (!expected) {
     return { kind, label: text(source.label, 'source.label', 3, 'Describe where it came from — who complained, about what, when.', 300) };
   }

@@ -6,6 +6,7 @@ import { clauseLabel, clauseOptions, nameOf, personOptions, roleOptions, standar
 import { auditCards, auditCommands } from './imsaudits.js';
 import { registerCards, registerCommands } from './imsregisters.js';
 import { monitoringCards, monitoringCommands } from './imsmonitoring.js';
+import { engagementCards, engagementCommands } from './imsengagement.js';
 import { bindOverview, overviewCard, reviewCard, reviewCommands } from './imsreview.js';
 import { agentCommands, agentsCard, loadAgents } from './imsagents.js';
 
@@ -27,6 +28,7 @@ const TABS = [
   ['actions', 'Actions'],
   ['registers', 'Registers'],
   ['monitoring', 'Monitoring'],
+  ['engagement', 'Complaints, drills & consultation'],
   ['review', 'Management review'],
   ['settings', 'Settings'],
 ];
@@ -133,6 +135,7 @@ export async function ims(root) {
       ${tab === 'audits' || tab === 'actions' ? auditCards(view, perms, tab) : ''}
       ${tab === 'registers' ? registerCards(view, perms) : ''}
       ${tab === 'monitoring' ? monitoringCards(view, perms) : ''}
+      ${tab === 'engagement' ? engagementCards(view, perms) : ''}
       ${tab === 'review' ? reviewCard(view, perms, perms.approve && (view.me && view.people.find((person) => person.id === view.me)?.roles.some((role) => view.review.topManagementRoles.includes(role)))) : ''}
       ${tab === 'settings' ? settingsCard(view, perms) : ''}`,
   );
@@ -142,6 +145,7 @@ export async function ims(root) {
     ...auditCommands(view),
     ...registerCommands(view),
     ...monitoringCommands(view),
+    ...engagementCommands(view),
     ...reviewCommands(view),
     ...agentCommands(view, agents),
     'ims-draft': () => ({

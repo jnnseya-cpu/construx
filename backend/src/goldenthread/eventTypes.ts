@@ -909,6 +909,17 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // whose acceptance runs the ordinary command under their own authority.
   def('IMS_AGENT_PROPOSED', 'ImsAgentProposal', 'CREATE', 'GOVERNANCE', { creates: true, aiAllowed: true }),
   def('IMS_AGENT_PROPOSAL_DECIDED', 'ImsAgentProposal', 'UPDATE', 'GOVERNANCE'),
+  // Complaints and satisfaction, emergency drills, worker consultation.
+  def('IMS_COMPLAINT_RECORDED', 'ImsComplaint', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_COMPLAINT_RESPONDED', 'ImsComplaint', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_COMPLAINT_ACTIONED', 'ImsComplaint', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_COMPLAINT_CLOSED', 'ImsComplaint', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_SATISFACTION_RECORDED', 'ImsSatisfactionSurvey', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_DRILL_PLANNED', 'ImsDrill', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_DRILL_HELD', 'ImsDrill', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_DRILL_CANCELLED', 'ImsDrill', 'UPDATE', 'GOVERNANCE'),
+  def('IMS_CONSULTATION_RECORDED', 'ImsConsultation', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('IMS_CONSULTATION_ANSWERED', 'ImsConsultation', 'UPDATE', 'GOVERNANCE'),
   def('BID_SIGN_OFF_RECORDED', 'BidSignOff', 'APPROVE', 'PROCUREMENT', { creates: true }),
   def('SUBMISSION_FILE_RECORDED', 'BidSignOff', 'UPDATE', 'PROCUREMENT', { creates: true }),
   // A compliance undertaking confirmed: the agent drafts the statement, a person

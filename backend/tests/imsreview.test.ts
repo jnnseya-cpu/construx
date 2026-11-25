@@ -47,7 +47,7 @@ describe('the company-wide position', () => {
     const position = review.companyPosition(company('pm'), people(), period());
     assert.ok(position.projects >= 1);
     const keys = position.inputs.map((input) => input.key);
-    for (const key of ['previousActions', 'objectives', 'nonconformities', 'incidents', 'audits', 'compliance', 'aspects', 'suppliers', 'resources', 'documents', 'context', 'consultation']) assert.ok(keys.includes(key), key);
+    for (const key of ['previousActions', 'objectives', 'nonconformities', 'incidents', 'audits', 'compliance', 'aspects', 'suppliers', 'resources', 'documents', 'context', 'consultation', 'customers', 'emergency']) assert.ok(keys.includes(key), key);
     const incidents = position.inputs.find((input) => input.key === 'incidents')!;
     assert.ok(Number(incidents.figures.incidents) >= 1);
     assert.match(incidents.summary, /near miss/);
@@ -68,7 +68,7 @@ describe('a management review', () => {
     const opened = review.openReview(company('qaqc'), people(), { periodFrom: period().from, periodTo: period().to, heldOn: ims.today(), chairId: seed.users.owner!.id, attendees: ['Quality manager', 'HSE manager'] });
     id = opened.id;
     assert.equal(opened.reference, 'MR-001');
-    assert.equal(opened.inputs.length, 12);
+    assert.equal(opened.inputs.length, 14);
     assert.match(opened.inputsHash, /^sha256:[a-f0-9]{64}$/);
   });
 

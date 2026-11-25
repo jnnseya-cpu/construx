@@ -104,7 +104,7 @@ function checkedFile(ctx: EngineContext, file: unknown, title: string): Revision
   const bare = String(hash ?? '').replace(/^sha256:/, '');
   if (!/^[a-f0-9]{64}$/i.test(bare)) throw new DomainError('IMS_FILE_HASH', 'An attached file is named by its SHA-256 hash.', 422, [{ field: 'file.hash', message: 'sha-256' }]);
   const name = text(filename, 'file.filename', 1, 'Name the attached file.', 300);
-  const evidence = registerEvidence(ctx, { type: 'IMS_DOCUMENT', hash: String(hash), description: `Controlled document ${title}: ${name}` });
+  const evidence = registerEvidence(ctx, { type: 'IMS_DOCUMENT', hash: String(hash), description: `IMS document: ${name}` });
   return { hash: String(hash), filename: name, evidenceId: evidence.refId };
 }
 

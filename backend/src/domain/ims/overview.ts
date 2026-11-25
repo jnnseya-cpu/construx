@@ -6,10 +6,11 @@ import { activePeople, guard, settings, type Person } from './ims.ts';
 import { ACTION_KINDS, SOURCE_KINDS, actionRegister, sourceCandidates } from './actions.ts';
 import { FINDING_GRADES, auditProgramme } from './audits.ts';
 import { CONDITIONS, EVALUATION_RESULTS, registersPosition } from './registers.ts';
-import { LEGISLATION } from './legislation.ts';
+import { LEGISLATION, REGIONS, regionsOf } from './legislation.ts';
 import { PERFORMANCE_HEADINGS, competenceMatrix, riddorCompany, supplierPerformance } from './monitoring.ts';
 import { RIDDOR_KINDS } from '../riddor.ts';
 import { companyPosition, reviewRegister } from './review.ts';
+import { engagementPosition } from './engagement.ts';
 import { addMonths, today } from './ims.ts';
 
 /**
@@ -37,6 +38,7 @@ export function imsOverview(ctx: EngineContext, people: readonly Person[]) {
     // The last twelve months, for the company-wide view.
     position: companyPosition(ctx, people, { from: addMonths(today(), -12), to: today() }),
     review: reviewRegister(ctx, people),
+    engagement: engagementPosition(ctx, people),
     people: activePeople(people).map((person) => ({ id: person.id, name: person.name, roles: person.roles })),
     me: ctx.auth.actorId,
     vocabulary: {
@@ -48,7 +50,8 @@ export function imsOverview(ctx: EngineContext, people: readonly Person[]) {
       sourceKinds: SOURCE_KINDS,
       aspectConditions: CONDITIONS,
       evaluationResults: EVALUATION_RESULTS,
-      legislation: LEGISLATION,
+      legislation: LEGISLATION.map((entry) => ({ ...entry, regions: regionsOf(entry.extent) })),
+      regions: REGIONS,
       performanceHeadings: PERFORMANCE_HEADINGS,
       riddorKinds: Object.entries(RIDDOR_KINDS).map(([kind, entry]) => ({ kind, ...entry })),
       roles: ALL_ROLES.filter((role) => role !== 'PLATFORM_ADMIN'),

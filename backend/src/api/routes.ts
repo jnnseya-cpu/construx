@@ -199,6 +199,7 @@ import * as imsMonitoring from '../domain/ims/monitoring.ts';
 import * as riddor from '../domain/riddor.ts';
 import * as imsReview from '../domain/ims/review.ts';
 import * as imsAgents from '../domain/ims/agents.ts';
+import * as imsEngagement from '../domain/ims/engagement.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -944,15 +945,16 @@ async function readTenderDocumentOnArrival(
     .listByTenant(engineCtx.tenantId, 'EvidenceItem')
     .filter((entry) => {
       const state = entry.state as { hash?: string; type?: string };
-      // Planning documents are read on arrival for the same reason: the planning
-      // agents read what was read, and a document nobody read is one they cannot cite.
-      return state.hash === hash && (state.type === 'TENDER_DOCUMENT' || state.type === 'PLANNING_DOCUMENT');
+      // Planning documents and the management system's attached documents are
+      // read on arrival for the same reason: their agents read what was read,
+      // and a document nobody read is one they cannot cite.
+      return state.hash === hash && (state.type === 'TENDER_DOCUMENT' || state.type === 'PLANNING_DOCUMENT' || state.type === 'IMS_DOCUMENT');
     })
     .reverse();
   let outcome: Record<string, unknown> = {};
   let alreadyRead: Record<string, unknown> | undefined;
   for (const filing of filings) {
-    const filename = String((filing.state as { description?: string }).description ?? '').replace(/^(Tender|Planning) document:\s*/, '') || undefined;
+    const filename = String((filing.state as { description?: string }).description ?? '').replace(/^(Tender|Planning|IMS) document:\s*/, '') || undefined;
     const onProject =
       filing.projectId === engineCtx.projectId
         ? engineCtx
@@ -29744,8 +29746,8 @@ export const ROUTES: Route[] = [
     ai: { engine: 'RISK_SAFETY', taskType: 'ims_obligations', capability: 'REASONING' },
     quoteScope: 'TENANT',
     description: 'The legal-register agent: which requirements apply to the company’s activities, chosen only from the legislation list, with how each applies and how the company complies',
-    schema: { type: 'object', properties: { activities: { type: 'string', maxLength: 8000 } }, additionalProperties: false },
-    handler: (platform, ctx) => imsAgents.proposeObligations(tenantContext(platform, ctx), body<{ activities?: string }>(ctx)),
+    schema: { type: 'object', properties: { activities: { type: 'string', maxLength: 8000 }, regions: { type: 'array', maxItems: 4, items: { type: 'string', enum: ['ENGLAND', 'WALES', 'SCOTLAND', 'NORTHERN_IRELAND'] } } }, additionalProperties: false },
+    handler: (platform, ctx) => imsAgents.proposeObligations(tenantContext(platform, ctx), body<{ activities?: string; regions?: string[] }>(ctx)),
   },
   {
     method: 'POST',
@@ -29772,6 +29774,125 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => imsAgents.decideProposal(tenantContext(platform, ctx), imsPeople(platform, ctx), ctx.params.proposalId as string, body<Parameters<typeof imsAgents.decideProposal>[3]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/complaints',
+    description: 'Record a complaint as it was received — from whom, about what, how — and who will respond',
+    schema: {
+      type: 'object',
+      required: ['receivedOn', 'from', 'channel', 'category', 'description', 'ownerId'],
+      properties: {
+        receivedOn: { type: 'string', minLength: 10, maxLength: 10 },
+        from: { type: 'string', minLength: 2, maxLength: 200 },
+        projectId: { type: 'string' },
+        channel: { type: 'string', enum: ['LETTER', 'EMAIL', 'TELEPHONE', 'IN_PERSON', 'PORTAL', 'OTHER'] },
+        category: { type: 'string', enum: ['QUALITY', 'SAFETY', 'ENVIRONMENT', 'PROGRAMME', 'SERVICE', 'OTHER'] },
+        description: { type: 'string', minLength: 10, maxLength: 4000 },
+        ownerId: { type: 'string', minLength: 1 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsEngagement.recordComplaint(tenantContext(platform, ctx), body<Parameters<typeof imsEngagement.recordComplaint>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/complaints/:complaintId/response',
+    description: 'Record what the complainant was told, and when',
+    schema: { type: 'object', required: ['respondedOn', 'text'], properties: { respondedOn: { type: 'string', minLength: 10, maxLength: 10 }, text: { type: 'string', minLength: 10, maxLength: 4000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsEngagement.respondToComplaint(tenantContext(platform, ctx), ctx.params.complaintId as string, body<{ respondedOn: string; text: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/complaints/:complaintId/action',
+    description: 'Raise the corrective action a complaint calls for, named to it',
+    schema: { type: 'object', required: ['ownerId', 'dueOn'], properties: { ownerId: { type: 'string', minLength: 1 }, dueOn: { type: 'string', minLength: 10, maxLength: 10 }, standards: { type: 'array', maxItems: 3, items: { type: 'string', enum: ['ISO9001', 'ISO14001', 'ISO45001'] } }, description: { type: 'string', maxLength: 4000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsEngagement.actionFromComplaint(tenantContext(platform, ctx), ctx.params.complaintId as string, body<{ ownerId: string; dueOn: string; standards?: string[]; description?: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/complaints/:complaintId/close',
+    description: 'Close an answered complaint, with whether the complainant was satisfied where known',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 2000 }, satisfied: { type: ['boolean', 'null'] } }, additionalProperties: false },
+    handler: (platform, ctx) => imsEngagement.closeComplaint(tenantContext(platform, ctx), ctx.params.complaintId as string, body<{ note: string; satisfied?: boolean | null }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/satisfaction',
+    description: 'Record a client satisfaction survey: the score (1–5) and what the client said',
+    schema: { type: 'object', required: ['client', 'surveyedOn', 'score', 'comments'], properties: { client: { type: 'string', minLength: 2, maxLength: 200 }, projectId: { type: 'string' }, surveyedOn: { type: 'string', minLength: 10, maxLength: 10 }, score: { type: 'integer', minimum: 1, maximum: 5 }, comments: { type: 'string', minLength: 3, maxLength: 4000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsEngagement.recordSurvey(tenantContext(platform, ctx), body<Parameters<typeof imsEngagement.recordSurvey>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/drills',
+    description: 'Plan an emergency drill for a scenario, with who leads it',
+    schema: {
+      type: 'object',
+      required: ['scenario', 'description', 'plannedOn', 'leadId'],
+      properties: {
+        scenario: { type: 'string', enum: ['FIRE_EVACUATION', 'SPILL', 'RESCUE_AT_HEIGHT', 'CONFINED_SPACE_RESCUE', 'MEDICAL', 'SERVICE_STRIKE', 'FLOOD', 'OTHER'] },
+        description: { type: 'string', minLength: 5, maxLength: 2000 },
+        projectId: { type: 'string' },
+        plannedOn: { type: 'string', minLength: 10, maxLength: 10 },
+        leadId: { type: 'string', minLength: 1 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsEngagement.planDrill(tenantContext(platform, ctx), body<Parameters<typeof imsEngagement.planDrill>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/drills/:drillId/held',
+    description: 'Record the drill as held — who took part, how long, how it went, what was learned. One not fully effective raises the action on its lesson',
+    schema: {
+      type: 'object',
+      required: ['heldOn', 'participants', 'durationMinutes', 'outcome', 'lessons'],
+      properties: {
+        heldOn: { type: 'string', minLength: 10, maxLength: 10 },
+        participants: { type: 'integer', minimum: 1 },
+        durationMinutes: { type: 'integer', minimum: 1, maximum: 1440 },
+        outcome: { type: 'string', enum: ['EFFECTIVE', 'PARTLY_EFFECTIVE', 'NOT_EFFECTIVE'] },
+        lessons: { type: 'string', minLength: 5, maxLength: 4000 },
+        actionOwnerId: { type: 'string' },
+        actionDueOn: { type: 'string', minLength: 10, maxLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsEngagement.recordDrill(tenantContext(platform, ctx), ctx.params.drillId as string, body<Parameters<typeof imsEngagement.recordDrill>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/drills/:drillId/cancel',
+    description: 'Cancel a planned drill, with the reason',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsEngagement.cancelDrill(tenantContext(platform, ctx), ctx.params.drillId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/consultations',
+    description: 'Record a consultation with workers: how, on what, how many took part, and what they raised',
+    schema: {
+      type: 'object',
+      required: ['on', 'method', 'topic', 'participants', 'raised'],
+      properties: {
+        on: { type: 'string', minLength: 10, maxLength: 10 },
+        method: { type: 'string', enum: ['TOOLBOX_TALK', 'SAFETY_COMMITTEE', 'SURVEY', 'WORKER_FORUM', 'SUGGESTION', 'REPRESENTATIVE', 'OTHER'] },
+        topic: { type: 'string', minLength: 3, maxLength: 300 },
+        projectId: { type: 'string' },
+        participants: { type: 'integer', minimum: 1 },
+        raised: { type: 'string', minLength: 5, maxLength: 4000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => imsEngagement.recordConsultation(tenantContext(platform, ctx), body<Parameters<typeof imsEngagement.recordConsultation>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ims/consultations/:consultationId/answer',
+    description: 'Record what the workers were told and what was done, and when',
+    schema: { type: 'object', required: ['answeredOn', 'text'], properties: { answeredOn: { type: 'string', minLength: 10, maxLength: 10 }, text: { type: 'string', minLength: 10, maxLength: 4000 } }, additionalProperties: false },
+    handler: (platform, ctx) => imsEngagement.answerConsultation(tenantContext(platform, ctx), ctx.params.consultationId as string, body<{ answeredOn: string; text: string }>(ctx)),
   },
   {
     method: 'GET',

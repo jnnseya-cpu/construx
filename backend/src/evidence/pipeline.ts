@@ -976,17 +976,22 @@ export async function ingestionPosition(ctx: EngineContext, store: EvidenceStore
  * and the whole-pack reading — so they read the same documents in the same
  * order and name them the same way.
  */
+/** Which documents a reader of the pack is reading: the tender (by default), a planning application, or the management system. */
+export type PackPurpose = 'TENDER' | 'PLANNING' | 'IMS';
+
 export function packDocuments(
   ctx: EngineContext,
-  options: { purpose?: 'TENDER' | 'PLANNING' } = {},
-): Array<{ ingestionId: string; label: string; kind: string; text: string }> {
+  options: { purpose?: PackPurpose } = {},
+): Array<{ ingestionId: string; hash: string; label: string; kind: string; text: string }> {
   /*
    * A project can carry a tender and a planning application at once. The
    * documents filed for planning — flood map extracts, desk studies, decision
    * notices — are not the tender pack, and a bid drafted from them would be
    * answering a question the client never asked. A file filed only as a
    * planning document is left out of the tender pack; the planning agents
-   * read only files filed as planning documents.
+   * read only files filed as planning documents. The management system's
+   * controlled documents are the same: a procedure attached as a file is read
+   * by the management-system agents and is never part of a tender pack.
    */
   const filings = new Map<string, Set<string>>();
   for (const record of ctx.ledger.list(ctx.projectId, 'EvidenceItem')) {
@@ -995,13 +1000,19 @@ export function packDocuments(
     if (!filings.has(state.hash)) filings.set(state.hash, new Set());
     filings.get(state.hash)!.add(String(state.type));
   }
-  const planning = (hash: string) => filings.get(hash)?.has('PLANNING_DOCUMENT') ?? false;
-  const planningOnly = (hash: string) => planning(hash) && filings.get(hash)!.size === 1;
+  const filedAs = (hash: string, type: string) => filings.get(hash)?.has(type) ?? false;
+  const filedOnlyElsewhere = (hash: string) => {
+    const types = filings.get(hash);
+    return types !== undefined && [...types].every((type) => type === 'PLANNING_DOCUMENT' || type === 'IMS_DOCUMENT');
+  };
+  const belongs = (hash: string) =>
+    options.purpose === 'PLANNING' ? filedAs(hash, 'PLANNING_DOCUMENT') : options.purpose === 'IMS' ? filedAs(hash, 'IMS_DOCUMENT') : !filedOnlyElsewhere(hash);
   return ingestedFiles(ctx)
     .filter((file) => file.status === 'INGESTED')
-    .filter((file) => (options.purpose === 'PLANNING' ? planning(file.hash) : !planningOnly(file.hash)))
+    .filter((file) => belongs(file.hash))
     .map((file) => ({
       ingestionId: file.ingestionId,
+      hash: file.hash,
       label: file.filename ?? file.classification?.kind ?? file.hash.slice(0, 8),
       kind: String(file.classification?.kind ?? 'UNKNOWN'),
       text: String((file.extraction as { text?: unknown } | undefined)?.text ?? '').trim(),
@@ -1019,7 +1030,7 @@ export function packDocuments(
  */
 export function packText(
   ctx: EngineContext,
-  options: { maxCharacters?: number; only?: ReadonlyArray<string>; purpose?: 'TENDER' | 'PLANNING' } = {},
+  options: { maxCharacters?: number; only?: ReadonlyArray<string>; purpose?: PackPurpose } = {},
 ): {
   text: string;
   files: Array<{ ingestionId: string; filename: string; kind: string; characters: number }>;

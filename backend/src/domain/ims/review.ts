@@ -10,6 +10,7 @@ import { documentRegister } from './documents.ts';
 import { activePeople, addMonths, guard, isoDate, nameOf, nextReference, stateOf, text, today, type Person } from './ims.ts';
 import { competenceMatrix, supplierPerformance } from './monitoring.ts';
 import { registersPosition } from './registers.ts';
+import { complaints, consultations, drills, surveys } from './engagement.ts';
 
 /**
  * The company-wide view, and management review (clause 9.3 of all three).
@@ -68,6 +69,12 @@ export function companyPosition(ctx: EngineContext, people: readonly Person[], p
   const previous = previousReviews.at(-1);
   const previousActions = previous ? allActions.filter((action) => action.source.kind === 'MANAGEMENT_REVIEW' && action.source.refId === previous.id) : [];
   const count = (list: unknown[]) => list.length;
+  const periodSurveys = surveys(ctx).filter((entry) => inPeriod(entry.surveyedOn, from, to));
+  const averageScore = periodSurveys.length ? Math.round((periodSurveys.reduce((sum, entry) => sum + entry.score, 0) / periodSurveys.length) * 10) / 10 : null;
+  const periodComplaints = complaints(ctx).filter((entry) => inPeriod(entry.receivedOn, from, to));
+  const periodConsultations = consultations(ctx).filter((entry) => inPeriod(entry.on, from, to));
+  const allDrills = drills(ctx);
+  const periodDrills = allDrills.filter((entry) => entry.status === 'HELD' && inPeriod(entry.held?.on, from, to));
   const grade = (value: string) => periodFindings.filter((finding) => finding.grade === value).length;
 
   const inputs: ReviewInput[] = [
@@ -183,11 +190,40 @@ export function companyPosition(ctx: EngineContext, people: readonly Person[], p
       figures: {},
     },
     {
+      key: 'customers',
+      title: 'Customer satisfaction and complaints',
+      clauses: 'ISO 9001 9.3.2 c, 9.1.2',
+      summary: `${periodSurveys.length} satisfaction survey(s) in the period${periodSurveys.length ? `, averaging ${averageScore} out of 5` : ''}. ${periodComplaints.length} complaint(s) received: ${periodComplaints.filter((entry) => entry.status !== 'OPEN').length} answered, ${periodComplaints.filter((entry) => entry.status === 'OPEN').length} not yet answered, ${periodComplaints.filter((entry) => entry.actionId).length} raised a corrective action.`,
+      figures: {
+        surveys: periodSurveys.length,
+        averageScore,
+        complaints: periodComplaints.length,
+        unanswered: periodComplaints.filter((entry) => entry.status === 'OPEN').length,
+        actioned: periodComplaints.filter((entry) => entry.actionId).length,
+      },
+    },
+    {
       key: 'consultation',
-      title: 'Communication with interested parties, and consultation and participation of workers',
-      clauses: 'ISO 14001 9.3 c, ISO 45001 9.3 d',
-      summary: 'Not held in the records: the review records complaints, communications, and what workers raised and how it was answered.',
-      figures: {},
+      title: 'Consultation and participation of workers, and communication with interested parties',
+      clauses: 'ISO 45001 9.3 d, 5.4; ISO 14001 9.3 c',
+      summary: `${periodConsultations.length} consultation(s) with ${periodConsultations.reduce((sum, entry) => sum + entry.participants, 0)} worker participation(s) in the period; ${periodConsultations.filter((entry) => entry.status === 'ANSWERED').length} answered, ${periodConsultations.filter((entry) => entry.status === 'OPEN').length} not yet answered. Other communications with interested parties are minuted by the review.`,
+      figures: {
+        consultations: periodConsultations.length,
+        participations: periodConsultations.reduce((sum, entry) => sum + entry.participants, 0),
+        unanswered: periodConsultations.filter((entry) => entry.status === 'OPEN').length,
+      },
+    },
+    {
+      key: 'emergency',
+      title: 'Emergency preparedness',
+      clauses: 'ISO 14001 / 45001 8.2',
+      summary: `${periodDrills.length} drill(s) held in the period — ${periodDrills.filter((entry) => entry.held?.outcome === 'EFFECTIVE').length} effective, ${periodDrills.filter((entry) => entry.held?.outcome === 'PARTLY_EFFECTIVE').length} partly, ${periodDrills.filter((entry) => entry.held?.outcome === 'NOT_EFFECTIVE').length} not effective; ${allDrills.filter((entry) => entry.status === 'PLANNED' && entry.plannedOn < on).length} planned drill(s) overdue.`,
+      figures: {
+        held: periodDrills.length,
+        effective: periodDrills.filter((entry) => entry.held?.outcome === 'EFFECTIVE').length,
+        notFullyEffective: periodDrills.filter((entry) => entry.held && entry.held.outcome !== 'EFFECTIVE').length,
+        overdue: allDrills.filter((entry) => entry.status === 'PLANNED' && entry.plannedOn < on).length,
+      },
     },
   ];
   return { period: { from, to }, projects: projects.length, inputs };
