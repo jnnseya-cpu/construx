@@ -36003,8 +36003,12 @@ Walked in a browser on a fresh journal:
 
 ### The management system: not built, stated
 
-- **No live model run.** No provider key is configured in this environment; what
-  a real model drafts for a real company has not been seen here.
+- **One agent seen with a live model.** The owner reports that, on the deployed
+  platform with provider keys set, the legal-register agent returned proposals
+  for a company granted the module (2026-11-25). The other seven agents, and
+  reading an attached file (which needs a provider cleared to LEGAL_L4), have
+  not been reported run live. No provider key is configured in this development
+  environment, so none of it has been seen here.
 - **No ISO certification is claimed.** The platform holds and evidences the
   system; certification is a third-party audit of the company, not of software.
 - **The standards' text** is not held — clause numbers and headings only; the
