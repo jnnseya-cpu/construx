@@ -36114,10 +36114,90 @@ dependencies stands.
   - the catalogue filtered;
   - no page errors, no horizontal scroll at phone width.
 
+### Stage 2: AI pre-fill from the project's documents (built)
+
+`backend/src/domain/contracts/prefill.ts`, `overview.ts`; two routes (`.../drafts/:draftId/prefill`, an
+AI route quoted before it runs, and `.../drafts/:draftId/accept`).
+
+- **What it reads.** The agent (engine `CONTRACTS_CLAIMS`) reads this project's
+  already-read documents — the tender pack by default, or the ones chosen — and
+  proposes a value for each particular it finds, with the document, the place in
+  it and the passage word for word. **Nothing is applied**: the draft is
+  unchanged until a person chooses a value.
+- **Checked in code before anybody sees it.** Each of these is dropped and listed
+  with its reason:
+  - a particular not on the schedule;
+  - a document the agent was not given;
+  - a quote that is not in that document;
+  - no locator;
+  - a value that cannot be read as its type ("TBC").
+
+  What survives is normalised like a person's entry. Agreeing sources merge into
+  one candidate ("£1,250,000" and "1.25m"). Disagreeing values are a **conflict**,
+  shown side by side, and choosing one needs a reason
+  (`CONTRACT_CONFLICT_REASON`). Required particulars nobody found become
+  questions.
+- **Choosing a value** writes it through the same setter as manual entry (same
+  revision check, same normalisation). The source records the file, place, quote
+  and pre-fill. Replacing an evidence-sourced value by hand needs a note.
+- **Publisher text is never sent.** A document carrying an NEC, JCT or FIDIC
+  copyright notice is held back before the call, and the run lists it with the
+  reason. The check is the copyright notice: a copy that reproduces a form
+  without its notice is not caught, and the panel tells the person what is sent.
+- **Clearance.** Document text is `IngestedFile` (Legal-L4), so it goes only to a
+  provider cleared that far. Otherwise nothing is sent and nothing is charged
+  (`CONTRACT_PREFILL_NEEDS_A_MODEL`, or the clearance refusal).
+- **The run is written by the AI actor** (`CONTRACT_PREFILL_PROPOSED`,
+  `ContractPrefill`, Commercial-L3).
+- Dates written in words ("30 June 2028", "1st March 2027") now normalise, as a
+  model and a contract both write them. Impossible dates are still refused.
+
+**A pre-existing defect fixed on the way.** `POST /v1/ai/quote` never passed what
+a run carries. Every document-reading action was quoted as carrying "ordinary
+project information" with the provider shown as cleared, and was then refused at
+run time for carrying Legal-L4 material. The affected actions are:
+- the tender pack reading;
+- bid drafting;
+- planning site facts;
+- this pre-fill.
+
+The quote now carries `IngestedFile` whenever it is sized from read text, so the
+cost box shows the real classification and never offers an uncleared provider.
+
+**Verified.**
+- `npm test` 8,834 pass, typecheck clean. `tests/contractprefill.test.ts` (9), run
+  against a stub that slips in one bad answer of each kind, covers:
+  - publisher-notice detection;
+  - the JCT copy never reaching the payload;
+  - four proposals with one merged amount and one conflict;
+  - four drops;
+  - questions for missing particulars;
+  - the AI actor;
+  - nothing applied until chosen;
+  - acceptance with its source;
+  - the conflict reason;
+  - the side-by-side view;
+  - refusals for a reader, a foreign document and a run with nothing sendable;
+  - no call to an uncleared provider;
+  - the quote over HTTP carrying Legal-L4 and never offering an uncleared
+    provider.
+- Walked in a browser with three documents filed on the demonstration project
+  (an ITT, an award letter and a copy of JCT conditions), after the owner cleared
+  the provider:
+  - the JCT copy marked "not sent" in the panel and the run;
+  - six values proposed with passages;
+  - the sum from two documents merged;
+  - the two completion dates side by side;
+  - choosing one refused until a reason was given;
+  - no page errors, no horizontal scroll at phone width (a notice that laid its
+    parts side by side was fixed).
+
 ### Contracts Studio: not built yet, stated
 
-- **AI pre-fill from project evidence** (stage 2) is not built. Every particular
-  is entered by a person.
+- **No live model run of the pre-fill.** It has been run here only against a stub.
+- **Locators are what the model says.** The quote is checked word for word; the
+  page or clause number is not, because the read text does not keep page breaks
+  for every format.
 - **Approvals, the completion pack and the signed-package handover** (stage 3)
   are not built.
 - **Several legal entities and brands in one tenancy** are not built. Documents

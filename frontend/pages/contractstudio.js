@@ -25,6 +25,8 @@ const GROUP_WORDS = { PARTIES: 'Parties', PROJECT: 'The project', DATES: 'Dates'
 const PLACEHOLDER = { MONEY: '1,250,000', PERCENT: '3', DATE: '', DURATION: '12 months', REFERENCE: 'Document title, reference and revision', TEXT: '' };
 
 const optionsOf = (list) => list.map((value) => ({ value, label: humanise(value) }));
+/** Text from a document, made safe to place in the panel's pre-rendered brief. */
+const escape = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 function draftsCard(view, perms) {
   return html`<section class="card" style="margin-bottom:14px" aria-labelledby="cs-drafts-h" data-cs-drafts>
@@ -51,10 +53,11 @@ function draftCard(draft, perms) {
   const editable = perms.update && draft.status === 'DRAFTING';
   return html`<section class="card" style="margin-bottom:14px" aria-labelledby="cs-draft-h" data-cs-draft="${draft.id}">
     <h2 id="cs-draft-h">${draft.reference} ${draft.title} ${badge('revision ' + draft.revision, 'info')}
-      ${editable ? html`<button class="btn quiet sm" data-command="cs-withdraw" data-draft="${draft.id}">Withdraw</button>` : ''}</h2>
+      ${editable ? html`<button class="btn quiet sm" data-command="cs-prefill" data-draft="${draft.id}">Read the project documents (AI)</button> <button class="btn quiet sm" data-command="cs-withdraw" data-draft="${draft.id}">Withdraw</button>` : ''}</h2>
     <p class="metric-sub">${draft.formLabel} · ${draft.schedule.title} · in ${draft.currency}${draft.selection?.reasons?.length ? ' · chosen because: ' + draft.selection.reasons.join(' ') : ''}</p>
     ${draft.schedule.ownSchedule ? '' : notice('This form has no schedule of its own yet. The general particulars are recorded against it; they are a record of what was agreed, not a completed form.', 'info')}
     ${draft.withdrawn ? notice(html`Withdrawn ${date(draft.withdrawn.at)}: ${draft.withdrawn.reason}`, 'warn') : ''}
+    ${prefillNotice(draft)}
     ${draftNotice(draft)}
     ${draft.groups.map(
       (group) => html`<h3 style="margin:16px 0 6px;font-size:14px">${GROUP_WORDS[group.group] ?? humanise(group.group)}</h3>
@@ -63,8 +66,8 @@ function draftCard(draft, perms) {
           rows: group.fields.map((field) => [
             html`${field.label}${field.required ? '' : html` <span class="metric-sub">optional</span>`}${field.highRisk ? html` ${badge('moves money or time', 'warn')}` : ''}${field.help ? html`<br><span class="metric-sub">${field.help}</span>` : ''}`,
             field.display !== null
-              ? html`<b>${field.display}</b>${field.findings.length ? html`<br>${field.findings.map((finding) => badge(finding.message, finding.severity === 'BLOCKING' ? 'bad' : 'warn'))}` : ''}`
-              : html`${field.required ? badge('required', 'warn') : html`<span class="metric-sub">not completed</span>`}${field.findings.some((finding) => finding.code !== 'FIELD_MISSING') ? html`<br>${field.findings.filter((finding) => finding.code !== 'FIELD_MISSING').map((finding) => badge(finding.message, 'bad'))}` : ''}`,
+              ? html`<b>${field.display}</b>${field.findings.length ? html`<br>${field.findings.map((finding) => badge(finding.message, finding.severity === 'BLOCKING' ? 'bad' : 'warn'))}` : ''}${candidatesOf(draft, field, editable)}`
+              : html`${field.required ? badge('required', 'warn') : html`<span class="metric-sub">not completed</span>`}${field.findings.some((finding) => finding.code !== 'FIELD_MISSING') ? html`<br>${field.findings.filter((finding) => finding.code !== 'FIELD_MISSING').map((finding) => badge(finding.message, 'bad'))}` : ''}${candidatesOf(draft, field, editable)}`,
             field.source
               ? html`<span class="metric-sub">${field.source.kind === 'MANUAL' ? 'entered by ' + field.setBy : field.source.filename + ', ' + field.source.locator}${field.setAt ? ' · ' + date(field.setAt) : ''}${field.note ? ' · ' + field.note : ''}</span>`
               : '—',
@@ -79,15 +82,44 @@ function draftCard(draft, perms) {
   </section>`;
 }
 
+/** What the agent proposed for one particular: each value with its passage, side by side where the documents disagree. */
+function candidatesOf(draft, field, editable) {
+  const list = field.candidates ?? [];
+  if (!list.length) return '';
+  return html`<div style="margin-top:6px;display:flex;flex-direction:column;gap:6px" data-cs-candidates="${field.key}">
+    ${field.conflict ? badge('the documents disagree', 'bad') : ''}
+    ${list.map(
+      (candidate) => html`<div style="border-left:2px solid var(--line, #444);padding-left:8px;font-size:12.5px">
+        Proposed: <b>${candidate.display}</b> ${candidate.inDraft ? badge('in the draft', 'ok') : editable ? html`<button class="btn quiet sm" data-command="cs-accept" data-draft="${draft.id}" data-candidate="${candidate.id}">Use this</button>` : ''}
+        ${candidate.supports.map((support) => html`<div class="metric-sub">${support.filename}, ${support.locator}: “${support.quote}”</div>`)}
+      </div>`,
+    )}
+  </div>`;
+}
+
+/** What the latest pre-fill read, held back and could not find. */
+function prefillNotice(draft) {
+  const p = draft.prefill;
+  if (!p) return '';
+  return notice(
+    html`<div style="min-width:0"><b>Read by the agent ${date(p.proposedAt)}</b> (asked by ${p.requestedBy}, at revision ${p.draftRevision}): ${p.proposed} value${p.proposed === 1 ? '' : 's'} proposed from ${p.documents.map((doc) => doc.filename).join(', ')}${p.conflicts ? html` — ${badge(p.conflicts + ' in conflict', 'bad')}` : ''}. Nothing is in the draft until you choose it.
+      ${p.heldBack.length ? html`<div style="margin-top:6px"><b>Not sent:</b> ${p.heldBack.map((doc) => doc.filename + ' — ' + doc.reason).join(' ')}</div>` : ''}
+      ${p.omitted.length ? html`<div style="margin-top:6px"><b>Left out:</b> ${p.omitted.map((doc) => doc.filename + ' — ' + doc.reason).join(' ')}</div>` : ''}
+      ${p.dropped.length ? html`<details style="margin-top:6px"><summary style="cursor:pointer">${p.dropped.length} answer${p.dropped.length === 1 ? '' : 's'} dropped by the checks</summary><ul style="margin:4px 0 0 16px">${p.dropped.map((entry) => html`<li>${entry.fieldKey}: ${entry.reason}</li>`)}</ul></details>` : ''}
+      ${p.questions.length ? html`<details style="margin-top:6px"><summary style="cursor:pointer">${p.questions.length} question${p.questions.length === 1 ? '' : 's'} to settle</summary><ul style="margin:4px 0 0 16px">${p.questions.map((question) => html`<li>${question}</li>`)}</ul></details>` : ''}</div>`,
+    p.conflicts ? 'warn' : 'info',
+  );
+}
+
 /** What stands between the draft and approval: the missing particulars counted, everything else said. */
 function draftNotice(draft) {
   const missing = draft.findings.filter((finding) => finding.code === 'FIELD_MISSING').length;
   const other = draft.findings.filter((finding) => finding.code !== 'FIELD_MISSING');
   if (!missing && !other.length) return notice('Every required particular is completed and nothing conflicts.', 'ok');
   return notice(
-    html`<b>Before it can be approved:</b>${missing ? html` ${missing} required particular${missing === 1 ? ' is' : 's are'} not completed (marked below).` : ''}${
+    html`<div style="min-width:0"><b>Before it can be approved:</b>${missing ? html` ${missing} required particular${missing === 1 ? ' is' : 's are'} not completed (marked below).` : ''}${
       other.length ? html`<ul style="margin:6px 0 0 16px">${other.map((finding) => html`<li>${finding.severity === 'WARNING' ? 'Note: ' : ''}${finding.message}</li>`)}</ul>` : ''
-    }`,
+    }</div>`,
     draft.blocking ? 'warn' : 'info',
   );
 }
@@ -249,6 +281,47 @@ export async function contractstudio(root) {
         submitLabel: 'Clear it',
         fields: [{ name: 'note', label: 'Why (optional)', type: 'text', required: false }],
         transform: (values) => ({ key: field.key, value: null, ...(values.note ? { note: values.note } : {}), expectedRevision: draft.revision }),
+      };
+    },
+    'cs-prefill': (button) => {
+      const draft = draftOf(button);
+      const docs = Array.isArray(view.documents) ? view.documents : [];
+      return {
+        title: 'Read the project documents',
+        intent:
+          'The agent reads the project’s own read documents and proposes each particular it finds, quoting the passage. Nothing goes into the draft until you choose it. ' +
+          'A document carrying a publisher’s copyright notice (a copy of an NEC, JCT or FIDIC form) is not sent.',
+        path: `/v1/projects/${projectId}/contract-studio/drafts/${draft.id}/prefill`,
+        ai: true,
+        submitLabel: 'Read them',
+        fields: [
+          {
+            name: 'ingestionIds',
+            label: 'Documents to read (none ticked: all of them)',
+            type: 'multiselect',
+            required: false,
+            options: docs.map((doc) => ({ value: doc.ingestionId, label: doc.filename + (doc.heldBack ? ' — not sent: ' + doc.heldBack : '') })),
+          },
+        ],
+        report: (result) => ({
+          title: 'Read',
+          message: result.proposed + ' value(s) proposed, ' + result.conflicts + ' in conflict, ' + result.dropped + ' dropped by the checks' + (result.heldBack ? ', ' + result.heldBack + ' document(s) not sent' : '') + '. Choose the ones to use.',
+          tone: result.conflicts ? 'warn' : 'ok',
+        }),
+      };
+    },
+    'cs-accept': (button) => {
+      const draft = draftOf(button);
+      const field = draft.groups.flatMap((group) => group.fields).find((entry) => (entry.candidates ?? []).some((candidate) => candidate.id === button.dataset.candidate));
+      const candidate = field.candidates.find((entry) => entry.id === button.dataset.candidate);
+      return {
+        title: 'Use this for ' + field.label,
+        intent: field.conflict ? 'The documents disagree on this particular. Say why this value is the one.' : 'The value goes into the draft with its source.',
+        brief: candidate.supports.map((support) => '<p><b>' + escape(support.filename) + '</b>, ' + escape(support.locator) + ':<br>“' + escape(support.quote) + '”</p>').join(''),
+        path: `/v1/projects/${projectId}/contract-studio/drafts/${draft.id}/accept`,
+        submitLabel: 'Use ' + candidate.display,
+        fields: [{ name: 'note', label: field.conflict ? 'Why this value' : 'Note (optional)', type: 'text', required: Boolean(field.conflict) }],
+        transform: (values) => ({ prefillId: draft.prefill.id, candidateId: candidate.id, ...(values.note ? { note: values.note } : {}), expectedRevision: draft.revision }),
       };
     },
     'cs-withdraw': (button) => {

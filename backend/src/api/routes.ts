@@ -201,6 +201,8 @@ import * as imsReview from '../domain/ims/review.ts';
 import * as imsAgents from '../domain/ims/agents.ts';
 import * as imsEngagement from '../domain/ims/engagement.ts';
 import * as contractStudio from '../domain/contracts/drafts.ts';
+import * as contractOverview from '../domain/contracts/overview.ts';
+import * as contractPrefill from '../domain/contracts/prefill.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -28092,9 +28094,20 @@ export const ROUTES: Route[] = [
         : undefined;
       const inputText = heldFile?.extraction.text || matched.route.ai.quoteInputText?.(engineCtx, new URLSearchParams(input.path.split('?')[1] ?? ''));
       const passes = (matched.route.ai.passes ?? 1) * (input.repeat ?? 1);
+      /*
+       * What it carries, as well as how much. Every text a quote is sized from
+       * is text read out of uploaded files — the held file, the tender pack, the
+       * planning documents — and a run sends it under that record's
+       * classification. Quoted without it, every such action said it carried
+       * "ordinary project information" and showed the provider as cleared, and
+       * the run was then refused for carrying Legal-L4 material: the cost box
+       * promising what the platform was about to refuse.
+       */
+      const carried = inputText ? [{ refType: 'IngestedFile', refId: heldFile?.ingestionId ?? 'project-documents' }] : [];
 
       return platform.orchestrator.quote({
         ...(inputText ? { inputText } : {}),
+        ...(carried.length ? { inputRefs: carried } : {}),
         capability: matched.route.ai.capability,
         engine: matched.route.ai.engine,
         taskType: matched.route.ai.taskType,
@@ -28567,7 +28580,7 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/contract-studio',
     readOnly: true,
     description: 'Contracts Studio: the contract drafts on this project with every particular, its source and what blocks approval, and the UK form catalogue by exact edition',
-    handler: (platform, ctx) => contractStudio.studioOverview(projectContext(platform, ctx), contractNames(platform, ctx)),
+    handler: (platform, ctx) => contractOverview.studioOverview(projectContext(platform, ctx), contractNames(platform, ctx)),
   },
   {
     method: 'POST',
@@ -28611,6 +28624,36 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => contractStudio.setField(projectContext(platform, ctx), ctx.params.draftId as string, body<Parameters<typeof contractStudio.setField>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/prefill',
+    description: 'The pre-fill agent: reads the project’s own read documents and proposes each particular it finds, with the document, the place and the passage word for word; nothing is applied until a person chooses it. A document carrying a publisher’s copyright notice is never sent',
+    ai: {
+      engine: 'CONTRACTS_CLAIMS',
+      taskType: 'contract_prefill',
+      capability: 'REASONING',
+      quoteInputText: (engineCtx) => ingestion.packText(engineCtx, { maxCharacters: 150_000 }).text || undefined,
+    },
+    schema: { type: 'object', properties: { ingestionIds: { type: 'array', maxItems: 50, items: { type: 'string' } } }, additionalProperties: false },
+    handler: (platform, ctx) => contractPrefill.prefillDraft(projectContext(platform, ctx), ctx.params.draftId as string, body<{ ingestionIds?: string[] }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/accept',
+    description: 'Take one value the pre-fill proposed into the draft, with its source; where the documents disagreed, say why this one',
+    schema: {
+      type: 'object',
+      required: ['prefillId', 'candidateId', 'expectedRevision'],
+      properties: {
+        prefillId: { type: 'string', minLength: 1 },
+        candidateId: { type: 'string', minLength: 1 },
+        note: { type: 'string', maxLength: 1000 },
+        expectedRevision: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => contractPrefill.acceptCandidate(projectContext(platform, ctx), ctx.params.draftId as string, body<Parameters<typeof contractPrefill.acceptCandidate>[2]>(ctx)),
   },
   {
     method: 'POST',

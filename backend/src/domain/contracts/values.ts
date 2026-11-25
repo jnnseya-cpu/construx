@@ -57,13 +57,19 @@ function percent(field: FieldDef, raw: string): string {
   return String(value);
 }
 
+const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+
 function date(field: FieldDef, raw: string): string {
   let y: number, m: number, d: number;
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
   const uk = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(raw);
+  // "30 June 2028", "1st March 2027", "30 Sept 2028": how a contract document writes a date.
+  const words = /^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\.?,?\s+(\d{4})$/i.exec(raw);
+  const month = words ? MONTHS.findIndex((name) => name.startsWith(words[2]!.toLowerCase().slice(0, 3)) && name.startsWith(words[2]!.toLowerCase().replace(/^sept$/, 'sep'))) + 1 : 0;
   if (iso) [y, m, d] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
   else if (uk) [y, m, d] = [Number(uk[3]), Number(uk[2]), Number(uk[1])];
-  else return refuse(field, 'a date, as YYYY-MM-DD or DD/MM/YYYY');
+  else if (words && month > 0) [y, m, d] = [Number(words[3]), month, Number(words[1])];
+  else return refuse(field, 'a date, as YYYY-MM-DD, DD/MM/YYYY or 30 June 2028');
   const value = new Date(Date.UTC(y, m - 1, d));
   if (value.getUTCFullYear() !== y || value.getUTCMonth() !== m - 1 || value.getUTCDate() !== d) return refuse(field, 'a real calendar date');
   return value.toISOString().slice(0, 10);
@@ -90,7 +96,9 @@ export function normalise(field: FieldDef, value: unknown, currency: string): st
     case 'DURATION':
       return duration(field, raw);
     case 'CHOICE': {
-      const option = field.options?.find((entry) => entry.value === raw.toUpperCase() || entry.label.toLowerCase() === raw.toLowerCase());
+      // The stored value, the full label, or the label's short form before its dash ("Option C").
+      const wanted = raw.toLowerCase();
+      const option = field.options?.find((entry) => entry.value.toLowerCase() === wanted || entry.label.toLowerCase() === wanted || entry.label.split(' — ')[0]!.toLowerCase() === wanted);
       return option ? option.value : refuse(field, `one of: ${(field.options ?? []).map((entry) => entry.label).join('; ')}`);
     }
     case 'REFERENCE':

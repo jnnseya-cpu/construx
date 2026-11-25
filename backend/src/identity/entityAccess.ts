@@ -453,6 +453,8 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   ImsComplaint: { area: 'MANAGEMENT_SYSTEM' },
   // Carries the price, the damages and the security of a contract not yet agreed.
   ContractDraft: { area: 'CONTRACTS_CLAIMS', sensitivity: 'COMMERCIAL_L3' },
+  // What the agent read out of the project's documents for a draft: the same terms, proposed.
+  ContractPrefill: { area: 'CONTRACTS_CLAIMS', sensitivity: 'COMMERCIAL_L3' },
   ImsSatisfactionSurvey: { area: 'MANAGEMENT_SYSTEM' },
   ImsDrill: { area: 'MANAGEMENT_SYSTEM' },
   ImsConsultation: { area: 'MANAGEMENT_SYSTEM' },

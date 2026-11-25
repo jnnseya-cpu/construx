@@ -913,6 +913,7 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('CONTRACT_DRAFT_CREATED', 'ContractDraft', 'CREATE', 'CONTRACTS_CLAIMS', { creates: true }),
   def('CONTRACT_DRAFT_FIELD_SET', 'ContractDraft', 'UPDATE', 'CONTRACTS_CLAIMS'),
   def('CONTRACT_DRAFT_WITHDRAWN', 'ContractDraft', 'UPDATE', 'CONTRACTS_CLAIMS'),
+  def('CONTRACT_PREFILL_PROPOSED', 'ContractPrefill', 'CREATE', 'CONTRACTS_CLAIMS', { creates: true, aiAllowed: true }),
   def('IMS_COMPLAINT_RECORDED', 'ImsComplaint', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('IMS_COMPLAINT_RESPONDED', 'ImsComplaint', 'UPDATE', 'GOVERNANCE'),
   def('IMS_COMPLAINT_ACTIONED', 'ImsComplaint', 'UPDATE', 'GOVERNANCE'),

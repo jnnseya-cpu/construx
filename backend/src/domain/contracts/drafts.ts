@@ -3,8 +3,8 @@ import { ulid } from '../../core/ids.ts';
 import { authorise, write, type EngineContext } from '../../engines/context.ts';
 import { requireModule } from '../../identity/modules.ts';
 import type { PermissionCode } from '../../identity/roles.ts';
-import { CATALOGUE, draftable, formByKey, formLabel } from './catalogue.ts';
-import { DESIGN, PACKAGES, PRICING, recommendForms, SUITES, VALUE_BANDS, type SelectionInput } from './selection.ts';
+import { draftable, formByKey, formLabel } from './catalogue.ts';
+import { recommendForms, type SelectionInput } from './selection.ts';
 import { FIELD_GROUPS, findings, hasOwnSchedule, scheduleById, scheduleFor, type FieldDef, type Schedule } from './schedules.ts';
 import { display, DRAFT_CURRENCIES, normalise } from './values.ts';
 
@@ -37,7 +37,7 @@ export function guard(ctx: EngineContext, code: PermissionCode): void {
 export type FieldSource =
   | { kind: 'MANUAL' }
   /** Taken from a read project document, at a stated place in it. */
-  | { kind: 'EVIDENCE'; ingestionId: string; filename: string; locator: string; quote?: string };
+  | { kind: 'EVIDENCE'; prefillId: string; candidateId: string; ingestionId: string; filename: string; locator: string; quote: string };
 
 export type FieldEntry = {
   value: string;
@@ -81,7 +81,7 @@ export function draftOf(ctx: EngineContext, id: string): ContractDraft {
   return record.state as unknown as ContractDraft;
 }
 
-function scheduleOf(draft: ContractDraft): Schedule {
+export function scheduleOf(draft: ContractDraft): Schedule {
   const schedule = scheduleById(draft.scheduleId);
   if (!schedule) throw new DomainError('CONTRACT_SCHEDULE_UNKNOWN', `The schedule ${draft.scheduleId} this draft was opened on is not held.`, 500);
   return schedule;
@@ -152,6 +152,19 @@ export function createDraft(
  */
 export function setField(ctx: EngineContext, id: string, input: { key: string; value: string | null; note?: string; expectedRevision: number }): ContractDraft {
   guard(ctx, 'U');
+  return applyField(ctx, id, { ...input, source: { kind: 'MANUAL' } });
+}
+
+/**
+ * The one way a particular changes, whoever proposed the value: the person's own
+ * hand, or a passage of a project document they chose. Same revision check,
+ * same normalisation, same rule about replacing a value with a reason.
+ */
+export function applyField(
+  ctx: EngineContext,
+  id: string,
+  input: { key: string; value: string | null; note?: string; expectedRevision: number; source: FieldSource },
+): ContractDraft {
   const draft = draftOf(ctx, id);
   if (draft.status !== 'DRAFTING') throw new DomainError('CONTRACT_DRAFT_STATE', `${draft.reference} is ${draft.status.toLowerCase()}.`, 409);
   if (input.expectedRevision !== draft.revision) {
@@ -162,7 +175,8 @@ export function setField(ctx: EngineContext, id: string, input: { key: string; v
   if (!field) throw new DomainError('CONTRACT_FIELD_UNKNOWN', `${schedule.title} has no particular "${input.key}".`, 422, [{ field: 'key', message: 'not on this schedule' }]);
   const current = draft.fields[field.key];
   const value = input.value === null ? null : normalise(field, input.value, draft.currency);
-  if ((value === null && !current) || (current && value === current.value)) return draft;
+  const sameSource = current && JSON.stringify(current.source) === JSON.stringify(input.source);
+  if ((value === null && !current) || (current && value === current.value && (sameSource || input.source.kind === 'MANUAL'))) return draft;
   const note = typeof input.note === 'string' && input.note.trim() ? reasonText(input.note, 'note', 3, 'Say why.', 1000) : undefined;
   if (current && current.source.kind !== 'MANUAL' && !note) {
     throw new DomainError('CONTRACT_OVERRIDE_REASON', `${field.label} came from ${current.source.kind.toLowerCase()}; say why it is being replaced.`, 422, [{ field: 'note', message: 'why' }]);
@@ -170,13 +184,13 @@ export function setField(ctx: EngineContext, id: string, input: { key: string; v
   const revision = draft.revision + 1;
   const fields = { ...draft.fields };
   if (value === null) delete fields[field.key];
-  else fields[field.key] = { value, source: { kind: 'MANUAL' }, ...(note ? { note } : {}), setBy: ctx.auth.actorId, setAt: new Date().toISOString(), revision };
+  else fields[field.key] = { value, source: input.source, ...(note ? { note } : {}), setBy: ctx.auth.actorId, setAt: new Date().toISOString(), revision };
   const next: ContractDraft = { ...strip(draft), fields, revision };
   write(ctx, {
     eventType: 'CONTRACT_DRAFT_FIELD_SET',
     entity: { refType: 'ContractDraft', refId: id },
     nextState: next as unknown as Record<string, unknown>,
-    reason: `${draft.reference} revision ${revision}: ${field.label} ${value === null ? 'cleared' : 'set'}${note ? ` — ${note}` : ''}`,
+    reason: `${draft.reference} revision ${revision}: ${field.label} ${value === null ? 'cleared' : input.source.kind === 'EVIDENCE' ? `set from ${input.source.filename}, ${input.source.locator}` : 'set'}${note ? ` — ${note}` : ''}`,
   });
   return next;
 }
@@ -222,18 +236,6 @@ export function draftView(draft: ContractDraft, nameOf: (actorId: string) => str
     completion: { required: required.length, completed: required.filter((field) => draft.fields[field.key]).length },
     findings: found,
     blocking: found.filter((finding) => finding.severity === 'BLOCKING').length,
-  };
-}
-
-/** Everything the Contracts Studio screen reads for a project. */
-export function studioOverview(ctx: EngineContext, nameOf: (actorId: string) => string) {
-  guard(ctx, 'R');
-  return {
-    drafts: drafts(ctx)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map((draft) => draftView(draft, nameOf)),
-    catalogue: CATALOGUE.map((entry) => ({ ...entry, draftable: draftable(entry), ownSchedule: hasOwnSchedule(entry.key) })),
-    vocabulary: { packages: PACKAGES, design: DESIGN, pricing: PRICING, valueBands: VALUE_BANDS, suites: SUITES, currencies: DRAFT_CURRENCIES },
   };
 }
 

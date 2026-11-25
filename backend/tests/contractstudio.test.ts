@@ -3,8 +3,10 @@ import { before, describe, it } from 'node:test';
 import { ROUTES } from '../src/api/routes.ts';
 import { CATALOGUE, draftable, formByKey } from '../src/domain/contracts/catalogue.ts';
 import * as studio from '../src/domain/contracts/drafts.ts';
+import * as overview from '../src/domain/contracts/overview.ts';
 import { scheduleFor } from '../src/domain/contracts/schedules.ts';
 import { recommendForms, RULE_KEYS } from '../src/domain/contracts/selection.ts';
+import { normalise } from '../src/domain/contracts/values.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -81,10 +83,10 @@ describe('a contract draft', () => {
   let ecc: studio.ContractDraft;
 
   it('is refused without the module, and to a role not cleared for commercial terms', () => {
-    refused(() => studio.studioOverview(as('qs'), names), 'MODULE_NOT_GRANTED');
+    refused(() => overview.studioOverview(as('qs'), names), 'MODULE_NOT_GRANTED');
     platform.setModuleGrant({ moduleId: 'CONTRACTS_STUDIO', tenantId: seed.tenantId, status: 'ACTIVE', reason: 'Contracts Studio test', decidedBy: seed.users.operator!.id });
-    refused(() => studio.studioOverview(as('planner'), names), 'ACCESS_DENIED');
-    assert.equal(studio.studioOverview(as('qs'), names).catalogue.length, 168);
+    refused(() => overview.studioOverview(as('planner'), names), 'ACCESS_DENIED');
+    assert.equal(overview.studioOverview(as('qs'), names).catalogue.length, 168);
   });
 
   it('opens only on a pinned edition the person confirms', () => {
@@ -110,9 +112,15 @@ describe('a contract draft', () => {
     assert.equal(draft.fields.starting_date!.value, '2027-03-01');
     assert.equal(draft.revision, 2);
     refused(() => studio.setField(as('qs'), ecc.id, { key: 'completion_date', value: '31/02/2028', expectedRevision: 2 }), 'CONTRACT_FIELD_VALUE');
+    refused(() => studio.setField(as('qs'), ecc.id, { key: 'completion_date', value: '31 February 2028', expectedRevision: 2 }), 'CONTRACT_FIELD_VALUE');
+    refused(() => studio.setField(as('qs'), ecc.id, { key: 'completion_date', value: 'June 2028', expectedRevision: 2 }), 'CONTRACT_FIELD_VALUE');
     refused(() => studio.setField(as('qs'), ecc.id, { key: 'fee_percentage', value: 'about ten', expectedRevision: 2 }), 'CONTRACT_FIELD_VALUE');
     refused(() => studio.setField(as('qs'), ecc.id, { key: 'delay_damages', value: '€5,000', expectedRevision: 2 }), 'CONTRACT_FIELD_VALUE');
     refused(() => studio.setField(as('qs'), ecc.id, { key: 'contract_sum', value: '1000000', expectedRevision: 2 }), 'CONTRACT_FIELD_UNKNOWN');
+    assert.equal(studio.setField(as('qs'), ecc.id, { key: 'starting_date', value: '1st March 2027', expectedRevision: 2 }).revision, 2, 'the same date written in words is no change');
+    for (const [written, iso] of [['30 June 2028', '2028-06-30'], ['30 Sept 2028', '2028-09-30'], ['2 Jun. 2028', '2028-06-02']] as const) {
+      assert.equal(normalise({ key: 'd', label: 'Date', group: 'DATES', type: 'DATE', required: true }, written, 'GBP'), iso);
+    }
     draft = studio.setField(as('qs'), ecc.id, { key: 'delay_damages', value: '£5,000', expectedRevision: 2 });
     assert.equal(draft.fields.delay_damages!.value, '5000.00');
     const same = studio.setField(as('qs'), ecc.id, { key: 'delay_damages', value: '5k', expectedRevision: 3 });
