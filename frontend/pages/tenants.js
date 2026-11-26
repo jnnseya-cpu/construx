@@ -457,7 +457,7 @@ export async function tenants(root) {
                   // is the question the reference exists to answer, and a
                   // register that held it without showing it would not answer
                   // it.
-                  grant.agreementRef ? html`${grant.moduleName}<div class="metric-sub">${grant.agreementRef}</div>` : grant.moduleName,
+                  html`${grant.moduleName}${grant.agreementRef ? html`<div class="metric-sub">${grant.agreementRef}</div>` : ''}${grant.status === 'ACTIVE' ? html`<div class="metric-sub">${register.modules.find((definition) => definition.id === grant.moduleId)?.billed === false ? 'own companies only — not billed' : (grant.seats ?? 1) + ' named seat' + ((grant.seats ?? 1) === 1 ? '' : 's') + ', billed monthly'}</div>` : ''}`,
                   badge(grant.status.toLowerCase(), grant.status === 'ACTIVE' ? 'ok' : 'warn'),
                   html`${date(grant.grantedAt)}<div class="metric-sub">${grant.grantedByName}</div>`,
                   grant.status === 'ACTIVE' ? grant.reason : grant.revokedReason ?? grant.reason,
@@ -1487,10 +1487,10 @@ export async function tenants(root) {
       const result = await command({
         title: `${revoke ? 'Revoke' : 'Grant again'} — ${moduleName} for ${name}`,
         intent: revoke
-          ? 'The module closes for this tenancy on its next request: routes, commands and agents alike. What was written stays on the ledger. The reason is recorded against the decision.'
+          ? 'The module closes for this tenancy on its next request: routes, commands and agents alike, and it comes off their monthly subscription. What was written stays on the ledger. The reason is recorded against the decision.'
           : agreement
-            ? 'The module reopens for this tenancy under the agreement named below. The earlier grant and revocation stay on the register, and so does the agreement each was made under.'
-            : 'The module reopens for this tenancy. The earlier grant and revocation stay on the register.',
+            ? 'The module reopens for this tenancy under the agreement named below, and returns to their monthly subscription at the seats it held. The earlier grant and revocation stay on the register, and so does the agreement each was made under.'
+            : 'The module reopens for this tenancy and returns to their monthly subscription at the seats it held. The earlier grant and revocation stay on the register.',
         path: `/v1/admin/tenants/${tenant}/modules/${module}`,
         submitLabel: revoke ? 'Revoke' : 'Grant',
         fields: [
@@ -1566,9 +1566,10 @@ export async function tenants(root) {
       const choice = await command({
         title: `Private modules — ${tenant?.legalName ?? 'tenancy'}`,
         intent:
-          'Gives this company capability that is not part of the subscription and is not on the pricing page. It sits ' +
-          'beside whatever package they pay for — everything else they hold carries on unchanged — and nobody without ' +
-          'the grant is told the module exists. The reason is recorded against the decision.',
+          'Gives this company a module that is not on the pricing page. Holding a billed module adds it to their monthly ' +
+          'subscription — one named seat included, each further seat on top — beside whatever package they pay for; ' +
+          'ETABLIX and Bid-On are for your own companies only and are never billed. Nobody without the grant is told the ' +
+          'module exists, and a free-exempt account holds every module free. The reason is recorded against the decision.',
         // The module is a path segment rather than a body field, so the path is
         // a function of what the person picked — the endpoint would otherwise
         // have two ways to say which module this is.
@@ -1609,6 +1610,7 @@ export async function tenants(root) {
               ? `The signed contract or order reference. Required for ${agreementModules.join(', ')}; ignored by the rest, and never asked for on a revocation.`
               : 'The signed contract or order reference, where the module is allocated under one.',
           },
+          { name: 'seats', label: 'Named seats (one is included in the monthly fee)', type: 'number', step: '1', min: 1, required: false, hint: 'Each further seat is charged monthly on top of the module’s fee. Leave blank to keep what the company holds, or one for a new grant.' },
           { name: 'validFrom', label: 'Starts (optional — scheduled until then)', type: 'date', iso: true, required: false },
           { name: 'validTo', label: 'Expires (optional — closes from that day)', type: 'date', iso: true, required: false },
         ],
@@ -1621,6 +1623,7 @@ export async function tenants(root) {
           ...(values.agreementRef ? { agreementRef: values.agreementRef } : {}),
           ...(values.validFrom ? { validFrom: values.validFrom } : {}),
           ...(values.validTo ? { validTo: values.validTo } : {}),
+          ...(values.seats ? { seats: Number(values.seats) } : {}),
         }),
       });
 

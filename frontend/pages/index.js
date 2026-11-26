@@ -56,6 +56,7 @@ import { siteservices } from './siteservices.js';
 import { bidon } from './bidon.js';
 import { bidonguest } from './bidonguest.js';
 import { planning } from './planning.js';
+import { contractstudio } from './contractstudio.js';
 import { ims } from './ims.js';
 import { settings } from './settings.js';
 import { signup } from './signup.js';
@@ -100,6 +101,7 @@ export const PAGES = {
   bidonguest,
   planning,
   ims,
+  contractstudio,
   documents,
   commercial,
   commands,

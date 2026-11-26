@@ -798,6 +798,7 @@ export async function billing(root) {
       toast(
         `Statement ${invoice.period}`,
         `Payable ${exact(invoice.totalMinor, invoice.currency)} — subscription ${exact(invoice.subscriptionMinor, invoice.currency)}` +
+          `${invoice.modulesMinor ? ` + modules ${exact(invoice.modulesMinor, invoice.currency)}` : ''}` +
           `${invoice.storageMinor ? ` + storage ${exact(invoice.storageMinor, invoice.currency)}` : ''}. ` +
           `AI ${exact(invoice.aiUsageMinor, invoice.currency)} was drawn from prepaid credit.`,
         'ok',

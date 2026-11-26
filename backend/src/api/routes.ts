@@ -200,6 +200,11 @@ import * as riddor from '../domain/riddor.ts';
 import * as imsReview from '../domain/ims/review.ts';
 import * as imsAgents from '../domain/ims/agents.ts';
 import * as imsEngagement from '../domain/ims/engagement.ts';
+import * as contractStudio from '../domain/contracts/drafts.ts';
+import * as contractOverview from '../domain/contracts/overview.ts';
+import * as contractPrefill from '../domain/contracts/prefill.ts';
+import * as contractApprovals from '../domain/contracts/approvals.ts';
+import * as contractPack from '../domain/contracts/pack.ts';
 import * as tenderbrief from '../domain/tenderbrief.ts';
 import * as tenderscope from '../domain/tenderscope.ts';
 import * as contractreview from '../domain/contractreview.ts';
@@ -762,6 +767,33 @@ function imsPeople(platform: Platform, ctx: RequestContext): imsCore.Person[] {
   const actor = auth(ctx);
   externalsRefused(platform, actor, 'the management system');
   return platform.users(actor.tenantId).map((user) => ({ id: user.id, name: user.name, roles: user.roles, status: user.status }));
+}
+
+/** What a contract-form shortlist is asked from; also kept on a draft opened from one. */
+const CONTRACT_SELECTION_SCHEMA: Schema = {
+  type: 'object',
+  required: ['package'],
+  properties: {
+    package: { type: 'string', enum: ['MAIN_WORKS', 'SUBCONTRACT', 'CONSULTANCY', 'SUPPLY', 'TERM_SERVICES', 'HOMEOWNER'] },
+    design: { type: 'string', enum: ['EMPLOYER', 'SHARED', 'CONTRACTOR'] },
+    pricing: { type: 'string', enum: ['LUMP_SUM_WITH_QUANTITIES', 'LUMP_SUM_WITHOUT_QUANTITIES', 'ACTIVITY_SCHEDULE', 'REMEASURED', 'TARGET_COST', 'COST_REIMBURSABLE'] },
+    valueBand: { type: 'string', enum: ['SMALL', 'MEDIUM', 'LARGE', 'MAJOR'] },
+    international: { type: 'boolean' },
+    preferredSuite: { type: 'string', enum: ['JCT', 'NEC', 'FIDIC'] },
+    tenderNamedFormKey: { type: 'string', maxLength: 120 },
+  },
+  additionalProperties: false,
+};
+
+/** Names for the people on a draft's record, from the identity layer. */
+function contractNames(platform: Platform, ctx: RequestContext): (actorId: string) => string {
+  const users = platform.users(auth(ctx).tenantId);
+  return (actorId) => users.find((user) => user.id === actorId)?.name ?? actorId;
+}
+
+/** The document identity a contract pack would be issued under now, by its version. */
+function contractBrandVersion(platform: Platform, ctx: RequestContext): number | null {
+  return platform.exports.brandingIfConfigured(auth(ctx).tenantId, ctx.params.projectId as string)?.profileVersion ?? null;
 }
 
 function tenantContext(platform: Platform, ctx: RequestContext) {
@@ -2627,6 +2659,8 @@ export const ROUTES: Route[] = [
         // be omitted; a grant with neither is from now, open-ended.
         validFrom: { type: 'string' },
         validTo: { type: 'string' },
+        // The named seats the company pays for, one included in the monthly fee.
+        seats: { type: 'integer', minimum: 1, maximum: 500 },
       },
       additionalProperties: false,
     },
@@ -2643,7 +2677,7 @@ export const ROUTES: Route[] = [
       if (!isModuleId(moduleId)) {
         throw new DomainError('MODULE_UNKNOWN', `${moduleId} is not a module this platform has`, 404);
       }
-      const input = body<{ status: 'ACTIVE' | 'REVOKED'; reason: string; agreementRef?: string; validFrom?: string; validTo?: string }>(ctx);
+      const input = body<{ status: 'ACTIVE' | 'REVOKED'; reason: string; agreementRef?: string; validFrom?: string; validTo?: string; seats?: number }>(ctx);
       const grant = platform.setModuleGrant({
         moduleId,
         tenantId: ctx.params.tenantId!,
@@ -2653,6 +2687,7 @@ export const ROUTES: Route[] = [
         ...(input.agreementRef ? { agreementRef: input.agreementRef } : {}),
         ...(input.validFrom ? { validFrom: input.validFrom } : {}),
         ...(input.validTo ? { validTo: input.validTo } : {}),
+        ...(input.seats !== undefined ? { seats: input.seats } : {}),
       });
       return {
         ...grant,
@@ -28069,9 +28104,20 @@ export const ROUTES: Route[] = [
         : undefined;
       const inputText = heldFile?.extraction.text || matched.route.ai.quoteInputText?.(engineCtx, new URLSearchParams(input.path.split('?')[1] ?? ''));
       const passes = (matched.route.ai.passes ?? 1) * (input.repeat ?? 1);
+      /*
+       * What it carries, as well as how much. Every text a quote is sized from
+       * is text read out of uploaded files — the held file, the tender pack, the
+       * planning documents — and a run sends it under that record's
+       * classification. Quoted without it, every such action said it carried
+       * "ordinary project information" and showed the provider as cleared, and
+       * the run was then refused for carrying Legal-L4 material: the cost box
+       * promising what the platform was about to refuse.
+       */
+      const carried = inputText ? [{ refType: 'IngestedFile', refId: heldFile?.ingestionId ?? 'project-documents' }] : [];
 
       return platform.orchestrator.quote({
         ...(inputText ? { inputText } : {}),
+        ...(carried.length ? { inputRefs: carried } : {}),
         capability: matched.route.ai.capability,
         engine: matched.route.ai.engine,
         taskType: matched.route.ai.taskType,
@@ -28537,6 +28583,161 @@ export const ROUTES: Route[] = [
     description:
       'The executive brief: the recommendation, the binding deadlines, the decision drivers and the approvals; the nine outputs of the bid review, each Ready for Review, In Draft or Blocked with what stands in the way; and the submission manifest',
     handler: (platform, ctx) => tenderbrief.tenderBrief(projectContext(platform, ctx)),
+  },
+  // --- CONSTRUX Contracts Studio (the CONTRACTS_STUDIO module) ---------------
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/contract-studio',
+    readOnly: true,
+    description: 'Contracts Studio: the contract drafts on this project with every particular, its source and what blocks approval, and the UK form catalogue by exact edition',
+    handler: (platform, ctx) => contractOverview.studioOverview(projectContext(platform, ctx), contractNames(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/selection',
+    readOnly: true,
+    description: 'A shortlist of the forms that suit the job — what is bought, who designs it, how it is priced, its size — with the reason for each; a form the tender names comes first',
+    schema: CONTRACT_SELECTION_SCHEMA,
+    handler: (platform, ctx) => contractStudio.selectForm(projectContext(platform, ctx), body<Parameters<typeof contractStudio.selectForm>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts',
+    description: 'Open a contract draft on one form, its exact edition confirmed, in a stated currency',
+    schema: {
+      type: 'object',
+      required: ['formKey', 'confirmEdition', 'title'],
+      properties: {
+        formKey: { type: 'string', minLength: 3, maxLength: 120 },
+        confirmEdition: { type: 'string', minLength: 1, maxLength: 120 },
+        title: { type: 'string', minLength: 3, maxLength: 200 },
+        currency: { type: 'string', enum: ['GBP', 'EUR', 'USD'] },
+        selection: CONTRACT_SELECTION_SCHEMA,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => contractStudio.createDraft(projectContext(platform, ctx), body<Parameters<typeof contractStudio.createDraft>[1]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/fields',
+    description: 'Set or clear one particular of a contract draft, against the revision you were looking at; replacing a value taken from evidence needs a note',
+    schema: {
+      type: 'object',
+      required: ['key', 'value', 'expectedRevision'],
+      properties: {
+        key: { type: 'string', minLength: 1, maxLength: 80 },
+        value: { type: ['string', 'null'], maxLength: 3000 },
+        note: { type: 'string', maxLength: 1000 },
+        expectedRevision: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => contractStudio.setField(projectContext(platform, ctx), ctx.params.draftId as string, body<Parameters<typeof contractStudio.setField>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/prefill',
+    description: 'The pre-fill agent: reads the project’s own read documents and proposes each particular it finds, with the document, the place and the passage word for word; nothing is applied until a person chooses it. A document carrying a publisher’s copyright notice is never sent',
+    ai: {
+      engine: 'CONTRACTS_CLAIMS',
+      taskType: 'contract_prefill',
+      capability: 'REASONING',
+      quoteInputText: (engineCtx) => ingestion.packText(engineCtx, { maxCharacters: 150_000 }).text || undefined,
+    },
+    schema: { type: 'object', properties: { ingestionIds: { type: 'array', maxItems: 50, items: { type: 'string' } } }, additionalProperties: false },
+    handler: (platform, ctx) => contractPrefill.prefillDraft(projectContext(platform, ctx), ctx.params.draftId as string, body<{ ingestionIds?: string[] }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/accept',
+    description: 'Take one value the pre-fill proposed into the draft, with its source; where the documents disagreed, say why this one',
+    schema: {
+      type: 'object',
+      required: ['prefillId', 'candidateId', 'expectedRevision'],
+      properties: {
+        prefillId: { type: 'string', minLength: 1 },
+        candidateId: { type: 'string', minLength: 1 },
+        note: { type: 'string', maxLength: 1000 },
+        expectedRevision: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => contractPrefill.acceptCandidate(projectContext(platform, ctx), ctx.params.draftId as string, body<Parameters<typeof contractPrefill.acceptCandidate>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/submit',
+    description: 'Put a contract draft up for review, with nothing blocking it; what is reviewed is fixed by the hash of that revision',
+    schema: { type: 'object', required: ['expectedRevision'], properties: { expectedRevision: { type: 'integer', minimum: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => contractApprovals.submitForReview(projectContext(platform, ctx), ctx.params.draftId as string, body<{ expectedRevision: number }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/approve',
+    description: 'Approve a contract draft in review, commercially or legally, against the revision hash you were shown; two different people, neither the one who put it up',
+    schema: {
+      type: 'object',
+      required: ['scope', 'revisionHash', 'note'],
+      properties: { scope: { type: 'string', enum: ['COMMERCIAL', 'LEGAL'] }, revisionHash: { type: 'string', minLength: 10, maxLength: 200 }, note: { type: 'string', minLength: 3, maxLength: 1000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      contractApprovals.approveDraft(projectContext(platform, ctx), ctx.params.draftId as string, body<Parameters<typeof contractApprovals.approveDraft>[2]>(ctx), contractBrandVersion(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/return',
+    description: 'Return a contract draft in review to drafting, saying what needs to change',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => contractApprovals.returnDraft(projectContext(platform, ctx), ctx.params.draftId as string, body<{ note: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/reopen',
+    description: 'Reopen an approved contract draft for a change; its approvals are voided and kept on the record as voided',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => contractApprovals.reopenDraft(projectContext(platform, ctx), ctx.params.draftId as string, body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/execute',
+    description: 'Record the signed contract — by its hash, how and when it was signed — and create and execute it in the contract register from the approved particulars',
+    schema: {
+      type: 'object',
+      required: ['signedDocumentHash', 'signatureMethod', 'executedOn'],
+      properties: { signedDocumentHash: { type: 'string', minLength: 64, maxLength: 80 }, signatureMethod: { type: 'string', minLength: 3, maxLength: 200 }, executedOn: { type: 'string', minLength: 10, maxLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => contractApprovals.recordExecution(projectContext(platform, ctx), ctx.params.draftId as string, body<Parameters<typeof contractApprovals.recordExecution>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/pack.pdf',
+    binary: true,
+    description: 'The completion pack of an approved contract draft (PDF or DOCX): every particular with its source, what was left blank, the approvals and the hash approved, under the document identity frozen at approval',
+    schema: { type: 'object', properties: { format: { type: 'string', enum: ['PDF', 'DOCX'] } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const projectId = ctx.params.projectId as string;
+      const actor = auth(ctx);
+      const chosen: RenderableFormat = body<{ format?: RenderableFormat }>(ctx).format ?? 'PDF';
+      const draft = contractPack.issuableDraft(projectContext(platform, ctx), ctx.params.draftId as string, contractBrandVersion(platform, ctx));
+      const pack = contractPack.packDocument(draft, contractNames(platform, ctx));
+      const document = platform.exports.document(actor, projectId, { ...pack, audience: 'CLIENT', format: chosen, correlationId: ctx.correlationId });
+      return renderAndCharge(
+        platform.spendingWalletFor(actor, projectId).wallet,
+        document,
+        { format: chosen, projectId, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-studio/drafts/:draftId/withdraw',
+    description: 'Withdraw a contract draft, with the reason; it stays on the record',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => contractStudio.withdrawDraft(projectContext(platform, ctx), ctx.params.draftId as string, body<{ reason: string }>(ctx)),
   },
   // --- CONSTRUX Planning (the PLANNING module) -------------------------------
   {

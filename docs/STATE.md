@@ -36003,8 +36003,12 @@ Walked in a browser on a fresh journal:
 
 ### The management system: not built, stated
 
-- **No live model run.** No provider key is configured in this environment; what
-  a real model drafts for a real company has not been seen here.
+- **One agent seen with a live model.** The owner reports that, on the deployed
+  platform with provider keys set, the legal-register agent returned proposals
+  for a company granted the module (2026-11-25). The other seven agents, and
+  reading an attached file (which needs a provider cleared to LEGAL_L4), have
+  not been reported run live. No provider key is configured in this development
+  environment, so none of it has been seen here.
 - **No ISO certification is claimed.** The platform holds and evidences the
   system; certification is a third-party audit of the company, not of software.
 - **The standards' text** is not held — clause numbers and headings only; the
@@ -36018,3 +36022,333 @@ Walked in a browser on a fresh journal:
   on the Documents screen before an agent can read it.
 - **Read and understood** counts the company's active identities in the roles a
   document is issued to; operatives without a platform identity are not counted.
+
+## 2026-11 CONSTRUX Contracts Studio
+
+Built from the Contracts Studio developer handoff of 25 November 2026. It is
+built on the existing stack, not the handoff's suggested React / PostgreSQL / job
+queue, which the handoff itself allows ("equivalent stacks"). Zero runtime
+dependencies stands.
+
+- **A private module**, `CONTRACTS_STUDIO`. The operator grants it per company,
+  as with Planning and the Management System.
+- **Area:** `CONTRACTS_CLAIMS`. Drafts are `ContractDraft`, classed Commercial-L3:
+  a role not cleared for commercial terms is refused (the planner is, and the
+  screen shows it as a denial).
+- **Screen:** "Contracts Studio" in the Commercial group, before Change & Claims.
+
+### Stage 1: the catalogue, the shortlist, the draft (built)
+
+`backend/src/domain/contracts/` (`catalogue.ts`, `schedules.ts`, `values.ts`,
+`selection.ts`, `drafts.ts`); `frontend/pages/contractstudio.js`; five routes under
+`/v1/projects/:projectId/contract-studio`.
+
+- **The catalogue** is the handoff's 168 UK forms (JCT, NEC, FIDIC, IChemE, ACA
+  and other UK families), by publisher, exact edition, code and title.
+  - It holds metadata only, never wording.
+  - `CURRENT` (111) and `LEGACY` entries can be drafted on.
+  - `VERIFY_ISSUE` entries cannot (`CONTRACT_FORM_EDITION_UNPINNED`). These are
+    families, regional adaptations and "earlier editions" import routes; a
+    placeholder never resolves to some current edition.
+- **The shortlist** is deterministic: package, who designs, pricing basis, size,
+  international, preferred suite.
+  - A ranked list of current forms comes back, each with its reasons, and a note
+    of what was not said.
+  - A form the tender names comes first.
+  - It is a starting point and says so; no model is involved.
+- **Schedules** are the platform's own list of particulars, under original labels.
+  - Three have their own schedule, each pinned to its exact edition: JCT D&B 2024,
+    NEC4 ECC (January 2023 revision) and FIDIC Yellow (2017, 2022 reprint).
+  - Every other draftable form uses the general schedule, and the screen says
+    that this is a record of the agreed particulars, not a completed form.
+  - The 2017-original Yellow does not get the 2022 reprint's schedule, and ECC's
+    main options are not carried to another NEC form.
+- **A draft** opens only on a form whose edition the person types back
+  (`CONTRACT_EDITION_NOT_CONFIRMED`), in GBP, EUR or USD.
+  - Every change to a particular is a new revision, made against the revision
+    the person was looking at (`CONTRACT_DRAFT_STALE`, 412).
+  - Values are normalised by type:
+    - money is a decimal string in the draft's currency, and an amount in another
+      currency is refused;
+    - percentages are bounded;
+    - dates must be real calendar dates (ISO or DD/MM/YYYY);
+    - durations are a number and a unit;
+    - choices accept a value or its label.
+  - The same value written another way is no change and writes nothing.
+  - Replacing a value that did not come from the person's own hand needs a note
+    (`CONTRACT_OVERRIDE_REASON`).
+  - A withdrawn draft takes no change.
+- **Findings** that block approval:
+  - missing required particulars;
+  - completion not after the start;
+  - delay damages without a "per day / per week";
+  - JCT sections chosen but not dated;
+  - NEC4 ECC:
+    - a main option paired with the wrong pricing document (A/C an activity
+      schedule, B/D a bill, E/F neither);
+    - C–F without the fee percentage;
+    - delay damages without X7, and X7 without damages.
+
+  Z clauses and FIDIC special provisions are flagged for legal review.
+
+**Verified.**
+- `npm test` 8,825 pass, typecheck clean. `tests/contractstudio.test.ts` (13)
+  covers:
+  - the catalogue counts and keys;
+  - every key the rules name existing and current;
+  - the shortlist cases and the tender-named override;
+  - module and clearance refusals;
+  - edition confirmation;
+  - normalisation and refusals;
+  - stale revisions;
+  - the NEC findings;
+  - one ledger event per revision;
+  - another project's draft reading as none;
+  - withdrawal.
+- Walked in a browser on a fresh journal:
+  - the shortlist with reasons;
+  - a wrong edition refused in the form;
+  - a JCT D&B draft completed field by field, with an impossible date refused and
+    out-of-order dates and undated sections flagged;
+  - a second person editing from an outdated view refused with the reason;
+  - the catalogue filtered;
+  - no page errors, no horizontal scroll at phone width.
+
+### Stage 2: AI pre-fill from the project's documents (built)
+
+`backend/src/domain/contracts/prefill.ts`, `overview.ts`; two routes (`.../drafts/:draftId/prefill`, an
+AI route quoted before it runs, and `.../drafts/:draftId/accept`).
+
+- **What it reads.** The agent (engine `CONTRACTS_CLAIMS`) reads this project's
+  already-read documents — the tender pack by default, or the ones chosen — and
+  proposes a value for each particular it finds, with the document, the place in
+  it and the passage word for word. **Nothing is applied**: the draft is
+  unchanged until a person chooses a value.
+- **Checked in code before anybody sees it.** Each of these is dropped and listed
+  with its reason:
+  - a particular not on the schedule;
+  - a document the agent was not given;
+  - a quote that is not in that document;
+  - no locator;
+  - a value that cannot be read as its type ("TBC").
+
+  What survives is normalised like a person's entry. Agreeing sources merge into
+  one candidate ("£1,250,000" and "1.25m"). Disagreeing values are a **conflict**,
+  shown side by side, and choosing one needs a reason
+  (`CONTRACT_CONFLICT_REASON`). Required particulars nobody found become
+  questions.
+- **Choosing a value** writes it through the same setter as manual entry (same
+  revision check, same normalisation). The source records the file, place, quote
+  and pre-fill. Replacing an evidence-sourced value by hand needs a note.
+- **Publisher text is never sent.** A document carrying an NEC, JCT or FIDIC
+  copyright notice is held back before the call, and the run lists it with the
+  reason. The check is the copyright notice: a copy that reproduces a form
+  without its notice is not caught, and the panel tells the person what is sent.
+- **Clearance.** Document text is `IngestedFile` (Legal-L4), so it goes only to a
+  provider cleared that far. Otherwise nothing is sent and nothing is charged
+  (`CONTRACT_PREFILL_NEEDS_A_MODEL`, or the clearance refusal).
+- **The run is written by the AI actor** (`CONTRACT_PREFILL_PROPOSED`,
+  `ContractPrefill`, Commercial-L3).
+- Dates written in words ("30 June 2028", "1st March 2027") now normalise, as a
+  model and a contract both write them. Impossible dates are still refused.
+
+**A pre-existing defect fixed on the way.** `POST /v1/ai/quote` never passed what
+a run carries. Every document-reading action was quoted as carrying "ordinary
+project information" with the provider shown as cleared, and was then refused at
+run time for carrying Legal-L4 material. The affected actions are:
+- the tender pack reading;
+- bid drafting;
+- planning site facts;
+- this pre-fill.
+
+The quote now carries `IngestedFile` whenever it is sized from read text, so the
+cost box shows the real classification and never offers an uncleared provider.
+
+**Verified.**
+- `npm test` 8,834 pass, typecheck clean. `tests/contractprefill.test.ts` (9), run
+  against a stub that slips in one bad answer of each kind, covers:
+  - publisher-notice detection;
+  - the JCT copy never reaching the payload;
+  - four proposals with one merged amount and one conflict;
+  - four drops;
+  - questions for missing particulars;
+  - the AI actor;
+  - nothing applied until chosen;
+  - acceptance with its source;
+  - the conflict reason;
+  - the side-by-side view;
+  - refusals for a reader, a foreign document and a run with nothing sendable;
+  - no call to an uncleared provider;
+  - the quote over HTTP carrying Legal-L4 and never offering an uncleared
+    provider.
+- Walked in a browser with three documents filed on the demonstration project
+  (an ITT, an award letter and a copy of JCT conditions), after the owner cleared
+  the provider:
+  - the JCT copy marked "not sent" in the panel and the run;
+  - six values proposed with passages;
+  - the sum from two documents merged;
+  - the two completion dates side by side;
+  - choosing one refused until a reason was given;
+  - no page errors, no horizontal scroll at phone width (a notice that laid its
+    parts side by side was fixed).
+
+### Stage 3: review, the completion pack, the signed contract (built)
+
+`backend/src/domain/contracts/approvals.ts`, `pack.ts`; six routes under
+`.../drafts/:draftId/` (`submit`, `approve`, `return`, `reopen`, `execute`,
+`pack.pdf`).
+
+- **Review.**
+  - A draft goes to review only with nothing blocking it
+    (`CONTRACT_DRAFT_BLOCKED`).
+  - What is reviewed is fixed by a hash of exactly that revision: form, schedule,
+    currency and every particular with its source.
+  - An approval names the hash its approver was shown (`CONTRACT_APPROVAL_STALE`
+    otherwise), and the approve panel shows every particular being approved.
+  - The commercial approval is always needed. A legal approval is needed as well
+    where:
+    - an NEC form is amended by Z clauses, or a FIDIC one by particular
+      conditions;
+    - the law is not a UK jurisdiction's;
+    - the form is FIDIC (law, board and place confirmed);
+    - the form is a homeowner's.
+  - The two approvals come from two different people, neither of whom put the
+    draft up (`CONTRACT_APPROVAL_SAME_PERSON`).
+  - A draft in review cannot be edited. It is returned, with what must change,
+    or approved.
+  - An approved draft changes only by being reopened, which voids its approvals
+    and keeps them on the record as voided.
+- **The completion pack** (PDF or Word, through the platform's own branded
+  exporter) contains:
+  - every particular with its source (the passage for a value from a document,
+    the person for a typed one);
+  - a completion report (completed, from documents, typed, left blank, notes);
+  - the attachment manifest;
+  - the approvals and the hash approved;
+  - a statement that it is not the publisher's form and reproduces none of its
+    wording.
+
+  It is issued only from an approved or executed draft that still matches its
+  approval, and only under the company document identity frozen at approval
+  (`CONTRACT_BRAND_CHANGED` if the identity has moved on: reopen and approve
+  again).
+- **Execution is evidence, never inferred from export.**
+  - The signed instrument is recorded by its hash, with how and when it was
+    signed (not in the future).
+  - The contract is then created in the register Change & Claims works from, from
+    the approved particulars (`createContract`), and executed there
+    (`executeContract`, the same `CONTRACT_EXECUTED` as every other contract)
+    with the signed copy as its evidence.
+  - Delay damages per week are held per day.
+  - The new optional "cap on delay damages" particular is carried, and blank is
+    uncapped, which is how the register already reads a zero cap.
+  - What the register needs and the draft lacks is listed, never invented
+    (`CONTRACT_HANDOFF_INCOMPLETE`). For example, a FIDIC draft with only a time
+    for completion and no commencement date.
+
+**Verified.**
+- `npm test` 8,842 pass, typecheck clean. `tests/contractapprovals.test.ts` (8)
+  covers:
+  - blocked submission;
+  - edits refused in review;
+  - refusals for authority, stale hash, legal-not-required, same person and
+    two-scope same person;
+  - the pack's content, and the pack refused after a brand change;
+  - the PDF over HTTP;
+  - reopening voids approvals and a stale hash is refused;
+  - return;
+  - Z clauses requiring a second person's legal approval;
+  - execution into the register with sum, damages per day, cap, retention, defects
+    months and dates;
+  - no second execution;
+  - the FIDIC handoff listing what is missing.
+- Walked in a browser on a fresh journal:
+  - a fully completed JCT D&B draft put up for review by the surveyor, who is not
+    offered approval;
+  - the owner approving with every particular shown;
+  - the PDF pack downloaded;
+  - the signed copy attached and recorded;
+  - the draft executed, and the contract shown on Change & Claims;
+  - no page errors, no horizontal scroll at phone width.
+
+### Contracts Studio: not built yet, stated
+
+- **No live model run of the pre-fill.** It has been run here only against a stub.
+- **Locators are what the model says.** The quote is checked word for word; the
+  page or clause number is not, because the read text does not keep page breaks
+  for every format.
+- **No dedicated legal role.** The legal approval is given by any holder of
+  `A` on contracts with Commercial-L3 clearance who is not the commercial
+  approver or the submitter. The platform has no separate "legal reviewer" role.
+- **Recording execution needs the register's own authority**: `C` and `A` on
+  contracts and Legal-L4 clearance (the owner in a standard tenancy). A
+  commercial manager approves but cannot record execution.
+- **A pack under an earlier brand is not re-rendered.** A brand change after
+  approval means reopening and approving again.
+- **Publisher portal integration** and population of a licensed edition's own
+  layout are not built.
+- **Several legal entities and brands in one tenancy** are not built. Documents
+  carry the company's existing document identity, which a project can override.
+- **A standalone workspace** (a draft with no project) is not built; a draft
+  belongs to a project.
+- **Publisher rights**: no publisher text is held, and no licensed edition is
+  populated. Populating a publisher's own form needs a documented permission for
+  that edition and use. In particular, NEC forbids AI use of its publications
+  without written permission.
+
+## 2026-11 Every private module is a monthly item on the subscription
+
+The owner's decision: every private module sold to customers — Grid Connection,
+Planning, the Management System and Contracts Studio — is paid monthly on the
+company's subscription, at the price Grid Connection was already sold at.
+**ETABLIX and Bid-On are not billed**: they are exclusive to the owner's own
+companies. Each module carries `billed` in the catalogue (`false` for those two),
+its description says which, `moduleCharges` skips the unbilled ones, and the
+operator's register shows them as "own companies only — not billed".
+
+- **One price for every module** (`backend/src/billing/modules.ts`, reading the
+  two figures from `billing/addon.ts`, so there is one source): £100/month
+  including one named seat, plus £50/month for each additional seat. Each
+  module's description in the catalogue states it, composed from those figures
+  rather than retyped.
+- **The operator still allocates.** A grant now carries `seats` (1–500, one
+  included; `MODULE_SEATS_INVALID` otherwise). The admin console's Private
+  modules form asks for it and the register shows it. A grant made before
+  modules were billed reads as the one included seat. A change of seats is
+  recorded as a new decision; a re-grant without seats keeps what the company
+  holds. Revoking takes the module off the bill.
+- **Billed with the package.** `raiseCharge` adds each module held to the same
+  monthly charge as the package, storage, extra seats and Controller Passes, and
+  the invoice shows one `MODULES` line per module ("2 named seats (one included,
+  1 at £50.00)") plus a commercial term saying how modules are charged.
+- **Usable while paid.** A module rides the subscription's payment cycle: an
+  unpaid charge past its grace suspends the tenancy, modules and all, by the
+  existing mechanism.
+- **Who pays.**
+  - A free-exempt account holds its modules free, for the term of its exemption,
+    judged on the line the Grid add-on already drew (`#addonFreeExempt`).
+  - A company in a paying group pays for the modules it holds itself, at list:
+    the group's rate card discounts the package, not what is sold on top.
+  - Nothing is raised during a trial or for a tenancy whose subscription is not
+    active, the same as the package.
+- **Grid** is billed at the larger of its allocated seats and the seats its
+  existing add-on provisioning records as paid. Its provider-status and named-seat
+  machinery is unchanged.
+
+**Verified.** `npm test` 8,849 pass, typecheck clean. `tests/modulebilling.test.ts`
+(7) covers:
+- the price and every billed module's description stating it;
+- ETABLIX and Bid-On never charged and never on the invoice;
+- three modules raised with the package at their seats;
+- the invoice line, the total and the term;
+- an idempotent re-grant, seat changes recorded, revocation off the bill, and
+  invalid seats refused;
+- Grid billed at its provisioned seats;
+- an exempt account charged nothing.
+
+**Not built, stated.**
+- **Named seats are counted and billed, not enforced, outside Grid.** Anybody in
+  a role that may use Planning, the Management System or Contracts Studio can use
+  it. Grid's named-seat enforcement exists behind its own flag, as before.
+- **No proration.** A module granted mid-period is charged from the next monthly
+  charge, in full.

@@ -593,6 +593,7 @@ export const CONSOLE_PAGE = opts([
   ['bidonguest', 'Our bid work'],
   ['planning', 'Planning'],
   ['ims', 'Management System'],
+  ['contractstudio', 'Contracts Studio'],
   ['commercial', 'Cost & Value'],
   ['procurement', 'Tender & Procurement'],
   ['contracts', 'Change & Claims'],
