@@ -1,3 +1,4 @@
+import { modulePriceSentence } from '../billing/modules.ts';
 import { DomainError, ForbiddenError } from '../core/errors.ts';
 
 /**
@@ -57,6 +58,15 @@ import { DomainError, ForbiddenError } from '../core/errors.ts';
  * nobody built, and it would be indistinguishable on the register from one that
  * matters.
  */
+/**
+ * How every private module is paid for, said once. Each is a monthly item on the
+ * company's subscription at the same price (`billing/modules.ts`); the operator
+ * decides who holds one, and holding it is what puts it on the bill.
+ */
+const BILLED =
+  `Charged on the company’s monthly subscription at ${modulePriceSentence()}, and usable while that subscription is paid. ` +
+  'Allocated by the operator and not offered for sale on the pricing page; a free-exempt account holds it free.';
+
 export const MODULES = {
   ETABLIX: {
     name: 'ETABLIX AI Site Services',
@@ -76,8 +86,7 @@ export const MODULES = {
      * answer that is not "ask somebody".
      */
     restricted:
-      'Built for ETABLIX and the companies delivering site services with them. It is not part of the CONSTRUX ' +
-      'subscription and is not offered for sale on the pricing page.',
+      `Built for ETABLIX and the companies delivering site services with them. ${BILLED}`,
     /**
      * The registry entry, in the shape the enterprise specification (§7) asks
      * a module to be published in. The key is what an entitlement claim and a
@@ -120,7 +129,7 @@ export const MODULES = {
     restricted:
       'Allocated to a business only under a signed agreement, because it is a service a provider sells onward to ' +
       'its own customers rather than a capability every subscriber gets. It does not replace the Tender & ' +
-      'Procurement section, which stays available to everybody.',
+      `Procurement section, which stays available to everybody. ${BILLED}`,
     registry: {
       moduleKey: 'construx.bidon.bid_services',
       productCode: 'construx',
@@ -158,9 +167,7 @@ export const MODULES = {
       'Golden Thread, from agreement and capacity through design, commissioning and energisation to handover — with ' +
       'the electrical gates advancing only on a verified authority record, and no agent ever switching or setting plant.',
     restricted:
-      'A paid add-on sold per business at £100/month (one named seat) plus £50 per additional seat, allocated by ' +
-      'the operator rather than bought from the pricing page. A company on a free-exemption group account holds it ' +
-      'free of charge, like the rest of its platform.',
+      `A paid add-on. ${BILLED}`,
     registry: {
       moduleKey: 'construx.grid.connection_ai',
       productCode: 'construx',
@@ -189,7 +196,7 @@ export const MODULES = {
       'that read and draft for a person to accept.',
     restricted:
       'Released company by company: the statutory rule pack and fee schedules are relied on only after a planner in ' +
-      'the company has checked them against their published sources and a second person has published them.',
+      `the company has checked them against their published sources and a second person has published them. ${BILLED}`,
     registry: {
       moduleKey: 'construx.planning.consent',
       productCode: 'construx',
@@ -213,8 +220,7 @@ export const MODULES = {
       'supplier performance, the competence matrix and the RIDDOR clock — rolled up across every project, with AI ' +
       'agents drafting the work for a person to approve.',
     restricted:
-      'Released company by company while it is introduced. It is not part of the CONSTRUX subscription and is not ' +
-      'offered for sale on the pricing page.',
+      `Released company by company. ${BILLED}`,
     registry: {
       moduleKey: 'construx.ims.management_system',
       productCode: 'construx',
@@ -232,8 +238,7 @@ export const MODULES = {
       'obligations and the documents it binds — are completed against a schedule for that edition, each value with ' +
       'where it came from, every change a new revision.',
     restricted:
-      'Released company by company while it is introduced. It is not part of the CONSTRUX subscription and is not ' +
-      'offered for sale on the pricing page.',
+      `Released company by company. ${BILLED}`,
     registry: {
       moduleKey: 'construx.contracts.studio',
       productCode: 'construx',
@@ -280,6 +285,12 @@ export type ModuleGrant = {
    * rests on — the thing somebody looks up when the renewal falls due.
    */
   agreementRef?: string;
+  /**
+   * The named seats the company pays for, one included in the base fee. Set by
+   * the operator with the allocation; absent on a grant made before modules
+   * were billed, which is read as the one included seat.
+   */
+  seats?: number;
   grantedBy: string;
   grantedAt: string;
   /** Why, in the operator's own words. Mandatory: a grant with no stated reason is unreviewable. */

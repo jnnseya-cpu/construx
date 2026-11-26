@@ -192,12 +192,15 @@ export function raiseCharge(
   // approved); storage and seats bought beyond the package are at list.
   // Plus the Project Controller Passes in force: the one thing an invited
   // person can ever cost the host, and only because the host bought it.
+  // Plus the private modules the company holds (`billing/modules.ts`), at list:
+  // a group's rate card discounts its package, not what is sold on top of it.
   const amountMinor =
     subscription.status === 'ACTIVE'
       ? subscriptionPriceMinor(platform, tenantId, monthlySubscriptionCharge(subscription)).amountMinor +
         purchasedBlocks(platform.ledger, tenantId) * config.billing.storageBlockPriceMinor +
         purchasedSeatChargeMinor(platform.ledger, tenantId) +
-        passChargeMinor(platform, tenantId, now)
+        passChargeMinor(platform, tenantId, now) +
+        platform.moduleCharges(tenantId, now).reduce((sum, charge) => sum + charge.amountMinor, 0)
       : 0;
   if (amountMinor <= 0 || subscription.status === 'CANCELLED') return undefined;
 

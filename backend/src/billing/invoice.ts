@@ -3,6 +3,7 @@ import { ulid } from '../core/ids.ts';
 import { currencySymbol, formatMoney as exactMoney, toMajor } from '../domain/locale.ts';
 import type { ACUWallet } from './acu.ts';
 import { STORAGE_BLOCK_GB } from './storage.ts';
+import { MODULE_ADDITIONAL_SEAT_FEE_MINOR, MODULE_BASE_FEE_MINOR, MODULE_INCLUDED_SEATS, type ModuleCharge } from './modules.ts';
 import { monthlySubscriptionCharge, type PurchasedSeat, type Subscription, TIERS } from './subscription.ts';
 
 /**
@@ -17,7 +18,7 @@ export type InvoiceLine = {
   quantity: number;
   unitMinor: number;
   amountMinor: number;
-  category: 'SUBSCRIPTION' | 'SEATS' | 'CONTROLLER_PASSES' | 'STORAGE' | 'AI_USAGE';
+  category: 'SUBSCRIPTION' | 'SEATS' | 'CONTROLLER_PASSES' | 'MODULES' | 'STORAGE' | 'AI_USAGE';
   projectId?: string;
   module?: string;
 };
@@ -44,6 +45,7 @@ export type Invoice = {
   seatsMinor: number;
   /** Project Controller Passes in force this period. */
   passesMinor: number;
+  modulesMinor: number;
   storageMinor: number;
   aiUsageMinor: number;
   aiRawCostMinor: number;
@@ -67,6 +69,7 @@ export function buildInvoice(
   storageBlocks = 0,
   seatEntitlements: PurchasedSeat[] = [],
   controllerPasses: ControllerPassLine[] = [],
+  modules: ModuleCharge[] = [],
 ): Invoice {
   const tier = TIERS[subscription.tier];
   // The package charge is already in minor units — the whole billing path works
@@ -118,6 +121,22 @@ export function buildInvoice(
     });
   }
 
+  // The private modules held, one line each: the base fee with its included
+  // seat, and the further seats at their own price, so the line explains itself.
+  let modulesMinor = 0;
+  for (const charge of modules) {
+    modulesMinor += charge.amountMinor;
+    const extra = charge.seats - MODULE_INCLUDED_SEATS;
+    lines.push({
+      description: `${charge.name} — monthly, ${charge.seats} named seat${charge.seats === 1 ? '' : 's'}${extra > 0 ? ` (one included, ${extra} at ${exactMoney(MODULE_ADDITIONAL_SEAT_FEE_MINOR, currency)})` : ''}`,
+      quantity: 1,
+      unitMinor: charge.amountMinor,
+      amountMinor: charge.amountMinor,
+      category: 'MODULES',
+      module: charge.moduleId,
+    });
+  }
+
   // Storage held beyond the package allowance, charged for as long as it is
   // held. This line did not exist: blocks could be bought and never appeared on
   // any invoice, so the platform carried the disk and billed nothing for it.
@@ -160,6 +179,7 @@ export function buildInvoice(
     subscriptionMinor,
     seatsMinor,
     passesMinor,
+    modulesMinor,
     storageMinor,
     aiUsageMinor,
     aiRawCostMinor,
@@ -181,13 +201,14 @@ export function buildInvoice(
      * charge, and `aiUsageDrawnFromCredit` says so rather than leaving somebody
      * to work out why the lines do not sum to the total.
      */
-    totalMinor: subscriptionMinor + seatsMinor + passesMinor + storageMinor,
+    totalMinor: subscriptionMinor + seatsMinor + passesMinor + modulesMinor + storageMinor,
     aiUsageDrawnFromCredit: true,
     commercialTerms: [
       'Subscription fees cover platform access, identity management, governance, auditability and non-AI functionality.',
       'Seats bought beyond the package are charged monthly at the seat price in force when they were bought, for as long as they are held.',
       'The package’s seats are Controller seats. Participants take no seat, and a person from another organisation is never charged for here unless a Project Controller Pass is bought for them.',
       'A Project Controller Pass is charged monthly for as long as it runs and stops with the appointment it was bought for.',
+      `Each private module held is charged monthly at ${exactMoney(MODULE_BASE_FEE_MINOR, currency)} including one named seat, plus ${exactMoney(MODULE_ADDITIONAL_SEAT_FEE_MINOR, currency)} for each additional seat, for as long as it is held.`,
       'AI services are prepaid: credit is purchased in advance and drawn down as it is consumed.',
       'AI usage shown on this invoice has already been paid for at the point credit was purchased, and is stated here for transparency rather than charged again.',
       'Each ACU represents the underlying third-party AI compute cost incurred by CONSTRUX.',

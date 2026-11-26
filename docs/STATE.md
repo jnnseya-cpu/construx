@@ -36295,3 +36295,55 @@ cost box shows the real classification and never offers an uncleared provider.
   populated. Populating a publisher's own form needs a documented permission for
   that edition and use. In particular, NEC forbids AI use of its publications
   without written permission.
+
+## 2026-11 Every private module is a monthly item on the subscription
+
+The owner's decision: every private module — ETABLIX, Bid-On, Grid Connection,
+Planning, the Management System and Contracts Studio — is paid monthly on the
+company's subscription, at the price Grid Connection was already sold at.
+
+- **One price for every module** (`backend/src/billing/modules.ts`, reading the
+  two figures from `billing/addon.ts`, so there is one source): £100/month
+  including one named seat, plus £50/month for each additional seat. Each
+  module's description in the catalogue states it, composed from those figures
+  rather than retyped.
+- **The operator still allocates.** A grant now carries `seats` (1–500, one
+  included; `MODULE_SEATS_INVALID` otherwise). The admin console's Private
+  modules form asks for it and the register shows it. A grant made before
+  modules were billed reads as the one included seat. A change of seats is
+  recorded as a new decision; a re-grant without seats keeps what the company
+  holds. Revoking takes the module off the bill.
+- **Billed with the package.** `raiseCharge` adds each module held to the same
+  monthly charge as the package, storage, extra seats and Controller Passes, and
+  the invoice shows one `MODULES` line per module ("2 named seats (one included,
+  1 at £50.00)") plus a commercial term saying how modules are charged.
+- **Usable while paid.** A module rides the subscription's payment cycle: an
+  unpaid charge past its grace suspends the tenancy, modules and all, by the
+  existing mechanism.
+- **Who pays.**
+  - A free-exempt account holds its modules free, for the term of its exemption,
+    judged on the line the Grid add-on already drew (`#addonFreeExempt`).
+  - A company in a paying group pays for the modules it holds itself, at list:
+    the group's rate card discounts the package, not what is sold on top.
+  - Nothing is raised during a trial or for a tenancy whose subscription is not
+    active, the same as the package.
+- **Grid** is billed at the larger of its allocated seats and the seats its
+  existing add-on provisioning records as paid. Its provider-status and named-seat
+  machinery is unchanged.
+
+**Verified.** `npm test` 8,848 pass, typecheck clean. `tests/modulebilling.test.ts`
+(6) covers:
+- the price and every module's description stating it;
+- three modules raised with the package at their seats;
+- the invoice line, the total and the term;
+- an idempotent re-grant, seat changes recorded, revocation off the bill, and
+  invalid seats refused;
+- Grid billed at its provisioned seats;
+- an exempt account charged nothing.
+
+**Not built, stated.**
+- **Named seats are counted and billed, not enforced, outside Grid.** Anybody in
+  a role that may use Planning, the Management System or Contracts Studio can use
+  it. Grid's named-seat enforcement exists behind its own flag, as before.
+- **No proration.** A module granted mid-period is charged from the next monthly
+  charge, in full.

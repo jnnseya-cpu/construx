@@ -1,4 +1,5 @@
 import { AIOrchestrator } from './ai/orchestrator.ts';
+import { MODULE_INCLUDED_SEATS, MODULE_MAX_SEATS, moduleCharges, type ModuleCharge } from './billing/modules.ts';
 import { grantedClearance } from './domain/aiclearance.ts';
 import { EvidenceStore } from './evidence/store.ts';
 import { SigningAuthority } from './signing/signature.ts';
@@ -2911,7 +2912,14 @@ export class Platform {
     /** Scheduled start and expiry (Enterprise / Group v1.0 §7). Omitted: from now, open-ended. */
     validFrom?: string;
     validTo?: string;
+    /** The named seats paid for, one included. Omitted: as before, or the one included seat. */
+    seats?: number;
   }): ModuleGrant {
+    if (input.seats !== undefined && (!Number.isInteger(input.seats) || input.seats < MODULE_INCLUDED_SEATS || input.seats > MODULE_MAX_SEATS)) {
+      throw new DomainError('MODULE_SEATS_INVALID', `Seats are a whole number from ${MODULE_INCLUDED_SEATS} to ${MODULE_MAX_SEATS}; one is included in the monthly fee.`, 422, [
+        { field: 'seats', message: `${MODULE_INCLUDED_SEATS}–${MODULE_MAX_SEATS}` },
+      ]);
+    }
     if (input.validFrom !== undefined && Number.isNaN(Date.parse(input.validFrom))) {
       throw new DomainError('MODULE_DATES_INVALID', 'validFrom is an ISO date-time');
     }
@@ -2963,7 +2971,10 @@ export class Platform {
     // The same decision again is idempotent — unless it carries new dates,
     // which is a re-grant on new terms and is recorded as one.
     const sameDates = existing?.validFrom === input.validFrom && existing?.validTo === input.validTo;
-    if (existing && existing.status === input.status && (input.status === 'REVOKED' || sameDates)) return existing;
+    // A change of seats is a change of what the company is billed, so it is recorded like new dates are.
+    const seats = input.seats ?? existing?.seats ?? MODULE_INCLUDED_SEATS;
+    const sameSeats = (existing?.seats ?? MODULE_INCLUDED_SEATS) === seats;
+    if (existing && existing.status === input.status && (input.status === 'REVOKED' || (sameDates && sameSeats))) return existing;
     if (!existing && input.status === 'REVOKED') {
       // There is nothing to take back. Refused rather than recorded, because a
       // revocation with no grant behind it would have to name a grantor who
@@ -2987,6 +2998,7 @@ export class Platform {
           ...(input.validFrom ? { validFrom: new Date(input.validFrom).toISOString() } : {}),
           ...(input.validTo ? { validTo: new Date(input.validTo).toISOString() } : {}),
           ...((input.agreementRef ?? '').trim() ? { agreementRef: input.agreementRef!.trim() } : {}),
+          seats,
           grantedBy: input.decidedBy,
           grantedAt: decidedAt,
           reason: input.reason,
@@ -3829,6 +3841,27 @@ export class Platform {
    * Both reads go through `subscription`, so the exemption's **term is already
    * applied**: once it lapses this answers false and the add-on becomes chargeable.
    */
+  /**
+   * The month's charges for the private modules a company holds.
+   *
+   * Every module held now, at the seats it was allocated with — Grid at the
+   * larger of that and the seats its add-on provisioning records as paid, so a
+   * company provisioned for three Grid seats before modules were billed this
+   * way is billed for three. None for a free-exempt account, judged on the same
+   * line the add-on has always drawn (`#addonFreeExempt`), and none for a
+   * tenancy with no subscription.
+   */
+  moduleCharges(tenantId: string, now = new Date()): ModuleCharge[] {
+    if (!this.#subscriptions.has(tenantId)) return [];
+    const held = this.grantedModules(tenantId, now.toISOString()).map((moduleId) => {
+      const grant = this.#moduleGrants.get(grantRef(moduleId, tenantId));
+      const allocated = grant?.seats ?? MODULE_INCLUDED_SEATS;
+      const seats = moduleId === 'GRID_CONNECTION' ? Math.max(allocated, this.addonGrant(tenantId)?.paidQuantity ?? 0) : allocated;
+      return { moduleId, name: MODULES[moduleId].name, seats };
+    });
+    return moduleCharges(held, this.#addonFreeExempt(tenantId, now));
+  }
+
   #addonFreeExempt(tenantId: string, now: Date): boolean {
     if (!this.#subscriptions.has(tenantId)) return false;
     if (this.subscription(tenantId, now).grantedFree !== true) return false;
@@ -4550,6 +4583,7 @@ export class Platform {
       storage.purchasedBlocks(this.ledger, tenantId),
       purchasedSeatEntitlements(this.ledger, tenantId),
       this.#passLines(tenantId),
+      this.moduleCharges(tenantId),
     );
   }
 
@@ -4601,6 +4635,7 @@ export class Platform {
       storage.purchasedBlocks(this.ledger, tenantId),
       purchasedSeatEntitlements(this.ledger, tenantId),
       this.#passLines(tenantId),
+      this.moduleCharges(tenantId),
     );
 
     this.ledger.commit({

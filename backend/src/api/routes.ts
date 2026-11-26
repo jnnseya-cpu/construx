@@ -2659,6 +2659,8 @@ export const ROUTES: Route[] = [
         // be omitted; a grant with neither is from now, open-ended.
         validFrom: { type: 'string' },
         validTo: { type: 'string' },
+        // The named seats the company pays for, one included in the monthly fee.
+        seats: { type: 'integer', minimum: 1, maximum: 500 },
       },
       additionalProperties: false,
     },
@@ -2675,7 +2677,7 @@ export const ROUTES: Route[] = [
       if (!isModuleId(moduleId)) {
         throw new DomainError('MODULE_UNKNOWN', `${moduleId} is not a module this platform has`, 404);
       }
-      const input = body<{ status: 'ACTIVE' | 'REVOKED'; reason: string; agreementRef?: string; validFrom?: string; validTo?: string }>(ctx);
+      const input = body<{ status: 'ACTIVE' | 'REVOKED'; reason: string; agreementRef?: string; validFrom?: string; validTo?: string; seats?: number }>(ctx);
       const grant = platform.setModuleGrant({
         moduleId,
         tenantId: ctx.params.tenantId!,
@@ -2685,6 +2687,7 @@ export const ROUTES: Route[] = [
         ...(input.agreementRef ? { agreementRef: input.agreementRef } : {}),
         ...(input.validFrom ? { validFrom: input.validFrom } : {}),
         ...(input.validTo ? { validTo: input.validTo } : {}),
+        ...(input.seats !== undefined ? { seats: input.seats } : {}),
       });
       return {
         ...grant,
