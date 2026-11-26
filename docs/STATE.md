@@ -36298,9 +36298,13 @@ cost box shows the real classification and never offers an uncleared provider.
 
 ## 2026-11 Every private module is a monthly item on the subscription
 
-The owner's decision: every private module — ETABLIX, Bid-On, Grid Connection,
+The owner's decision: every private module sold to customers — Grid Connection,
 Planning, the Management System and Contracts Studio — is paid monthly on the
 company's subscription, at the price Grid Connection was already sold at.
+**ETABLIX and Bid-On are not billed**: they are exclusive to the owner's own
+companies. Each module carries `billed` in the catalogue (`false` for those two),
+its description says which, `moduleCharges` skips the unbilled ones, and the
+operator's register shows them as "own companies only — not billed".
 
 - **One price for every module** (`backend/src/billing/modules.ts`, reading the
   two figures from `billing/addon.ts`, so there is one source): £100/month
@@ -36331,9 +36335,10 @@ company's subscription, at the price Grid Connection was already sold at.
   existing add-on provisioning records as paid. Its provider-status and named-seat
   machinery is unchanged.
 
-**Verified.** `npm test` 8,848 pass, typecheck clean. `tests/modulebilling.test.ts`
-(6) covers:
-- the price and every module's description stating it;
+**Verified.** `npm test` 8,849 pass, typecheck clean. `tests/modulebilling.test.ts`
+(7) covers:
+- the price and every billed module's description stating it;
+- ETABLIX and Bid-On never charged and never on the invoice;
 - three modules raised with the package at their seats;
 - the invoice line, the total and the term;
 - an idempotent re-grant, seat changes recorded, revocation off the bill, and

@@ -457,7 +457,7 @@ export async function tenants(root) {
                   // is the question the reference exists to answer, and a
                   // register that held it without showing it would not answer
                   // it.
-                  html`${grant.moduleName}${grant.agreementRef ? html`<div class="metric-sub">${grant.agreementRef}</div>` : ''}${grant.status === 'ACTIVE' ? html`<div class="metric-sub">${grant.seats ?? 1} named seat${(grant.seats ?? 1) === 1 ? '' : 's'}, billed monthly</div>` : ''}`,
+                  html`${grant.moduleName}${grant.agreementRef ? html`<div class="metric-sub">${grant.agreementRef}</div>` : ''}${grant.status === 'ACTIVE' ? html`<div class="metric-sub">${register.modules.find((definition) => definition.id === grant.moduleId)?.billed === false ? 'own companies only — not billed' : (grant.seats ?? 1) + ' named seat' + ((grant.seats ?? 1) === 1 ? '' : 's') + ', billed monthly'}</div>` : ''}`,
                   badge(grant.status.toLowerCase(), grant.status === 'ACTIVE' ? 'ok' : 'warn'),
                   html`${date(grant.grantedAt)}<div class="metric-sub">${grant.grantedByName}</div>`,
                   grant.status === 'ACTIVE' ? grant.reason : grant.revokedReason ?? grant.reason,
@@ -1566,9 +1566,10 @@ export async function tenants(root) {
       const choice = await command({
         title: `Private modules — ${tenant?.legalName ?? 'tenancy'}`,
         intent:
-          'Gives this company a module that is not on the pricing page. Holding it adds it to their monthly subscription — ' +
-          'one named seat included, each further seat on top — beside whatever package they pay for, and nobody without ' +
-          'the grant is told the module exists. A free-exempt account holds it free. The reason is recorded against the decision.',
+          'Gives this company a module that is not on the pricing page. Holding a billed module adds it to their monthly ' +
+          'subscription — one named seat included, each further seat on top — beside whatever package they pay for; ' +
+          'ETABLIX and Bid-On are for your own companies only and are never billed. Nobody without the grant is told the ' +
+          'module exists, and a free-exempt account holds every module free. The reason is recorded against the decision.',
         // The module is a path segment rather than a body field, so the path is
         // a function of what the person picked — the endpoint would otherwise
         // have two ways to say which module this is.

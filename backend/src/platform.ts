@@ -3853,7 +3853,8 @@ export class Platform {
    */
   moduleCharges(tenantId: string, now = new Date()): ModuleCharge[] {
     if (!this.#subscriptions.has(tenantId)) return [];
-    const held = this.grantedModules(tenantId, now.toISOString()).map((moduleId) => {
+    // ETABLIX and Bid-On are held only by the platform owner's own companies and are never billed.
+    const held = this.grantedModules(tenantId, now.toISOString()).filter((moduleId) => MODULES[moduleId].billed).map((moduleId) => {
       const grant = this.#moduleGrants.get(grantRef(moduleId, tenantId));
       const allocated = grant?.seats ?? MODULE_INCLUDED_SEATS;
       const seats = moduleId === 'GRID_CONNECTION' ? Math.max(allocated, this.addonGrant(tenantId)?.paidQuantity ?? 0) : allocated;

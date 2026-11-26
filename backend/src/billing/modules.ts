@@ -1,7 +1,9 @@
 import { addonMonthlyMinorForSeats, ADDON_ADDITIONAL_SEAT_FEE_MINOR, ADDON_BASE_FEE_MINOR } from './addon.ts';
 
 /**
- * Every private module is a monthly item on the company's subscription.
+ * Every private module sold to customers is a monthly item on the company's
+ * subscription. ETABLIX and Bid-On are not: they are exclusive to the platform
+ * owner's own companies and are never billed (`billed: false` in the catalogue).
  *
  * One price for all of them, the one the Grid Connection add-on was first sold
  * at: the base fee covers one named seat, and each further seat is charged on

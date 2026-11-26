@@ -67,6 +67,11 @@ const BILLED =
   `Charged on the company’s monthly subscription at ${modulePriceSentence()}, and usable while that subscription is paid. ` +
   'Allocated by the operator and not offered for sale on the pricing page; a free-exempt account holds it free.';
 
+/** The two modules kept for the platform owner's own companies: allocated, never sold, never billed. */
+const OWN_COMPANIES =
+  'Exclusive to the platform owner’s own companies: allocated by the operator, not offered for sale on the pricing ' +
+  'page, and never charged for.';
+
 export const MODULES = {
   ETABLIX: {
     name: 'ETABLIX AI Site Services',
@@ -86,7 +91,7 @@ export const MODULES = {
      * answer that is not "ask somebody".
      */
     restricted:
-      `Built for ETABLIX and the companies delivering site services with them. ${BILLED}`,
+      `Built for ETABLIX and the companies delivering site services with them. ${OWN_COMPANIES}`,
     /**
      * The registry entry, in the shape the enterprise specification (§7) asks
      * a module to be published in. The key is what an entitlement claim and a
@@ -94,6 +99,8 @@ export const MODULES = {
      * grant to a tenant id — never a company name, a group, an email domain or
      * a flag a client could set.
      */
+    /** Exclusive to the platform owner's own companies, so never on anybody's bill. */
+    billed: false,
     registry: {
       moduleKey: 'construx.etablix.integrated_site_services',
       productCode: 'construx',
@@ -129,7 +136,9 @@ export const MODULES = {
     restricted:
       'Allocated to a business only under a signed agreement, because it is a service a provider sells onward to ' +
       'its own customers rather than a capability every subscriber gets. It does not replace the Tender & ' +
-      `Procurement section, which stays available to everybody. ${BILLED}`,
+      `Procurement section, which stays available to everybody. ${OWN_COMPANIES}`,
+    /** Exclusive to the platform owner's own companies, so never on anybody's bill. */
+    billed: false,
     registry: {
       moduleKey: 'construx.bidon.bid_services',
       productCode: 'construx',
@@ -168,6 +177,8 @@ export const MODULES = {
       'the electrical gates advancing only on a verified authority record, and no agent ever switching or setting plant.',
     restricted:
       `A paid add-on. ${BILLED}`,
+    /** Charged monthly on the subscription (`billing/modules.ts`). */
+    billed: true,
     registry: {
       moduleKey: 'construx.grid.connection_ai',
       productCode: 'construx',
@@ -197,6 +208,8 @@ export const MODULES = {
     restricted:
       'Released company by company: the statutory rule pack and fee schedules are relied on only after a planner in ' +
       `the company has checked them against their published sources and a second person has published them. ${BILLED}`,
+    /** Charged monthly on the subscription (`billing/modules.ts`). */
+    billed: true,
     registry: {
       moduleKey: 'construx.planning.consent',
       productCode: 'construx',
@@ -221,6 +234,8 @@ export const MODULES = {
       'agents drafting the work for a person to approve.',
     restricted:
       `Released company by company. ${BILLED}`,
+    /** Charged monthly on the subscription (`billing/modules.ts`). */
+    billed: true,
     registry: {
       moduleKey: 'construx.ims.management_system',
       productCode: 'construx',
@@ -239,6 +254,8 @@ export const MODULES = {
       'where it came from, every change a new revision.',
     restricted:
       `Released company by company. ${BILLED}`,
+    /** Charged monthly on the subscription (`billing/modules.ts`). */
+    billed: true,
     registry: {
       moduleKey: 'construx.contracts.studio',
       productCode: 'construx',
